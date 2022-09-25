@@ -1,6 +1,6 @@
 module github.com/strongo/dalgo2sql
 
-go 1.17
+go 1.19
 
 require (
 	github.com/georgysavva/scany v0.2.9
