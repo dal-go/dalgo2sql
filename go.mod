@@ -3,7 +3,7 @@ module github.com/strongo/dalgo2sql
 go 1.17
 
 require (
-	github.com/georgysavva/scany v0.2.9
+	github.com/georgysavva/scany v1.2.1
 	github.com/pkg/errors v0.9.1
 	github.com/proullon/ramsql v0.0.0-20210730175921-2692f3496a21
 	github.com/strongo/dalgo v0.0.4
@@ -19,5 +19,5 @@ require (
 	github.com/strongo/random v0.0.0-20201120164511-f20cfe28165d // indirect
 	github.com/strongo/validation v0.0.0-20210908182457-7acc8bdbeffd // indirect
 	golang.org/x/tools v0.0.0-20200130002326-2f3ba24bd6e7 // indirect
-	gopkg.in/yaml.v2 v2.2.3 // indirect
+	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
