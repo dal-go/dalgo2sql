@@ -136,6 +136,8 @@ github.com/stretchr/testify v1.3.0/go.mod h1:M5WIy9Dh21IEIfnGCwXGc5bZfKNJtfHm1UV
 github.com/stretchr/testify v1.4.0/go.mod h1:j7eGeouHqKxXV5pUuKE4zz7dFj8WfuZ+81PSLYec5m4=
 github.com/stretchr/testify v1.5.1 h1:nOGnQDM7FYENwehXlg/kFVnos3rEvtKTjRvOWSzb6H4=
 github.com/stretchr/testify v1.5.1/go.mod h1:5W2xD1RspED5o8YsWQXVCued0rvSQ+mT+I5cxcmMvtA=
+github.com/stretchr/testify v1.6.0 h1:jlIyCplCJFULU/01vCkhKuTyc3OorI3bJFuw6obfgho=
+github.com/stretchr/testify v1.6.0/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/h/Wwjteg=
 github.com/strongo/dalgo v0.0.0-20211003200945-8aa966acb238/go.mod h1:2cen3Tk4Vjn+HTs42sZykv9RakPi4jOhbTRVqJ83yqQ=
 github.com/strongo/dalgo v0.0.0-20211003212313-da4bc92b4fbf h1:hlbilo50CnImMcSEcFOxT4UzuAG7+okoHzXW3mWZYzo=
 github.com/strongo/dalgo v0.0.0-20211003212313-da4bc92b4fbf/go.mod h1:2cen3Tk4Vjn+HTs42sZykv9RakPi4jOhbTRVqJ83yqQ=
@@ -155,6 +157,8 @@ github.com/strongo/dalgo v0.0.2 h1:IYhFpUzytGO4T29bZLVA0LA6d0hPcPfPM9dw4410yxU=
 github.com/strongo/dalgo v0.0.2/go.mod h1:wRjVT90E6UXD0ipesTv84TMTRzc9lZILip8sUBnZiz0=
 github.com/strongo/dalgo v0.0.4 h1:vGJ+eTOPM5V/BzNRwVt3kQcsSnYJfT4ja2UqK5JQa64=
 github.com/strongo/dalgo v0.0.4/go.mod h1:xqYkL/q8CrnLpabK6o1rywuS8UpX1Ic+HK9JSJ7LDFI=
+github.com/strongo/dalgo v0.0.26 h1:2/OiXLKoZnuW5zZ0YqyqhewDngskScLQZu4awEksomU=
+github.com/strongo/dalgo v0.0.26/go.mod h1:TJ+6LPbGFy8oS3yWmPvG2AMY2wNK4qYBCXf45vSVYCw=
 github.com/strongo/dalgo-end2end-tests v0.0.0-20211003202532-dedfda65c6e8 h1:A2K2M6n5UUpfXrGjIbmknIlZgRkADgQDSSb2bbm7DiY=
 github.com/strongo/dalgo-end2end-tests v0.0.0-20211003202532-dedfda65c6e8/go.mod h1:BTGg3o+aAOoOIQz29klObaxg2sqNytfTi3mpHnUHcPc=
 github.com/strongo/dalgo-end2end-tests v0.0.0-20211007202834-0f575d17f140 h1:NVAz1A/Ufp69ADZXEQpvEX3NaHGlu2cnPHjevXGuQ3g=
@@ -167,8 +171,12 @@ github.com/strongo/dalgo-end2end-tests v0.0.2 h1:Rn12Uth7Qe6cbwliUHAE+iffLhOQqfz
 github.com/strongo/dalgo-end2end-tests v0.0.2/go.mod h1:ABKJyC69KFve0rbeFu+RBH7BKknoLzNAZW8w2bh8LKc=
 github.com/strongo/random v0.0.0-20201120164511-f20cfe28165d h1:I8qa7ggQ5RT+hO5gTTaBtS8ZEvbsBIik//AdM4dZL4g=
 github.com/strongo/random v0.0.0-20201120164511-f20cfe28165d/go.mod h1:b5FiRTvklOIQI/iX+4qfwtK7Jrs+9KTZFn1dP9iX26o=
+github.com/strongo/random v0.0.1 h1:OZHJBb/3uEa7OX8L2Dv2pLnSeewRmXMyTACoeto6O8I=
+github.com/strongo/random v0.0.1/go.mod h1:/pSI+SjBNLBkjljNtVdYr6ERddA+LqSa87o0/s+9iuU=
 github.com/strongo/validation v0.0.0-20210908182457-7acc8bdbeffd h1:hvHVKVARPjItp1EQxTk0v3SxE8fICA3n0s2iVeejhOU=
 github.com/strongo/validation v0.0.0-20210908182457-7acc8bdbeffd/go.mod h1:X1c1hPVXIUbKlyRrU/WSKKnbA1C0dLv7w7xOfeoL0iI=
+github.com/strongo/validation v0.0.1 h1:kBMqVLa73nT6FaWrMX5aPKbM4hcNqe6A519MoRXhLUY=
+github.com/strongo/validation v0.0.1/go.mod h1:euQ9ywYwBASSnCLSYOx8JW0u4/71yfbeZhBQJv93dZg=
 github.com/zenazn/goji v0.9.0/go.mod h1:7S9M489iMyHBNxwZnk9/EHS098H4/F6TATF2mIxtB1Q=
 go.uber.org/atomic v1.3.2/go.mod h1:gD2HeocX3+yG+ygLZcrzQJaqmWj9AIm7n08wl/qW/PE=
 go.uber.org/atomic v1.4.0/go.mod h1:gD2HeocX3+yG+ygLZcrzQJaqmWj9AIm7n08wl/qW/PE=
@@ -240,4 +248,6 @@ gopkg.in/inconshreveable/log15.v2 v2.0.0-20180818164646-67afb5ed74ec/go.mod h1:a
 gopkg.in/yaml.v2 v2.2.2/go.mod h1:hI93XBmqTisBFMUTm0b8Fm+jr3Dg1NNxqwp+5A1VGuI=
 gopkg.in/yaml.v2 v2.2.3 h1:fvjTMHxHEw/mxHbtzPi3JCcKXQRAnQTBRo6YCJSVHKI=
 gopkg.in/yaml.v2 v2.2.3/go.mod h1:hI93XBmqTisBFMUTm0b8Fm+jr3Dg1NNxqwp+5A1VGuI=
+gopkg.in/yaml.v3 v3.0.0-20200313102051-9f266ea9e77c h1:dUUwHk2QECo/6vqA44rthZ8ie2QXMNeKRTHCNY2nXvo=
+gopkg.in/yaml.v3 v3.0.0-20200313102051-9f266ea9e77c/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
 honnef.co/go/tools v0.0.1-2019.2.3/go.mod h1:a3bituU0lyd329TUQxRnasdCoJDkEUEAqEt0JzvZhAg=
