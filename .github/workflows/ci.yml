@@ -1,54 +1,27 @@
+name: Go CI
+
 on:
   push:
     branches:
       - main
+    tags:
+      - 'v[0-9]+\.[0-9]+\.[0-9]+'
   pull_request:
     branches:
       - main
 
-name: Lint, Vet, Build, Test
 jobs:
 
-  lint_and_test:
+  go_ci:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Install Go
-        uses: actions/setup-go@v2
-        with:
-          go-version: '^1.17.0' # The Go version to download (if necessary) and use.
-
-
-      - uses: actions/cache@v2
-        with:
-          # In order:
-          # * Module download cache
-          # * Build cache (Linux)
-          # * Build cache (Mac)
-          # * Build cache (Windows)
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-            ~/Library/Caches/go-build
-            %LocalAppData%\go-build
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
-
       - name: Checkout code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
-      - name: go get ./...
-        run: go get ./...
+      - name: Install Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '^1.20'
 
-      - name: go vet ./...
-        run: go vet ./...
-
-      - name: golint
-        run: go run golang.org/x/lint/golint ./...
-
-      - name: go build ./...
-        run: go build ./...
-
-      - name: Test
-        run: go test ./...
+      - uses: strongo/go-ci-action@v1.0.1
