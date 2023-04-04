@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"github.com/dal-go/dalgo/dal"
-	"github.com/pkg/errors"
 )
 
 // Field defines field
@@ -72,7 +71,7 @@ func (dtb *database) RunReadonlyTransaction(ctx context.Context, f dal.ROTxWorke
 		return err
 	}
 	if err := dbTx.Commit(); err != nil {
-		return errors.WithMessage(err, "failed to commit transaction")
+		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 	return nil
 }
@@ -94,7 +93,7 @@ func (dtb *database) RunReadwriteTransaction(ctx context.Context, f dal.RWTxWork
 		return err
 	}
 	if err := dbTx.Commit(); err != nil {
-		return errors.WithMessage(err, "failed to commit transaction")
+		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 	return nil
 }

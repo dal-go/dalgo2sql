@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"github.com/dal-go/dalgo/dal"
-	"github.com/pkg/errors"
 )
 
 func (dtb *database) Set(ctx context.Context, record dal.Record) error {
@@ -26,7 +25,7 @@ func (t transaction) SetMulti(ctx context.Context, records []dal.Record) error {
 func setSingle(_ context.Context, options Options, record dal.Record, execQuery queryExecutor, exec statementExecutor) error {
 	exists, err := existsSingle(options, record.Key(), execQuery)
 	if err != nil {
-		return errors.WithMessage(err, "failed to check if record exists")
+		return fmt.Errorf("failed to check if record exists: %w", err)
 	}
 	var qry query
 	if exists {
@@ -43,7 +42,7 @@ func setSingle(_ context.Context, options Options, record dal.Record, execQuery 
 func setMulti(ctx context.Context, options Options, records []dal.Record, execQuery queryExecutor, execStatement statementExecutor) error {
 	for i, record := range records {
 		if err := setSingle(ctx, options, record, execQuery, execStatement); err != nil {
-			return errors.WithMessagef(err, "failed to set record #%v of %v", i+1, len(records))
+			return fmt.Errorf("failed to set record #%d of %d: %w", i+1, len(records), err)
 		}
 	}
 	return nil

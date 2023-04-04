@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"github.com/dal-go/dalgo/dal"
-	"github.com/pkg/errors"
 )
 
 func (dtb *database) Update(ctx context.Context, key *dal.Key, updates []dal.Update, preconditions ...dal.Precondition) error {
@@ -40,7 +39,7 @@ func updateSingle(_ context.Context, options Options, execStatement statementExe
 	qry.args = append(qry.args, key.ID)
 	result, err := execStatement(qry.text, qry.args...)
 	if err != nil {
-		return errors.WithMessage(err, "failed to update a single record")
+		return fmt.Errorf("failed to update a single record: %w", err)
 	}
 	if count, err := result.RowsAffected(); err == nil && count > 1 {
 		return fmt.Errorf("expected to update a single row, number of affected rows: %v", count)
@@ -51,7 +50,7 @@ func updateSingle(_ context.Context, options Options, execStatement statementExe
 func updateMulti(ctx context.Context, options Options, execStatement statementExecutor, keys []*dal.Key, updates []dal.Update, preconditions ...dal.Precondition) error {
 	for i, key := range keys {
 		if err := updateSingle(ctx, options, execStatement, key, updates, preconditions...); err != nil {
-			return errors.WithMessagef(err, "failed to update record #%v of %v", i+1, len(keys))
+			return fmt.Errorf("failed to update record #%d of %d: %w", i+1, len(keys), err)
 		}
 	}
 	return nil
