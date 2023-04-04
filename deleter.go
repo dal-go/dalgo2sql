@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"github.com/dal-go/dalgo/dal"
-	"strings"
 )
 
 type statementExecutor = func(query string, args ...interface{}) (sql.Result, error)
@@ -40,7 +39,7 @@ func deleteSingle(_ context.Context, options Options, key *dal.Key, exec stateme
 func deleteMulti(ctx context.Context, options Options, keys []*dal.Key, exec statementExecutor) error {
 	var prevTable string
 	var tableKeys []*dal.Key
-	delete := func(table string, keys []*dal.Key) error {
+	deleteByKeys := func(table string, keys []*dal.Key) error {
 		if len(keys) == 0 {
 			return nil
 		}
@@ -67,7 +66,7 @@ func deleteMulti(ctx context.Context, options Options, keys []*dal.Key, exec sta
 			continue
 		}
 		if prevTable != "" {
-			if err := delete(prevTable, tableKeys); err != nil {
+			if err := deleteByKeys(prevTable, tableKeys); err != nil {
 				return err
 			}
 		}
@@ -76,34 +75,35 @@ func deleteMulti(ctx context.Context, options Options, keys []*dal.Key, exec sta
 		tableKeys[0] = key
 	}
 	if len(tableKeys) > 0 {
-		if err := delete(prevTable, tableKeys); err != nil {
+		if err := deleteByKeys(prevTable, tableKeys); err != nil {
 			return err
 		}
 	}
 	return nil
 }
-func deleteMultiInSingleTable(_ context.Context, options Options, keys []*dal.Key, exec statementExecutor) error {
-	pkCol := "ID"
 
-	collection := keys[0].Collection()
-	if rs, hasOptions := options.Recordsets[collection]; hasOptions && len(rs.PrimaryKey) == 1 {
-		pkCol = rs.PrimaryKey[0].Name
-	}
-
-	query := fmt.Sprintf("DELETE FROM %v WHERE %v IN (", collection, pkCol)
-	args := make([]interface{}, len(keys))
-	q := make([]string, len(keys))
-	for i, key := range keys {
-		args[i] = key.ID
-		q[i] = "?"
-	}
-	query += strings.Join(q, ", ") + ")"
-	_, err := exec(query, args...)
-	if err != nil {
-		return err
-	}
-	return nil
-}
+//func deleteMultiInSingleTable(_ context.Context, options Options, keys []*dal.Key, exec statementExecutor) error {
+//	pkCol := "ID"
+//
+//	collection := keys[0].Collection()
+//	if rs, hasOptions := options.Recordsets[collection]; hasOptions && len(rs.PrimaryKey) == 1 {
+//		pkCol = rs.PrimaryKey[0].Name
+//	}
+//
+//	query := fmt.Sprintf("DELETE FROM %v WHERE %v IN (", collection, pkCol)
+//	args := make([]interface{}, len(keys))
+//	q := make([]string, len(keys))
+//	for i, key := range keys {
+//		args[i] = key.ID
+//		q[i] = "?"
+//	}
+//	query += strings.Join(q, ", ") + ")"
+//	_, err := exec(query, args...)
+//	if err != nil {
+//		return err
+//	}
+//	return nil
+//}
 
 func (t transaction) DeleteMulti(ctx context.Context, keys []*dal.Key) error {
 	return deleteMulti(ctx, t.sqlOptions, keys, t.tx.Exec)
