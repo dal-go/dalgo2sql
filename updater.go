@@ -3,11 +3,11 @@ package dalgo2sql
 import (
 	"context"
 	"fmt"
+	"github.com/dal-go/dalgo/dal"
 	"github.com/pkg/errors"
-	"github.com/strongo/dalgo/dal"
 )
 
-func (dtb database) Update(ctx context.Context, key *dal.Key, updates []dal.Update, preconditions ...dal.Precondition) error {
+func (dtb *database) Update(ctx context.Context, key *dal.Key, updates []dal.Update, preconditions ...dal.Precondition) error {
 	return updateSingle(ctx, dtb.options, dtb.db.Exec, key, updates, preconditions...)
 }
 
@@ -15,7 +15,7 @@ func (t transaction) Update(ctx context.Context, key *dal.Key, updates []dal.Upd
 	return updateSingle(ctx, t.sqlOptions, t.tx.Exec, key, updates, preconditions...)
 }
 
-func (dtb database) UpdateMulti(ctx context.Context, keys []*dal.Key, updates []dal.Update, preconditions ...dal.Precondition) error {
+func (dtb *database) UpdateMulti(ctx context.Context, keys []*dal.Key, updates []dal.Update, preconditions ...dal.Precondition) error {
 	return updateMulti(ctx, dtb.options, dtb.db.Exec, keys, updates, preconditions...)
 }
 

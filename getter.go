@@ -5,15 +5,15 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/dal-go/dalgo/dal"
 	"github.com/georgysavva/scany/sqlscan"
-	"github.com/strongo/dalgo/dal"
 	"reflect"
 	"strings"
 )
 
 type queryExecutor = func(query string, args ...interface{}) (*sql.Rows, error)
 
-func (dtb database) Get(ctx context.Context, record dal.Record) error {
+func (dtb *database) Get(ctx context.Context, record dal.Record) error {
 	return getSingle(ctx, dtb.options, record, dtb.db.Query)
 }
 
@@ -21,7 +21,7 @@ func (t transaction) Get(ctx context.Context, record dal.Record) error {
 	return getSingle(ctx, t.sqlOptions, record, t.tx.Query)
 }
 
-func (dtb database) GetMulti(ctx context.Context, records []dal.Record) error {
+func (dtb *database) GetMulti(ctx context.Context, records []dal.Record) error {
 	return getMulti(ctx, dtb.options, records, dtb.db.Query)
 }
 
@@ -31,15 +31,18 @@ func (t transaction) GetMulti(ctx context.Context, records []dal.Record) error {
 
 func getSingle(_ context.Context, options Options, record dal.Record, exec queryExecutor) error {
 	fields := getSelectFields(record, false, options)
-	queryText := fmt.Sprintf("SELECT %v FROM %v", strings.Join(fields, ", "), record.Key().Collection())
+	queryText := fmt.Sprintf("SELECT %s FROM %s", strings.Join(fields, ", "), record.Key().Collection())
 	rows, err := exec(queryText)
 	if err != nil {
 		record.SetError(err)
+		if dal.IsNotFound(err) {
+			return nil
+		}
 		return err
 	}
 	if !rows.Next() {
 		record.SetError(dal.ErrRecordNotFound)
-		return dal.NewErrNotFoundByKey(record.Key(), dal.ErrNoMoreRecords)
+		return nil
 	}
 	if err = rowIntoRecord(rows, record, false); err != nil {
 		return err
@@ -149,7 +152,7 @@ func rowIntoRecord(rows *sql.Rows, record dal.Record, pkIncluded bool) error {
 		record.SetError(err)
 		return err
 	}
-	record.SetError(nil)
+	record.SetError(dal.NoError)
 	return nil
 	//return delayedScanWithDataTo(rows, record)
 }

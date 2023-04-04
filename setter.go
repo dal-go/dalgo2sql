@@ -3,11 +3,11 @@ package dalgo2sql
 import (
 	"context"
 	"fmt"
+	"github.com/dal-go/dalgo/dal"
 	"github.com/pkg/errors"
-	"github.com/strongo/dalgo/dal"
 )
 
-func (dtb database) Set(ctx context.Context, record dal.Record) error {
+func (dtb *database) Set(ctx context.Context, record dal.Record) error {
 	return setSingle(ctx, dtb.options, record, dtb.db.Query, dtb.db.Exec)
 }
 
@@ -15,7 +15,7 @@ func (t transaction) Set(ctx context.Context, record dal.Record) error {
 	return setSingle(ctx, t.sqlOptions, record, t.tx.Query, t.tx.Exec)
 }
 
-func (dtb database) SetMulti(ctx context.Context, records []dal.Record) error {
+func (dtb *database) SetMulti(ctx context.Context, records []dal.Record) error {
 	return setMulti(ctx, dtb.options, records, dtb.db.Query, dtb.db.Exec)
 }
 

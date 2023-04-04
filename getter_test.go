@@ -1,7 +1,7 @@
 package dalgo2sql
 
 import (
-	"github.com/strongo/dalgo/dal"
+	"github.com/dal-go/dalgo/dal"
 	"reflect"
 	"testing"
 )
@@ -33,7 +33,7 @@ func Test_getSelectFields(t *testing.T) {
 			name: "simple_fields_include_primary_key",
 			args: args{
 				record: dal.NewRecordWithData(
-					dal.NewKeyWithStrID("TestTable", "r1"),
+					dal.NewKeyWithID("TestTable", "r1"),
 					struct {
 						StrField string
 						IntField int

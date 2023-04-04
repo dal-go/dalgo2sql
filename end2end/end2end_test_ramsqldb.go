@@ -1,9 +1,9 @@
 package end2end
 
 import (
-	"github.com/strongo/dalgo/end2end"
-	"github.com/strongo/dalgo2sql"
-	"github.com/strongo/dalgo2sql/end2end/ramsqldb"
+	"github.com/dal-go/dalgo/end2end"
+	"github.com/dal-go/dalgo2sql"
+	"github.com/dal-go/dalgo2sql/end2end/ramsqldb"
 	"testing"
 )
 

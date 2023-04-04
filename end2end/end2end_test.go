@@ -1,7 +1,7 @@
 package end2end
 
 import (
-	"github.com/strongo/dalgo2sql"
+	"github.com/dal-go/dalgo2sql"
 	"testing"
 )
 

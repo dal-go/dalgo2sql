@@ -2,10 +2,10 @@ package dalgo2sql
 
 import (
 	"context"
-	"github.com/strongo/dalgo/dal"
+	"github.com/dal-go/dalgo/dal"
 )
 
-func (dtb database) Insert(ctx context.Context, record dal.Record, opts ...dal.InsertOption) error {
+func (dtb *database) Insert(ctx context.Context, record dal.Record, opts ...dal.InsertOption) error {
 	return insertSingle(ctx, dtb.options, record, dtb.db.Exec)
 }
 

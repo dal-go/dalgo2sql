@@ -1,7 +1,7 @@
 package dalgo2sql
 
 import (
-	"github.com/strongo/dalgo2sql/end2end/ramsqldb"
+	"github.com/dal-go/dalgo2sql/end2end/ramsqldb"
 	"testing"
 )
 

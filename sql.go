@@ -2,7 +2,7 @@ package dalgo2sql
 
 import (
 	"fmt"
-	"github.com/strongo/dalgo/dal"
+	"github.com/dal-go/dalgo/dal"
 	"reflect"
 	"strings"
 )

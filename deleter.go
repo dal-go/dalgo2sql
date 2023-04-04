@@ -4,13 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"github.com/strongo/dalgo/dal"
+	"github.com/dal-go/dalgo/dal"
 	"strings"
 )
 
 type statementExecutor = func(query string, args ...interface{}) (sql.Result, error)
 
-func (dtb database) Delete(ctx context.Context, key *dal.Key) error {
+func (dtb *database) Delete(ctx context.Context, key *dal.Key) error {
 	return deleteSingle(ctx, dtb.options, key, dtb.db.Exec)
 }
 
@@ -18,7 +18,7 @@ func (t transaction) Delete(ctx context.Context, key *dal.Key) error {
 	return deleteSingle(ctx, t.sqlOptions, key, t.tx.Exec)
 }
 
-func (dtb database) DeleteMulti(ctx context.Context, keys []*dal.Key) error {
+func (dtb *database) DeleteMulti(ctx context.Context, keys []*dal.Key) error {
 	return deleteMulti(ctx, dtb.options, keys, dtb.db.Exec)
 }
 
