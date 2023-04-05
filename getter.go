@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/dal-go/dalgo/dal"
-	"github.com/georgysavva/scany/sqlscan"
+	"github.com/georgysavva/scany/v2/sqlscan"
 	"reflect"
 	"strings"
 )
