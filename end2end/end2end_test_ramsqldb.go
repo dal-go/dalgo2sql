@@ -1,7 +1,7 @@
 package end2end
 
 import (
-	"github.com/dal-go/dalgo/end2end"
+	end2end "github.com/dal-go/dalgo-end2end-tests"
 	"github.com/dal-go/dalgo2sql"
 	"github.com/dal-go/dalgo2sql/end2end/ramsqldb"
 	"testing"
