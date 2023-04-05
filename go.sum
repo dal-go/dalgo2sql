@@ -1,6 +1,4 @@
 github.com/cockroachdb/cockroach-go/v2 v2.2.0 h1:/5znzg5n373N/3ESjHF5SMLxiW4RKB05Ql//KWfeTFs=
-github.com/dal-go/dalgo v0.2.2 h1:xgmUJ5hSXnjo0Zx9UOXUjvNoimmM0kLMUqYnK5Cl2b0=
-github.com/dal-go/dalgo v0.2.2/go.mod h1:Ov7wCe2kOqIb+IKu3RKM+a3tGpg4foblLdkuyadoEwE=
 github.com/dal-go/dalgo v0.2.3 h1:n5B7kPf6YZn0gu1SP79USFMDB0BmuxhWLgI690lO7Ks=
 github.com/dal-go/dalgo v0.2.3/go.mod h1:Fv3s/hxtByMVY7PSOi6SJ/5B981kNCuKGBa5O0xHCnM=
 github.com/dal-go/dalgo-end2end-tests v0.0.7 h1:jxifbsyWRQnGbou4todSD2Cszn86sTlah4RlOHhWi8Q=
@@ -22,8 +20,6 @@ github.com/lib/pq v1.10.0 h1:Zx5DJFEYQXio93kgXnQ09fXNiUKsqv4OUEu2UtGcB1E=
 github.com/pkg/errors v0.9.1 h1:FEBLx1zS214owpjy7qsBeixbURkuhQAwrK5UwLGTwt4=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
-github.com/proullon/ramsql v0.0.0-20210730175921-2692f3496a21 h1:3bZqQXUcAS8Y2dLYmxwlfjXz5plk55knIEyiWbeiYkI=
-github.com/proullon/ramsql v0.0.0-20210730175921-2692f3496a21/go.mod h1:jG8oAQG0ZPHPyxg5QlMERS31airDC+ZuqiAe8DUvFVo=
 github.com/proullon/ramsql v0.0.0-20230224205054-8ff679dbf7aa h1:qRoBKPxDZ37ZgHIPkgLahJ48vdaeMLKz3jYDZJKQbTE=
 github.com/proullon/ramsql v0.0.0-20230224205054-8ff679dbf7aa/go.mod h1:jG8oAQG0ZPHPyxg5QlMERS31airDC+ZuqiAe8DUvFVo=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
@@ -41,7 +37,6 @@ github.com/strongo/validation v0.0.1/go.mod h1:euQ9ywYwBASSnCLSYOx8JW0u4/71yfbeZ
 golang.org/x/crypto v0.0.0-20220829220503-c86fa9a7ed90 h1:Y/gsMcFOcR+6S6f3YeMKl5g+dZMEWqcz5Czj/GWYbkM=
 golang.org/x/sys v0.0.0-20210823070655-63515b42dcdf h1:2ucpDCmfkl8Bd/FsLtiD653Wf96cW37s+iGx93zsu4k=
 golang.org/x/text v0.3.7 h1:olpwvP2KacW1ZWvsR7uQhoyTYvKAupfQrRGBFM352Gk=
-gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405 h1:yhCVgyC4o1eVCa2tZl7eS0r+SDo693bJlVdllGtEeKM=
 gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
 gopkg.in/yaml.v3 v3.0.0-20200313102051-9f266ea9e77c/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
 gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
