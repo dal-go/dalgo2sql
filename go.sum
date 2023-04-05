@@ -106,6 +106,8 @@ github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZb
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/proullon/ramsql v0.0.0-20210730175921-2692f3496a21 h1:3bZqQXUcAS8Y2dLYmxwlfjXz5plk55knIEyiWbeiYkI=
 github.com/proullon/ramsql v0.0.0-20210730175921-2692f3496a21/go.mod h1:jG8oAQG0ZPHPyxg5QlMERS31airDC+ZuqiAe8DUvFVo=
+github.com/proullon/ramsql v0.0.0-20230224205054-8ff679dbf7aa h1:qRoBKPxDZ37ZgHIPkgLahJ48vdaeMLKz3jYDZJKQbTE=
+github.com/proullon/ramsql v0.0.0-20230224205054-8ff679dbf7aa/go.mod h1:jG8oAQG0ZPHPyxg5QlMERS31airDC+ZuqiAe8DUvFVo=
 github.com/rogpeppe/go-internal v1.3.0/go.mod h1:M8bDsm7K2OlrFYOpmOWEs/qY81heoFRclV5y23lUDJ4=
 github.com/rs/xid v1.2.1/go.mod h1:+uKXf+4Djp6Md1KODXJxgGQPKngRmWyn10oCKFzNHOQ=
 github.com/rs/zerolog v1.13.0/go.mod h1:YbFCdg8HfsridGWAh22vktObvhZbQsZXe4/zB0OKkWU=

@@ -5,7 +5,7 @@ go 1.20
 require (
 	github.com/dal-go/dalgo v0.2.2
 	github.com/georgysavva/scany v1.2.1
-	github.com/proullon/ramsql v0.0.0-20210730175921-2692f3496a21
+	github.com/proullon/ramsql v0.0.0-20230224205054-8ff679dbf7aa
 )
 
 require (
