@@ -31,10 +31,31 @@ type Recordset struct {
 	PrimaryKey []Field // Primary keys by table name
 }
 
+var _ dal.Database = (*database)(nil)
+
 type database struct {
+	id              string
 	db              *sql.DB
 	options         Options
 	onlyReadWriteTx bool
+}
+
+func (dtb *database) ID() string {
+	return dtb.id
+}
+
+func (dtb *database) Client() dal.ClientInfo {
+	return dal.NewClientInfo("dalgo2sql", Version)
+}
+
+func (dtb *database) QueryReader(c context.Context, query dal.Query) (dal.Reader, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (dtb *database) QueryAllRecords(ctx context.Context, query dal.Query) (records []dal.Record, err error) {
+	//TODO implement me
+	panic("implement me")
 }
 
 // Options provides database sqlOptions for DALgo - // TODO: document why & how to use
@@ -86,7 +107,7 @@ func (dtb *database) RunReadwriteTransaction(ctx context.Context, f dal.RWTxWork
 	if err != nil {
 		return err
 	}
-	if err = f(ctx, transaction{tx: dbTx, sqlOptions: dtb.options}); err != nil {
+	if err = f(ctx, readwriteTransaction{tx: dbTx, sqlOptions: dtb.options}); err != nil {
 		if rollbackErr := dbTx.Rollback(); rollbackErr != nil {
 			return dal.NewRollbackError(rollbackErr, err)
 		}
@@ -98,7 +119,7 @@ func (dtb *database) RunReadwriteTransaction(ctx context.Context, f dal.RWTxWork
 	return nil
 }
 
-func (dtb *database) Select(ctx context.Context, query dal.Select) (dal.Reader, error) {
+func (dtb *database) Select(ctx context.Context, query dal.Query) (dal.Reader, error) {
 	panic("implement me")
 }
 

@@ -21,7 +21,7 @@ func Test_getSelectFields(t *testing.T) {
 		{
 			name: "simple_fields_exclude_primary_key",
 			args: args{
-				record: dal.NewRecordWithoutKey(struct {
+				record: dal.NewRecordWithoutKey("SomeCollection", reflect.String, struct {
 					StrField string
 					IntField int
 				}{}),
