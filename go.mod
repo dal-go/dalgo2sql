@@ -6,7 +6,7 @@ require (
 	github.com/dal-go/dalgo v0.5.0
 	github.com/dal-go/dalgo-end2end-tests v0.0.25
 	github.com/georgysavva/scany/v2 v2.0.0
-	github.com/proullon/ramsql v0.0.1
+	github.com/proullon/ramsql v0.1.1
 )
 
 require (
@@ -15,5 +15,6 @@ require (
 	github.com/stretchr/testify v1.8.4 // indirect
 	github.com/strongo/random v0.0.1 // indirect
 	github.com/strongo/validation v0.0.5 // indirect
+	golang.org/x/exp v0.0.0-20230713183714-613f0c0eb8a1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
