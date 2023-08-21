@@ -74,6 +74,7 @@ func getMultiFromSingleTable(_ context.Context, options Options, records []dal.R
 	}
 	records = append(make([]dal.Record, 0, len(records)), records...)
 	collection := records[0].Key().Collection()
+	records[0].SetError(nil)
 	val := reflect.ValueOf(records[0].Data()).Elem()
 	valType := val.Type()
 	fields := getSelectFields(records[0], true, options)
@@ -144,6 +145,7 @@ func getMultiFromSingleTable(_ context.Context, options Options, records []dal.R
 }
 
 func rowIntoRecord(rows *sql.Rows, record dal.Record, pkIncluded bool) error {
+	record.SetError(nil)
 	data := record.Data()
 	if data == nil {
 		panic("getting records by key requires a record with data")
@@ -227,11 +229,12 @@ func scanIntoDataWithPrimaryKeyIncluded(rows *sql.Rows, data interface{}) error 
 //}
 
 func getSelectFields(record dal.Record, includePK bool, options Options) (fields []string) {
+	record.SetError(nil)
 	data := record.Data()
 	if data == nil {
 		panic(fmt.Sprintf("getting by ID requires a record with data, key: %v", record.Key()))
 	}
-	val := reflect.ValueOf(record.Data())
+	val := reflect.ValueOf(data)
 	kind := val.Kind()
 	if kind == reflect.Ptr || kind == reflect.Interface {
 		val = val.Elem()

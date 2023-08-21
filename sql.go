@@ -29,6 +29,7 @@ func buildSingleRecordQuery(o operation, options Options, record dal.Record) (qu
 	}
 	var cols []string
 	var q []string
+	record.SetError(nil)
 	data := record.Data()
 	val := reflect.ValueOf(data)
 	if kind := val.Kind(); kind == reflect.Interface || kind == reflect.Ptr {

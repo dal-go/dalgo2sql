@@ -3,8 +3,8 @@ module github.com/dal-go/dalgo2sql
 go 1.20
 
 require (
-	github.com/dal-go/dalgo v0.2.31
-	github.com/dal-go/dalgo-end2end-tests v0.0.23
+	github.com/dal-go/dalgo v0.5.0
+	github.com/dal-go/dalgo-end2end-tests v0.0.25
 	github.com/georgysavva/scany/v2 v2.0.0
 	github.com/proullon/ramsql v0.0.1
 )
