@@ -53,9 +53,8 @@ func processPrimaryKey(primaryKey []string, key *dal.Key, f func(i int, name str
 
 func buildSingleRecordQuery(o operation, options Options, record dal.Record) (query query) {
 	key := record.Key()
-	collection := key.Collection()
-	rs, hasRecordsetDefinition := options.Recordsets[collection]
-
+	collection := getRecordsetName(key)
+	pk := options.PrimaryKeyFieldNames(key)
 	switch o {
 	case insert:
 		query.text = "INSERT INTO " + collection
@@ -72,25 +71,12 @@ func buildSingleRecordQuery(o operation, options Options, record dal.Record) (qu
 	}
 	valType := val.Type()
 
-	var primaryKey []string
-	if hasRecordsetDefinition && len(rs.PrimaryKey) > 0 {
-		for _, pk := range rs.PrimaryKey {
-			primaryKey = append(primaryKey, pk.Name)
-		}
-	} else if len(options.PrimaryKey) > 0 {
-		primaryKey = options.PrimaryKey
-	} else {
-		if o == update {
-			panic(fmt.Sprintf("no primary key defined for: '%s'", collection))
-		}
-	}
-
 	if key.ID != nil && o == insert {
-		if len(primaryKey) == 0 {
+		if len(pk) == 0 {
 			panic(fmt.Sprintf("record key has value but no primary key defined for: '%s'", collection))
 		}
-		processPrimaryKey(primaryKey, key, func(i int, name string, v any) {
-			cols = append(cols, rs.PrimaryKey[0].Name)
+		processPrimaryKey(pk, key, func(i int, name string, v any) {
+			cols = append(cols, name)
 			query.args = append(query.args, v)
 			argPlaceholders = append(argPlaceholders, "?")
 		})
@@ -100,7 +86,7 @@ func buildSingleRecordQuery(o operation, options Options, record dal.Record) (qu
 
 	for i := 0; i < val.NumField(); i++ {
 		name := valType.Field(i).Name
-		if slices.Contains(primaryKey, name) {
+		if slices.Contains(pk, name) {
 			continue
 		}
 		cols = append(cols, name)
@@ -125,7 +111,7 @@ func buildSingleRecordQuery(o operation, options Options, record dal.Record) (qu
 			panic(fmt.Sprintf("no fields to update for: '%s'", collection))
 		}
 		var pkConditions []string
-		processPrimaryKey(primaryKey, key, func(i int, name string, v any) {
+		processPrimaryKey(pk, key, func(i int, name string, v any) {
 			pkConditions = append(pkConditions, name+" = ?")
 			query.args = append(query.args, v)
 		})

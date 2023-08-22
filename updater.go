@@ -30,11 +30,14 @@ func updateSingle(ctx context.Context, options Options, execStatement statementE
 		qry.text += fmt.Sprintf("\n\t%v = ?", update.Field)
 		qry.args = append(qry.args, update.Value)
 	}
-	collection := key.Collection()
-	if rs, hasOptions := options.Recordsets[collection]; hasOptions && len(rs.PrimaryKey) == 1 {
-		qry.text += fmt.Sprintf("\n\tWHERE %v = ?", rs.PrimaryKey[0].Name)
-	} else {
-		qry.text += "\n\tWHERE ID = ?"
+	primaryKey := options.PrimaryKeyFieldNames(key)
+	switch len(primaryKey) {
+	case 0:
+		return fmt.Errorf("primary key is not defined for %s", getRecordsetName(key))
+	case 1:
+		qry.text += fmt.Sprintf("\n\tWHERE %v = ?", primaryKey[0])
+	default:
+		return fmt.Errorf("%w: update by composite primary key is not supported yet", dal.ErrNotImplementedYet)
 	}
 	qry.args = append(qry.args, key.ID)
 	result, err := execStatement(ctx, qry.text, qry.args...)

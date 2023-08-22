@@ -30,19 +30,27 @@ func (t transaction) GetMulti(ctx context.Context, records []dal.Record) error {
 }
 
 func getSingle(_ context.Context, options Options, record dal.Record, exec queryExecutor) error {
+	key := record.Key()
+	rsName := getRecordsetName(key)
 	fields := getSelectFields(false, options, record)
-	queryText := fmt.Sprintf("SELECT %s FROM %s", strings.Join(fields, ", "), record.Key().Collection())
-	rows, err := exec(queryText)
+	queryText := fmt.Sprintf("SELECT %s FROM %s WHERE ", strings.Join(fields, ", "), rsName)
+
+	pk := options.PrimaryKeyFieldNames(key)
+	if len(pk) == 0 {
+		return fmt.Errorf("primary key is not defined for recorset %s", rsName)
+	} else if len(pk) > 1 {
+		return fmt.Errorf("%w: select by composite primary key is not supported yet", dal.ErrNotImplementedYet)
+	}
+	queryText += pk[0] + " = ?"
+
+	rows, err := exec(queryText, key.ID)
 	if err != nil {
 		record.SetError(err)
-		if dal.IsNotFound(err) {
-			return nil
-		}
 		return err
 	}
 	if !rows.Next() {
 		record.SetError(dal.ErrRecordNotFound)
-		return nil
+		return dal.ErrRecordNotFound
 	}
 	if err = rowIntoRecord(rows, record, false); err != nil {
 		return err
@@ -77,8 +85,8 @@ func getMultiFromSingleTable(_ context.Context, options Options, records []dal.R
 
 	rs, hasRecordsetDefinition := options.Recordsets[collection]
 	var primaryKey []string
-	if hasRecordsetDefinition && len(rs.PrimaryKey) > 0 {
-		for _, pk := range rs.PrimaryKey {
+	if hasRecordsetDefinition && len(rs.PrimaryKey()) > 0 {
+		for _, pk := range rs.PrimaryKey() {
 			primaryKey = append(primaryKey, pk.Name)
 		}
 	} else if len(options.PrimaryKey) > 0 {
@@ -277,7 +285,7 @@ func getSelectFields(includePK bool, options Options, records ...dal.Record) (fi
 		}
 		fields = make([]string, 1, numberOfFields+1)
 		if rs, hasOptions := options.Recordsets[collection]; hasOptions {
-			fields[0] = rs.PrimaryKey[0].Name
+			fields[0] = rs.PrimaryKey()[0].Name
 		} else {
 			fields[0] = "ID"
 		}

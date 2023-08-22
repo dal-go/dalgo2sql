@@ -8,11 +8,15 @@ import (
 	"testing"
 )
 
+// TODO: Add Close() to dal.Database
 func testEndToEndRAMSQLDB(t *testing.T, options dalgo2sql.Options) {
-	db := ramsqldb.OpenTestDb(t)
+	ramDB := ramsqldb.OpenTestDb(t)
+	db := dalgo2sql.NewDatabase(ramDB, options)
 	defer func() {
-		_ = db.Close()
+		err := db.Close()
+		if err != nil {
+			t.Errorf("failed to close database: %v", err)
+		}
 	}()
-	database := dalgo2sql.NewDatabase(db, options)
-	end2end.TestDalgoDB(t, database, dal.ErrNotImplementedYet, false)
+	end2end.TestDalgoDB(t, db, dal.ErrNotImplementedYet, false)
 }

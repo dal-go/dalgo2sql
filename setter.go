@@ -57,13 +57,15 @@ func setMulti(ctx context.Context, options Options, records []dal.Record, execQu
 
 func existsSingle(options Options, key *dal.Key, execQuery queryExecutor) (bool, error) {
 	collection := key.Collection()
-	var col = "ID"
-	var where = "ID = ?"
-	if rs, hasOptions := options.Recordsets[collection]; hasOptions && len(rs.PrimaryKey) == 1 {
-		col = rs.PrimaryKey[0].Name
-		where = col + " = ?"
+	pk := options.PrimaryKeyFieldNames(key)
+	var where string
+	if len(pk) == 1 {
+		where = pk[0] + " = ?"
+	} else {
+		return false, fmt.Errorf("%w: composite primary keys are not suported yet", dal.ErrNotImplementedYet)
 	}
-	queryText := fmt.Sprintf("SELECT %v FROM %v WHERE ", col, collection) + where
+	// `SELECT 1` is not supported by some SQL drivers so select 1st column from primary key
+	queryText := fmt.Sprintf("SELECT %s FROM %s WHERE %s", pk[0], collection, where)
 	rows, err := execQuery(queryText, key.ID)
 	return err == nil && rows.Next(), err
 }

@@ -4,6 +4,7 @@ go 1.20
 
 replace (
 	github.com/dal-go/dalgo-end2end-tests => ../dalgo-end2end-tests
+	github.com/dal-go/dalgo => ../dalgo
 )
 
 require (

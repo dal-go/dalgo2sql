@@ -24,8 +24,8 @@ func (dtb *database) DeleteMulti(ctx context.Context, keys []*dal.Key) error {
 func deleteSingle(ctx context.Context, options Options, key *dal.Key, exec statementExecutor) error {
 	collection := key.Collection()
 	query := fmt.Sprintf("DELETE FROM %v WHERE ", key.Collection())
-	if rs, hasOptions := options.Recordsets[collection]; hasOptions && len(rs.PrimaryKey) == 1 {
-		query += rs.PrimaryKey[0].Name + " = ?"
+	if rs, hasOptions := options.Recordsets[collection]; hasOptions && len(rs.PrimaryKey()) == 1 {
+		query += rs.PrimaryKey()[0].Name + " = ?"
 	} else {
 		query += "ID = ?"
 	}

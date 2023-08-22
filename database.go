@@ -12,6 +12,10 @@ type Field struct {
 	Name string
 }
 
+func (v Field) String() string {
+	return v.Name
+}
+
 // RecordsetType defines type of a database recordset
 type RecordsetType = int
 
@@ -26,9 +30,39 @@ const (
 
 // Recordset hold recordset settings
 type Recordset struct {
-	Type       RecordsetType
-	Name       string
-	PrimaryKey []Field // Primary keys by table name
+	name       string
+	t          RecordsetType
+	primaryKey []dal.FieldRef // Primary keys by table name
+}
+
+func (v *Recordset) Name() string {
+	return v.name
+}
+
+func (v *Recordset) PrimaryKey() []dal.FieldRef {
+	pk := make([]dal.FieldRef, len(v.primaryKey))
+	copy(pk, v.primaryKey)
+	return pk
+}
+
+func (v *Recordset) PrimaryKeyFieldNames() []string {
+	pk := make([]string, len(v.primaryKey))
+	for i, f := range v.primaryKey {
+		pk[i] = f.Name
+	}
+	return pk
+}
+
+func NewRecordset(name string, t RecordsetType, primaryKey []dal.FieldRef) *Recordset {
+	return &Recordset{
+		name:       name,
+		t:          t,
+		primaryKey: primaryKey,
+	}
+}
+
+func (v *Recordset) Type() RecordsetType {
+	return v.t
 }
 
 var _ dal.Database = (*database)(nil)
@@ -38,6 +72,10 @@ type database struct {
 	db              *sql.DB
 	options         Options
 	onlyReadWriteTx bool
+}
+
+func (dtb *database) Close() error {
+	return dtb.db.Close()
 }
 
 func (dtb *database) ID() string {
@@ -61,7 +99,24 @@ func (dtb *database) QueryAllRecords(ctx context.Context, query dal.Query) (reco
 // Options provides database sqlOptions for DALgo - // TODO: document why & how to use
 type Options struct {
 	PrimaryKey []string
-	Recordsets map[string]Recordset
+	Recordsets map[string]*Recordset
+}
+
+func (o Options) GetRecordsetByKey(key *dal.Key) *Recordset {
+	rsName := getRecordsetName(key)
+	return o.Recordsets[rsName]
+}
+
+func (o Options) PrimaryKeyFieldNames(key *dal.Key) (primaryKey []string) {
+	rs := o.GetRecordsetByKey(key)
+	if pk := rs.PrimaryKey(); len(pk) > 0 {
+		primaryKey = make([]string, len(pk))
+		for i, f := range pk {
+			primaryKey[i] = f.Name
+		}
+		return
+	}
+	return nil
 }
 
 func (dtb *database) RunReadonlyTransaction(ctx context.Context, f dal.ROTxWorker, options ...dal.TransactionOption) error {
