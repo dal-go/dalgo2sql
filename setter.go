@@ -7,39 +7,46 @@ import (
 )
 
 func (dtb *database) Set(ctx context.Context, record dal.Record) error {
-	return setSingle(ctx, dtb.options, record, dtb.db.Query, dtb.db.Exec)
+	return setSingle(ctx, dtb.options, record, dtb.db.Query, dtb.db.ExecContext)
 }
 
 func (t transaction) Set(ctx context.Context, record dal.Record) error {
-	return setSingle(ctx, t.sqlOptions, record, t.tx.Query, t.tx.Exec)
+	return setSingle(ctx, t.sqlOptions, record, t.tx.Query, t.tx.ExecContext)
 }
 
 func (dtb *database) SetMulti(ctx context.Context, records []dal.Record) error {
-	return setMulti(ctx, dtb.options, records, dtb.db.Query, dtb.db.Exec)
+	err := dtb.RunReadwriteTransaction(ctx, func(ctx context.Context, tx dal.ReadwriteTransaction) error {
+		return setMulti(ctx, dtb.options, records, dtb.db.Query, dtb.db.ExecContext)
+	})
+	return err
+
 }
 
 func (t transaction) SetMulti(ctx context.Context, records []dal.Record) error {
-	return setMulti(ctx, t.sqlOptions, records, t.tx.Query, t.tx.Exec)
+	return setMulti(ctx, t.sqlOptions, records, t.tx.Query, t.tx.ExecContext)
 }
 
-func setSingle(_ context.Context, options Options, record dal.Record, execQuery queryExecutor, exec statementExecutor) error {
-	exists, err := existsSingle(options, record.Key(), execQuery)
+func setSingle(ctx context.Context, options Options, record dal.Record, execQuery queryExecutor, exec statementExecutor) error {
+	key := record.Key()
+	exists, err := existsSingle(options, key, execQuery)
 	if err != nil {
 		return fmt.Errorf("failed to check if record exists: %w", err)
 	}
-	var qry query
+	var o operation
 	if exists {
-		qry = buildSingleRecordQuery(update, options, record)
+		o = update
 	} else {
-		qry = buildSingleRecordQuery(insert, options, record)
+		o = insert
 	}
-	if _, err := exec(qry.text, qry.args...); err != nil {
+	qry := buildSingleRecordQuery(o, options, record)
+	if _, err := exec(ctx, qry.text, qry.args...); err != nil {
 		return err
 	}
 	return nil
 }
 
 func setMulti(ctx context.Context, options Options, records []dal.Record, execQuery queryExecutor, execStatement statementExecutor) error {
+	// TODO(help-wanted): insert of multiple rows at once as: "INSERT INTO table (colA, colB) VALUES (a1, b2), (a2, b2)"
 	for i, record := range records {
 		if err := setSingle(ctx, options, record, execQuery, execStatement); err != nil {
 			return fmt.Errorf("failed to set record #%d of %d: %w", i+1, len(records), err)

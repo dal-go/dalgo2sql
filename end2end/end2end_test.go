@@ -13,6 +13,11 @@ func TestEndToEnd(t *testing.T) {
 				Type:       dalgo2sql.Table,
 				PrimaryKey: []dalgo2sql.Field{{Name: "ID1"}},
 			},
+			"DalgoE2E_E2ETest2": {
+				Name:       "E2ETest2",
+				Type:       dalgo2sql.Table,
+				PrimaryKey: []dalgo2sql.Field{{Name: "ID"}},
+			},
 		},
 	}
 	t.Run("RAMSQLDB", func(t *testing.T) {

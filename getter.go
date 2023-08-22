@@ -30,7 +30,7 @@ func (t transaction) GetMulti(ctx context.Context, records []dal.Record) error {
 }
 
 func getSingle(_ context.Context, options Options, record dal.Record, exec queryExecutor) error {
-	fields := getSelectFields(record, false, options)
+	fields := getSelectFields(false, options, record)
 	queryText := fmt.Sprintf("SELECT %s FROM %s", strings.Join(fields, ", "), record.Key().Collection())
 	rows, err := exec(queryText)
 	if err != nil {
@@ -74,31 +74,54 @@ func getMultiFromSingleTable(_ context.Context, options Options, records []dal.R
 	}
 	records = append(make([]dal.Record, 0, len(records)), records...)
 	collection := records[0].Key().Collection()
+
+	rs, hasRecordsetDefinition := options.Recordsets[collection]
+	var primaryKey []string
+	if hasRecordsetDefinition && len(rs.PrimaryKey) > 0 {
+		for _, pk := range rs.PrimaryKey {
+			primaryKey = append(primaryKey, pk.Name)
+		}
+	} else if len(options.PrimaryKey) > 0 {
+		primaryKey = options.PrimaryKey
+	} else {
+		err := fmt.Errorf("%w: no primary key defined for: '%s'", dal.ErrRecordNotFound, collection)
+		for _, record := range records {
+			record.SetError(err)
+		}
+		return nil
+	}
+
 	records[0].SetError(nil)
 	val := reflect.ValueOf(records[0].Data()).Elem()
 	valType := val.Type()
-	fields := getSelectFields(records[0], true, options)
-	idCol := "ID"
-	if rs, hasOptions := options.Recordsets[collection]; hasOptions && len(rs.PrimaryKey) == 1 {
-		idCol = rs.PrimaryKey[0].Name
-	}
-	queryText := fmt.Sprintf("SELECT %v FROM %v WHERE %v",
+	fields := getSelectFields(true, options, records...)
+	queryText := fmt.Sprintf("SELECT %v FROM %v WHERE ",
 		strings.Join(fields, ", "),
 		records[0].Key().Collection(),
-		idCol,
 	)
-	q := make([]string, len(records))
 	args := make([]interface{}, len(records))
-	for i, record := range records {
-		args[i] = record.Key().ID
-		q[i] = "?"
-	}
 	if len(records) == 1 {
-		queryText += " = ?"
+		var pkConditions []string
+		processPrimaryKey(primaryKey, records[0].Key(), func(_ int, name string, v any) {
+			pkConditions = append(pkConditions, name+" = ?")
+		})
+		queryText += " " + strings.Join(pkConditions, " AND ")
 	} else {
-		queryText += " IN (" + strings.Join(q, ", ")
+		if len(primaryKey) > 1 {
+			panic("not supported to query multiple records by key from recordsets with composite primary key")
+		}
+		queryText += fmt.Sprintf("%s IN (", primaryKey[0]) // TODO(help-wanted): support composite primary keys
+		var argPlaceholders []string
+		for i, record := range records {
+			processPrimaryKey(primaryKey, record.Key(), func(_ int, name string, v any) {
+				argPlaceholders = append(argPlaceholders, "?")
+				args[i] = v
+			})
+		}
+		queryText += strings.Join(argPlaceholders, ", ") + ")"
 	}
-	queryText += ")"
+
+	// EXECUTE QUERY
 	rows, err := exec(queryText, args...)
 	if err != nil {
 		return err
@@ -228,7 +251,8 @@ func scanIntoDataWithPrimaryKeyIncluded(rows *sql.Rows, data interface{}) error 
 //	return m, nil
 //}
 
-func getSelectFields(record dal.Record, includePK bool, options Options) (fields []string) {
+func getSelectFields(includePK bool, options Options, records ...dal.Record) (fields []string) {
+	record := records[0] // TODO: support union of fields from multiple records?
 	record.SetError(nil)
 	data := record.Data()
 	if data == nil {

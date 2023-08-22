@@ -7,22 +7,22 @@ import (
 )
 
 func (dtb *database) Update(ctx context.Context, key *dal.Key, updates []dal.Update, preconditions ...dal.Precondition) error {
-	return updateSingle(ctx, dtb.options, dtb.db.Exec, key, updates, preconditions...)
+	return updateSingle(ctx, dtb.options, dtb.db.ExecContext, key, updates, preconditions...)
 }
 
 func (t transaction) Update(ctx context.Context, key *dal.Key, updates []dal.Update, preconditions ...dal.Precondition) error {
-	return updateSingle(ctx, t.sqlOptions, t.tx.Exec, key, updates, preconditions...)
+	return updateSingle(ctx, t.sqlOptions, t.tx.ExecContext, key, updates, preconditions...)
 }
 
 func (dtb *database) UpdateMulti(ctx context.Context, keys []*dal.Key, updates []dal.Update, preconditions ...dal.Precondition) error {
-	return updateMulti(ctx, dtb.options, dtb.db.Exec, keys, updates, preconditions...)
+	return updateMulti(ctx, dtb.options, dtb.db.ExecContext, keys, updates, preconditions...)
 }
 
 func (t transaction) UpdateMulti(ctx context.Context, keys []*dal.Key, updates []dal.Update, preconditions ...dal.Precondition) error {
-	return updateMulti(ctx, t.sqlOptions, t.tx.Exec, keys, updates, preconditions...)
+	return updateMulti(ctx, t.sqlOptions, t.tx.ExecContext, keys, updates, preconditions...)
 }
 
-func updateSingle(_ context.Context, options Options, execStatement statementExecutor, key *dal.Key, updates []dal.Update, preconditions ...dal.Precondition) error {
+func updateSingle(ctx context.Context, options Options, execStatement statementExecutor, key *dal.Key, updates []dal.Update, preconditions ...dal.Precondition) error {
 	qry := query{
 		text: fmt.Sprintf("UPDATE %v SET", key.Collection()),
 	}
@@ -37,7 +37,7 @@ func updateSingle(_ context.Context, options Options, execStatement statementExe
 		qry.text += "\n\tWHERE ID = ?"
 	}
 	qry.args = append(qry.args, key.ID)
-	result, err := execStatement(qry.text, qry.args...)
+	result, err := execStatement(ctx, qry.text, qry.args...)
 	if err != nil {
 		return fmt.Errorf("failed to update a single record: %w", err)
 	}

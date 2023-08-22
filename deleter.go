@@ -7,21 +7,21 @@ import (
 	"github.com/dal-go/dalgo/dal"
 )
 
-type statementExecutor = func(query string, args ...interface{}) (sql.Result, error)
+type statementExecutor = func(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
 
 func (dtb *database) Delete(ctx context.Context, key *dal.Key) error {
-	return deleteSingle(ctx, dtb.options, key, dtb.db.Exec)
+	return deleteSingle(ctx, dtb.options, key, dtb.db.ExecContext)
 }
 
 func (t transaction) Delete(ctx context.Context, key *dal.Key) error {
-	return deleteSingle(ctx, t.sqlOptions, key, t.tx.Exec)
+	return deleteSingle(ctx, t.sqlOptions, key, t.tx.ExecContext)
 }
 
 func (dtb *database) DeleteMulti(ctx context.Context, keys []*dal.Key) error {
-	return deleteMulti(ctx, dtb.options, keys, dtb.db.Exec)
+	return deleteMulti(ctx, dtb.options, keys, dtb.db.ExecContext)
 }
 
-func deleteSingle(_ context.Context, options Options, key *dal.Key, exec statementExecutor) error {
+func deleteSingle(ctx context.Context, options Options, key *dal.Key, exec statementExecutor) error {
 	collection := key.Collection()
 	query := fmt.Sprintf("DELETE FROM %v WHERE ", key.Collection())
 	if rs, hasOptions := options.Recordsets[collection]; hasOptions && len(rs.PrimaryKey) == 1 {
@@ -29,7 +29,7 @@ func deleteSingle(_ context.Context, options Options, key *dal.Key, exec stateme
 	} else {
 		query += "ID = ?"
 	}
-	_, err := exec(query, key.ID)
+	_, err := exec(ctx, query, key.ID)
 	if err != nil {
 		return err
 	}
@@ -106,5 +106,5 @@ func deleteMulti(ctx context.Context, options Options, keys []*dal.Key, exec sta
 //}
 
 func (t transaction) DeleteMulti(ctx context.Context, keys []*dal.Key) error {
-	return deleteMulti(ctx, t.sqlOptions, keys, t.tx.Exec)
+	return deleteMulti(ctx, t.sqlOptions, keys, t.tx.ExecContext)
 }

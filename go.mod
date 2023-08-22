@@ -2,6 +2,10 @@ module github.com/dal-go/dalgo2sql
 
 go 1.20
 
+replace (
+	github.com/dal-go/dalgo-end2end-tests => ../dalgo-end2end-tests
+)
+
 require (
 	github.com/dal-go/dalgo v0.5.0
 	github.com/dal-go/dalgo-end2end-tests v0.0.25

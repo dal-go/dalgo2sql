@@ -60,6 +60,7 @@ func (dtb *database) QueryAllRecords(ctx context.Context, query dal.Query) (reco
 
 // Options provides database sqlOptions for DALgo - // TODO: document why & how to use
 type Options struct {
+	PrimaryKey []string
 	Recordsets map[string]Recordset
 }
 

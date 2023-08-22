@@ -45,7 +45,7 @@ func Test_getSelectFields(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if gotFields := getSelectFields(tt.args.record, tt.args.includePK, tt.args.options); !reflect.DeepEqual(gotFields, tt.wantFields) {
+			if gotFields := getSelectFields(tt.args.includePK, tt.args.options, tt.args.record); !reflect.DeepEqual(gotFields, tt.wantFields) {
 				t.Errorf("getSelectFields() = %v, want %v", gotFields, tt.wantFields)
 			}
 		})
