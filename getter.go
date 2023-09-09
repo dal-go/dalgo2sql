@@ -73,14 +73,13 @@ func getMulti(ctx context.Context, options Options, records []dal.Record, exec q
 		byCollection[id] = append(recs, r)
 	}
 	for _, recs := range byCollection {
-		for _, r := range recs {
-			if err := getSingle(ctx, options, r, exec); err != nil {
-				r.SetError(err)
+		if len(recs) == 1 {
+			if err := getSingle(ctx, options, recs[0], exec); err != nil {
+				recs[0].SetError(err)
 			}
+		} else if err := getMultiFromSingleTable(ctx, options, recs, exec); err != nil {
+			return err
 		}
-		//if err := getMultiFromSingleTable(ctx, options, recs, exec); err != nil {
-		//	return err
-		//}
 	}
 	return nil
 }
@@ -117,7 +116,7 @@ func getMultiFromSingleTable(_ context.Context, options Options, records []dal.R
 		records[0].Key().Collection(),
 	)
 	args := make([]interface{}, len(records))
-	if len(records) > 1 /*len(records) == 1*/ {
+	if len(records) == 1 /*len(records) == 1*/ {
 		args = []any{}
 		var pkConditions []string
 		processPrimaryKey(primaryKey, records[0].Key(), func(_ int, name string, v any) {
@@ -126,7 +125,7 @@ func getMultiFromSingleTable(_ context.Context, options Options, records []dal.R
 		queryText += " " + strings.Join(pkConditions, " AND ")
 	} else {
 		if len(primaryKey) > 1 {
-			panic("not supported to query multiple records by key from recordsets with composite primary key")
+			panic("not yet supported to query multiple records by key from recordsets with composite primary key")
 		}
 		queryText += fmt.Sprintf("%s IN (", primaryKey[0]) // TODO(help-wanted): support composite primary keys
 		var argPlaceholders []string
