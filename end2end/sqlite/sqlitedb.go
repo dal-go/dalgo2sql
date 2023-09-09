@@ -1,15 +1,14 @@
-package ramsqldb
+package sqlite
 
 import (
 	"database/sql"
-	// Calling OpenTestDb will use RamSQL database
-	_ "github.com/proullon/ramsql/driver"
+	_ "github.com/mattn/go-sqlite3"
 	"testing"
 )
 
-// OpenTestDb opens a test database using RamSQL
 func OpenTestDb(t *testing.T) *sql.DB {
-	db, err := sql.Open("ramsql", "TestNewDatabase")
+	//db, err := sql.Open("sqlite3", "file:locked.sqlite?cache=shared")
+	db, err := sql.Open("sqlite3", "file::memory:?cache=shared")
 	if err != nil {
 		t.Fatalf("sql.Open : Error : %s\n", err)
 	}

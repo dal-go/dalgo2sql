@@ -40,6 +40,9 @@ func (v *Recordset) Name() string {
 }
 
 func (v *Recordset) PrimaryKey() []dal.FieldRef {
+	if v == nil {
+		return nil
+	}
 	pk := make([]dal.FieldRef, len(v.primaryKey))
 	copy(pk, v.primaryKey)
 	return pk
@@ -65,7 +68,7 @@ func (v *Recordset) Type() RecordsetType {
 	return v.t
 }
 
-var _ dal.Database = (*database)(nil)
+var _ dal.DB = (*database)(nil)
 
 type database struct {
 	id              string
@@ -74,16 +77,16 @@ type database struct {
 	onlyReadWriteTx bool
 }
 
-func (dtb *database) Close() error {
-	return dtb.db.Close()
-}
+//func (dtb *database) Connect(ctx context.Context) (dal.Connection, error) {
+//	return connection{database: dtb}, nil
+//}
 
 func (dtb *database) ID() string {
 	return dtb.id
 }
 
-func (dtb *database) Client() dal.ClientInfo {
-	return dal.NewClientInfo("dalgo2sql", Version)
+func (dtb *database) Adapter() dal.Adapter {
+	return dal.NewAdapter("dalgo2sql", Version)
 }
 
 func (dtb *database) QueryReader(c context.Context, query dal.Query) (dal.Reader, error) {
@@ -179,10 +182,10 @@ func (dtb *database) Select(ctx context.Context, query dal.Query) (dal.Reader, e
 	panic("implement me")
 }
 
-var _ dal.Database = (*database)(nil)
+var _ dal.DB = (*database)(nil)
 
-// NewDatabase creates a new instance of DALgo adapter for BungDB
-func NewDatabase(db *sql.DB, options Options) dal.Database {
+// NewDatabase creates a new instance of DALgo adapter to SQL database
+func NewDatabase(db *sql.DB, options Options) dal.DB {
 	if db == nil {
 		panic("db is a required parameter, got nil")
 	}

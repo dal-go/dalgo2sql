@@ -21,7 +21,7 @@ func TestEndToEnd(t *testing.T) {
 			),
 		},
 	}
-	t.Run("RAM_SQL_DB", func(t *testing.T) {
-		testEndToEndRAMSQLDB(t, options)
+	t.Run("SQLITE_DB", func(t *testing.T) {
+		testEndToEndSQLite(t, options)
 	})
 }

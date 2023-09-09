@@ -33,11 +33,15 @@ func getSingle(_ context.Context, options Options, record dal.Record, exec query
 	key := record.Key()
 	rsName := getRecordsetName(key)
 	fields := getSelectFields(false, options, record)
-	queryText := fmt.Sprintf("SELECT %s FROM %s WHERE ", strings.Join(fields, ", "), rsName)
+	fieldsStr := strings.Join(fields, ", ")
+	if fieldsStr == "" {
+		fieldsStr = "1"
+	}
+	queryText := fmt.Sprintf("SELECT %s FROM %s WHERE ", fieldsStr, rsName)
 
 	pk := options.PrimaryKeyFieldNames(key)
 	if len(pk) == 0 {
-		return fmt.Errorf("primary key is not defined for recorset %s", rsName)
+		return fmt.Errorf("%w: primary key is not defined for recorset %s", dal.ErrRecordNotFound, rsName)
 	} else if len(pk) > 1 {
 		return fmt.Errorf("%w: select by composite primary key is not supported yet", dal.ErrNotImplementedYet)
 	}
@@ -69,9 +73,14 @@ func getMulti(ctx context.Context, options Options, records []dal.Record, exec q
 		byCollection[id] = append(recs, r)
 	}
 	for _, recs := range byCollection {
-		if err := getMultiFromSingleTable(ctx, options, recs, exec); err != nil {
-			return err
+		for _, r := range recs {
+			if err := getSingle(ctx, options, r, exec); err != nil {
+				r.SetError(err)
+			}
 		}
+		//if err := getMultiFromSingleTable(ctx, options, recs, exec); err != nil {
+		//	return err
+		//}
 	}
 	return nil
 }
@@ -108,7 +117,8 @@ func getMultiFromSingleTable(_ context.Context, options Options, records []dal.R
 		records[0].Key().Collection(),
 	)
 	args := make([]interface{}, len(records))
-	if len(records) == 1 {
+	if len(records) > 1 /*len(records) == 1*/ {
+		args = []any{}
 		var pkConditions []string
 		processPrimaryKey(primaryKey, records[0].Key(), func(_ int, name string, v any) {
 			pkConditions = append(pkConditions, name+" = ?")

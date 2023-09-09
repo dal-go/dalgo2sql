@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"github.com/dal-go/dalgo/dal"
+	"strings"
 )
 
 type statementExecutor = func(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
@@ -23,6 +24,7 @@ func (dtb *database) DeleteMulti(ctx context.Context, keys []*dal.Key) error {
 
 func deleteSingle(ctx context.Context, options Options, key *dal.Key, exec statementExecutor) error {
 	collection := key.Collection()
+	//goland:noinspection SqlNoDataSourceInspection
 	query := fmt.Sprintf("DELETE FROM %v WHERE ", key.Collection())
 	if rs, hasOptions := options.Recordsets[collection]; hasOptions && len(rs.PrimaryKey()) == 1 {
 		query += rs.PrimaryKey()[0].Name + " = ?"
@@ -54,9 +56,9 @@ func deleteMulti(ctx context.Context, options Options, keys []*dal.Key, exec sta
 				return err
 			}
 		}
-		//if err := deleteMultiInSingleTable(ctx, sqlOptions, keys, exec); err != nil {
-		//	return err
-		//}
+		if err := deleteMultiInSingleTable(ctx, options, keys, exec); err != nil {
+			return err
+		}
 		return nil // TODO: code above commented out as tests are failing for RAMSQL driver.
 	}
 	for i, key := range keys {
@@ -82,28 +84,28 @@ func deleteMulti(ctx context.Context, options Options, keys []*dal.Key, exec sta
 	return nil
 }
 
-//func deleteMultiInSingleTable(_ context.Context, options Options, keys []*dal.Key, exec statementExecutor) error {
-//	pkCol := "ID"
-//
-//	collection := keys[0].Collection()
-//	if rs, hasOptions := options.Recordsets[collection]; hasOptions && len(rs.PrimaryKey) == 1 {
-//		pkCol = rs.PrimaryKey[0].Name
-//	}
-//
-//	query := fmt.Sprintf("DELETE FROM %v WHERE %v IN (", collection, pkCol)
-//	args := make([]interface{}, len(keys))
-//	q := make([]string, len(keys))
-//	for i, key := range keys {
-//		args[i] = key.ID
-//		q[i] = "?"
-//	}
-//	query += strings.Join(q, ", ") + ")"
-//	_, err := exec(query, args...)
-//	if err != nil {
-//		return err
-//	}
-//	return nil
-//}
+func deleteMultiInSingleTable(ctx context.Context, options Options, keys []*dal.Key, exec statementExecutor) error {
+	pkCol := "ID"
+
+	collection := keys[0].Collection()
+	if rs, hasOptions := options.Recordsets[collection]; hasOptions && len(rs.primaryKey) == 1 {
+		pkCol = rs.primaryKey[0].Name
+	}
+
+	query := fmt.Sprintf("DELETE FROM %v WHERE %v IN (", collection, pkCol)
+	args := make([]interface{}, len(keys))
+	q := make([]string, len(keys))
+	for i, key := range keys {
+		args[i] = key.ID
+		q[i] = "?"
+	}
+	query += strings.Join(q, ", ") + ")"
+	_, err := exec(ctx, query, args...)
+	if err != nil {
+		return err
+	}
+	return nil
+}
 
 func (t transaction) DeleteMulti(ctx context.Context, keys []*dal.Key) error {
 	return deleteMulti(ctx, t.sqlOptions, keys, t.tx.ExecContext)
