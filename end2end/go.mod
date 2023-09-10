@@ -5,7 +5,7 @@ go 1.20.0
 require (
 	github.com/dal-go/dalgo v0.10.0
 	github.com/dal-go/dalgo-end2end-tests v0.0.31
-	github.com/dal-go/dalgo2sql v0.0.8
+	github.com/dal-go/dalgo2sql v0.0.9
 	github.com/mattn/go-sqlite3 v1.14.17
 )
 
