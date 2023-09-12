@@ -3,7 +3,7 @@ module github.com/dal-go/dalgo2sql
 go 1.20
 
 require (
-	github.com/dal-go/dalgo v0.10.0
+	github.com/dal-go/dalgo v0.10.2
 	github.com/georgysavva/scany/v2 v2.0.0
 )
 
