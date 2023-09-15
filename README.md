@@ -1,6 +1,6 @@
 # dalgo2sql
 
-SQL driver for [DALgo](https://github.com/dal-go/dalgo) - a Database Abstraction Layer in Go.
+SQL adapter for [DALgo](https://github.com/dal-go/dalgo) - a Database Abstraction Layer in Go.
 
 ## Status
 
