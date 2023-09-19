@@ -1,5 +1,13 @@
 {
   "extends": [
     "github>dal-go/dalgo-renovate-config"
+  ],
+  "packageRules": [
+    {
+      "matchPackageNames": [
+        "github.com/dal-go/dalgo2sql"
+      ],
+      "enabled": false
+    }
   ]
 }
