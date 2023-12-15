@@ -8,7 +8,7 @@ require (
 	github.com/dal-go/dalgo v0.12.0
 	github.com/dal-go/dalgo-end2end-tests v0.0.35
 	github.com/dal-go/dalgo2sql v0.0.0 // No version as we alway replace it with local version
-	github.com/mattn/go-sqlite3 v1.14.18
+	github.com/mattn/go-sqlite3 v1.14.19
 )
 
 replace github.com/dal-go/dalgo2sql => ./../
