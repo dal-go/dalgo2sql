@@ -2,7 +2,7 @@ module github.com/dal-go/dalgo2sql/end2end
 
 go 1.21
 
-toolchain go1.21.4
+toolchain go1.22.2
 
 require (
 	github.com/dal-go/dalgo v0.12.1
@@ -15,7 +15,7 @@ replace github.com/dal-go/dalgo2sql => ./../
 
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
-	github.com/georgysavva/scany/v2 v2.1.0 // indirect
+	github.com/georgysavva/scany/v2 v2.1.3 // indirect
 	github.com/jackc/pgx/v5 v5.4.3 // indirect
 	github.com/lib/pq v1.10.9 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
