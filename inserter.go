@@ -20,3 +20,13 @@ func insertSingle(ctx context.Context, options Options, record dal.Record, exec 
 	}
 	return nil
 }
+
+// InsertMulti inserts multiple records in a single transaction at once. TODO: Implement batched multi-insert
+func (t transaction) InsertMulti(ctx context.Context, records []dal.Record, opts ...dal.InsertOption) error {
+	for _, record := range records {
+		if err := insertSingle(ctx, t.sqlOptions, record, t.tx.ExecContext); err != nil {
+			return err
+		}
+	}
+	return nil
+}
