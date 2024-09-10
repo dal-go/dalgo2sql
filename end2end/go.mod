@@ -2,13 +2,13 @@ module github.com/dal-go/dalgo2sql/end2end
 
 go 1.23
 
-toolchain go1.23.0
+toolchain go1.23.1
 
 require (
 	github.com/dal-go/dalgo v0.13.1
-	github.com/dal-go/dalgo-end2end-tests v0.0.37
+	github.com/dal-go/dalgo-end2end-tests v0.0.39
 	github.com/dal-go/dalgo2sql v0.0.0 // No version as we alway replace it with local version
-	github.com/mattn/go-sqlite3 v1.14.22
+	github.com/mattn/go-sqlite3 v1.14.23
 )
 
 replace github.com/dal-go/dalgo2sql => ./../
