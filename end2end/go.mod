@@ -2,7 +2,7 @@ module github.com/dal-go/dalgo2sql/end2end
 
 go 1.23
 
-toolchain go1.23.2
+toolchain go1.23.3
 
 require (
 	github.com/dal-go/dalgo v0.14.0
