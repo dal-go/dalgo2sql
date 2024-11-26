@@ -15,6 +15,8 @@ github.com/dal-go/dalgo v0.13.2 h1:q1NKsfn9vX90ugMyFp+yNVUyS4ykD/sjXpXibyx1Fb8=
 github.com/dal-go/dalgo v0.13.2/go.mod h1:tErF10bqQiNrwJQ5qwL3kwoaUa6dDq4z3X3pdChr3Ms=
 github.com/dal-go/dalgo v0.14.0 h1:XhEmNfbCtV5ISxzFBE/Bk7W8OpWePYRmlvlJ/8Jk+dQ=
 github.com/dal-go/dalgo v0.14.0/go.mod h1:tErF10bqQiNrwJQ5qwL3kwoaUa6dDq4z3X3pdChr3Ms=
+github.com/dal-go/dalgo v0.14.1 h1:AMSPsFjFH4iZ1JegHdBeouzpZ4frsLnsHxBSaV+8Wgs=
+github.com/dal-go/dalgo v0.14.1/go.mod h1:BoMNGwDE9FdjynV7xCn5f/GdVJxvfePwjsMldn+BhqA=
 github.com/dal-go/dalgo-end2end-tests v0.0.33 h1:momZLyKo3jyUsqK396lsNbnQImSbQHgiAVNGLjso1to=
 github.com/dal-go/dalgo-end2end-tests v0.0.33/go.mod h1:fo7sN6nX0SnNPVtEfkl31yRKwvrH9QMlcCdYBRCRaCA=
 github.com/dal-go/dalgo-end2end-tests v0.0.34 h1:PPeQZnDb32BURlblNx9WiUIN9FryFeKHVx5iL7D7+i4=
@@ -31,6 +33,8 @@ github.com/dal-go/dalgo-end2end-tests v0.0.40 h1:jJv7i/0J0NyImEdq5AduZ6AHvMX8w6V
 github.com/dal-go/dalgo-end2end-tests v0.0.40/go.mod h1:7rVjzkphCM4itZiERtIihgFaAcLXkEQe/YVUhohB498=
 github.com/dal-go/dalgo-end2end-tests v0.0.41 h1:ggjjtSXodEFUbTQI65TapxS1R2sGDcG5mmiT1RqIayQ=
 github.com/dal-go/dalgo-end2end-tests v0.0.41/go.mod h1:k7FDMTn/wLrxkjJgpw012rNV8XJgWs/jANJMNa19R1M=
+github.com/dal-go/dalgo-end2end-tests v0.0.42 h1:TOjJcGpGcix3tz3x2cye1leP0W4pYOvFcV4y8OGAex0=
+github.com/dal-go/dalgo-end2end-tests v0.0.42/go.mod h1:+k1bHL9p+ZGkSsmPEuz5HaXB4C2t/1eOyKscccxviAM=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/georgysavva/scany/v2 v2.0.0 h1:RGXqxDv4row7/FYoK8MRXAZXqoWF/NM+NP0q50k3DKU=
@@ -78,6 +82,8 @@ github.com/stretchr/testify v1.8.4 h1:CcVxjf3Q8PM0mHUKJCdn+eZZtm5yQwehR5yeSVQQcU
 github.com/stretchr/testify v1.8.4/go.mod h1:sz/lmYIOXD/1dqDmKjjqLyZ2RngseejIcXlSw2iwfAo=
 github.com/stretchr/testify v1.9.0 h1:HtqpIVDClZ4nwg75+f6Lvsy/wHu+3BoSGCbBAcpTsTg=
 github.com/stretchr/testify v1.9.0/go.mod h1:r2ic/lqez/lEtzL7wO/rwa5dbSLXVDPFyf8C91i36aY=
+github.com/stretchr/testify v1.10.0 h1:Xv5erBjTwe/5IxqUQTdXv5kgmIvbHo3QQyRwhJsOfJA=
+github.com/stretchr/testify v1.10.0/go.mod h1:r2ic/lqez/lEtzL7wO/rwa5dbSLXVDPFyf8C91i36aY=
 github.com/strongo/random v0.0.1 h1:OZHJBb/3uEa7OX8L2Dv2pLnSeewRmXMyTACoeto6O8I=
 github.com/strongo/random v0.0.1/go.mod h1:/pSI+SjBNLBkjljNtVdYr6ERddA+LqSa87o0/s+9iuU=
 github.com/strongo/validation v0.0.5 h1:O+eJM06v+rR+ZUua7kBi1JCK4a7JXMlkS7pmXkhxFJc=
