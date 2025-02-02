@@ -51,7 +51,7 @@ func (v *Recordset) PrimaryKey() []dal.FieldRef {
 func (v *Recordset) PrimaryKeyFieldNames() []string {
 	pk := make([]string, len(v.primaryKey))
 	for i, f := range v.primaryKey {
-		pk[i] = f.Name
+		pk[i] = f.Name()
 	}
 	return pk
 }
@@ -115,7 +115,7 @@ func (o Options) PrimaryKeyFieldNames(key *dal.Key) (primaryKey []string) {
 	if pk := rs.PrimaryKey(); len(pk) > 0 {
 		primaryKey = make([]string, len(pk))
 		for i, f := range pk {
-			primaryKey[i] = f.Name
+			primaryKey[i] = f.Name()
 		}
 		return
 	}

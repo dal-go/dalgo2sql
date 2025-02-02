@@ -95,7 +95,7 @@ func getMultiFromSingleTable(_ context.Context, options Options, records []dal.R
 	var primaryKey []string
 	if hasRecordsetDefinition && len(rs.PrimaryKey()) > 0 {
 		for _, pk := range rs.PrimaryKey() {
-			primaryKey = append(primaryKey, pk.Name)
+			primaryKey = append(primaryKey, pk.Name())
 		}
 	} else if len(options.PrimaryKey) > 0 {
 		primaryKey = options.PrimaryKey
@@ -294,7 +294,7 @@ func getSelectFields(includePK bool, options Options, records ...dal.Record) (fi
 		}
 		fields = make([]string, 1, numberOfFields+1)
 		if rs, hasOptions := options.Recordsets[collection]; hasOptions {
-			fields[0] = rs.PrimaryKey()[0].Name
+			fields[0] = rs.PrimaryKey()[0].Name()
 		} else {
 			fields[0] = "ID"
 		}
