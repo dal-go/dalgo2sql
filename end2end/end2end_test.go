@@ -12,12 +12,12 @@ func TestEndToEnd(t *testing.T) {
 			"DalgoE2E_E2ETest1": dalgo2sql.NewRecordset(
 				"E2ETest1",
 				dalgo2sql.Table,
-				[]dal.FieldRef{{Name: "ID1"}},
+				[]dal.FieldRef{dal.Field("ID1")},
 			),
 			"DalgoE2E_E2ETest2": dalgo2sql.NewRecordset(
 				"E2ETest2",
 				dalgo2sql.Table,
-				[]dal.FieldRef{{Name: "ID"}},
+				[]dal.FieldRef{dal.Field("ID")},
 			),
 		},
 	}
