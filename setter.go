@@ -34,9 +34,9 @@ func setSingle(ctx context.Context, options Options, record dal.Record, execQuer
 	}
 	var o operation
 	if exists {
-		o = update
+		o = updateOperation
 	} else {
-		o = insert
+		o = insertOperation
 	}
 	qry := buildSingleRecordQuery(o, options, record)
 	if _, err := exec(ctx, qry.text, qry.args...); err != nil {
@@ -46,7 +46,7 @@ func setSingle(ctx context.Context, options Options, record dal.Record, execQuer
 }
 
 func setMulti(ctx context.Context, options Options, records []dal.Record, execQuery queryExecutor, execStatement statementExecutor) error {
-	// TODO(help-wanted): insert of multiple rows at once as: "INSERT INTO table (colA, colB) VALUES (a1, b2), (a2, b2)"
+	// TODO(help-wanted): insertOperation of multiple rows at once as: "INSERT INTO table (colA, colB) VALUES (a1, b2), (a2, b2)"
 	for i, record := range records {
 		if err := setSingle(ctx, options, record, execQuery, execStatement); err != nil {
 			return fmt.Errorf("failed to set record #%d of %d: %w", i+1, len(records), err)

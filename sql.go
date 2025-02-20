@@ -12,8 +12,8 @@ import (
 type operation = int
 
 const (
-	insert operation = iota
-	update
+	insertOperation operation = iota
+	updateOperation
 )
 
 type query struct {
@@ -56,9 +56,9 @@ func buildSingleRecordQuery(o operation, options Options, record dal.Record) (qu
 	collection := getRecordsetName(key)
 	pk := options.PrimaryKeyFieldNames(key)
 	switch o {
-	case insert:
+	case insertOperation:
 		query.text = "INSERT INTO " + collection
-	case update:
+	case updateOperation:
 		query.text = fmt.Sprintf("UPDATE %v SET", collection)
 	}
 	var cols []string
@@ -71,7 +71,7 @@ func buildSingleRecordQuery(o operation, options Options, record dal.Record) (qu
 	}
 	valType := val.Type()
 
-	if key.ID != nil && o == insert {
+	if key.ID != nil && o == insertOperation {
 		if len(pk) == 0 {
 			panic(fmt.Sprintf("record key has value but no primary key defined for: '%s'", collection))
 		}
@@ -92,23 +92,23 @@ func buildSingleRecordQuery(o operation, options Options, record dal.Record) (qu
 		cols = append(cols, name)
 		query.args = append(query.args, val.Field(i).Interface())
 		switch o {
-		case insert:
+		case insertOperation:
 			argPlaceholders = append(argPlaceholders, "?")
-		case update:
+		case updateOperation:
 			argPlaceholders = append(argPlaceholders, valType.Field(i).Name+" = ?")
 			setColsCount++
 		}
 	}
 
 	switch o {
-	case insert:
+	case insertOperation:
 		query.text += fmt.Sprintf("(%v) VALUES (%v)",
 			strings.Join(cols, ", "),
 			strings.Join(argPlaceholders, ", "),
 		)
-	case update:
+	case updateOperation:
 		if setColsCount == 0 {
-			panic(fmt.Sprintf("no fields to update for: '%s'", collection))
+			panic(fmt.Sprintf("no fields to updateOperation for: '%s'", collection))
 		}
 		var pkConditions []string
 		processPrimaryKey(pk, key, func(i int, name string, v any) {

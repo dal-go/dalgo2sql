@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"github.com/dal-go/dalgo/dal"
+	"github.com/dal-go/dalgo/update"
 )
 
 var _ dal.Transaction = (*transaction)(nil)
@@ -43,3 +44,7 @@ func (t readTransaction) QueryAllRecords(ctx context.Context, query dal.Query) (
 var _ dal.ReadwriteTransaction = (*readwriteTransaction)(nil)
 
 type readwriteTransaction = readTransaction
+
+func (t transaction) UpdateRecord(ctx context.Context, record dal.Record, updates []update.Update, preconditions ...dal.Precondition) error {
+	return t.Update(ctx, record.Key(), updates, preconditions...)
+}
