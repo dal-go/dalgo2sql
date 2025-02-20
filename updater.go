@@ -29,7 +29,7 @@ func updateSingle(ctx context.Context, options Options, execStatement statementE
 	}
 	for _, u := range updates {
 		qry.text += fmt.Sprintf("\n\t%v = ?", u.FieldName())
-		qry.args = append(qry.args, u.Value)
+		qry.args = append(qry.args, u.Value())
 	}
 	primaryKey := options.PrimaryKeyFieldNames(key)
 	switch len(primaryKey) {
