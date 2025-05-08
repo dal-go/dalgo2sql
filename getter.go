@@ -194,7 +194,7 @@ func rowIntoRecord(rows *sql.Rows, record dal.Record, pkIncluded bool) error {
 		record.SetError(err)
 		return err
 	}
-	record.SetError(dal.NoError)
+	record.SetError(dal.ErrNoError)
 	return nil
 	//return delayedScanWithDataTo(rows, record)
 }
