@@ -37,8 +37,31 @@ func (t transaction) GetMulti(ctx context.Context, records []dal.Record) error {
 	return getMulti(ctx, t.sqlOptions, records, t.tx.Query)
 }
 
-func executeExists(_ context.Context, options Options, key *dal.Key, exec queryExecutor) (bool, error) {
-	return false, dal.ErrNotImplementedYet
+func executeExists(_ context.Context, options Options, key *dal.Key, exec queryExecutor) (exists bool, err error) {
+	rsName := getRecordsetName(key)
+	queryText := fmt.Sprintf("SELECT 1 FROM %s WHERE ", rsName)
+
+	pk := options.PrimaryKeyFieldNames(key)
+	if len(pk) == 0 {
+		err = fmt.Errorf("%w: primary key is not defined for recorset %s", dal.ErrRecordNotFound, rsName)
+		return
+	} else if len(pk) > 1 {
+		err = fmt.Errorf("%w: select by composite primary key is not supported yet", dal.ErrNotImplementedYet)
+		return
+	}
+	queryText += pk[0] + " = ?"
+
+	var rows *sql.Rows
+	if rows, err = exec(queryText, key.ID); err != nil {
+		return
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+	if !rows.Next() {
+		return false, nil
+	}
+	return true, nil
 }
 
 func getSingle(_ context.Context, options Options, record dal.Record, exec queryExecutor) error {
@@ -60,10 +83,14 @@ func getSingle(_ context.Context, options Options, record dal.Record, exec query
 	queryText += pk[0] + " = ?"
 
 	rows, err := exec(queryText, key.ID)
+	defer func() {
+		_ = rows.Close()
+	}()
 	if err != nil {
 		record.SetError(err)
 		return err
 	}
+
 	if !rows.Next() {
 		record.SetError(dal.ErrRecordNotFound)
 		return dal.ErrRecordNotFound
