@@ -13,6 +13,14 @@ import (
 
 type queryExecutor = func(query string, args ...interface{}) (*sql.Rows, error)
 
+func (dtb *database) Exists(ctx context.Context, key *dal.Key) (exists bool, err error) {
+	return executeExists(ctx, dtb.options, key, dtb.db.Query)
+}
+
+func (t transaction) Exists(ctx context.Context, key *dal.Key) (exists bool, err error) {
+	return executeExists(ctx, t.sqlOptions, key, t.tx.Query)
+}
+
 func (dtb *database) Get(ctx context.Context, record dal.Record) error {
 	return getSingle(ctx, dtb.options, record, dtb.db.Query)
 }
@@ -27,6 +35,10 @@ func (dtb *database) GetMulti(ctx context.Context, records []dal.Record) error {
 
 func (t transaction) GetMulti(ctx context.Context, records []dal.Record) error {
 	return getMulti(ctx, t.sqlOptions, records, t.tx.Query)
+}
+
+func executeExists(_ context.Context, options Options, key *dal.Key, exec queryExecutor) (bool, error) {
+	return false, dal.ErrNotImplementedYet
 }
 
 func getSingle(_ context.Context, options Options, record dal.Record, exec queryExecutor) error {
