@@ -2,8 +2,12 @@ github.com/cockroachdb/cockroach-go/v2 v2.2.0 h1:/5znzg5n373N/3ESjHF5SMLxiW4RKB0
 github.com/cockroachdb/cockroach-go/v2 v2.2.0/go.mod h1:u3MiKYGupPPjkn3ozknpMUpxPaNLTFWAya419/zv6eI=
 github.com/dal-go/dalgo v0.21.0 h1:dtUi3x4LgZkg94vegDYSoBwxbsguyYoBFAS1rLaCSpA=
 github.com/dal-go/dalgo v0.21.0/go.mod h1:BoMNGwDE9FdjynV7xCn5f/GdVJxvfePwjsMldn+BhqA=
+github.com/dal-go/dalgo v0.21.1 h1:kJmOxiG4sF3djnfrv20w1III3YTpgjrR/Ih6Oq9k5oo=
+github.com/dal-go/dalgo v0.21.1/go.mod h1:BoMNGwDE9FdjynV7xCn5f/GdVJxvfePwjsMldn+BhqA=
 github.com/dal-go/dalgo-end2end-tests v0.0.54 h1:rzlB+Zq88KiRjpbxakV1R75G5e5awQraAh+XUPzzj7c=
 github.com/dal-go/dalgo-end2end-tests v0.0.54/go.mod h1:+WGsmSYW3P/Q7oS2UC+cMhNO8oI6KrBp6iNN8V4TpVs=
+github.com/dal-go/dalgo-end2end-tests v0.0.55 h1:Bi7fJUvRDPbBJbsUA9g/BLLYEikZR8knXxcttEmCU1s=
+github.com/dal-go/dalgo-end2end-tests v0.0.55/go.mod h1:LEO09JF3r84qBj0Z1ctsEnnwCCcJ3+xR1hhl0OJFC/o=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/georgysavva/scany/v2 v2.1.4 h1:nrzHEJ4oQVRoiKmocRqA1IyGOmM/GQOEsg9UjMR5Ip4=
