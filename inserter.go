@@ -14,8 +14,8 @@ func (t transaction) Insert(ctx context.Context, record dal.Record, opts ...dal.
 }
 
 func insertSingle(ctx context.Context, options Options, record dal.Record, exec statementExecutor, opts ...dal.InsertOption) error {
-	query := buildSingleRecordQuery(insertOperation, options, record)
-	if _, err := exec(ctx, query.text, query.args...); err != nil {
+	q := buildSingleRecordQuery(insertOperation, options, record)
+	if _, err := exec(ctx, q.text, q.args...); err != nil {
 		return err
 	}
 	return nil
