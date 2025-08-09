@@ -10,6 +10,6 @@ import (
 
 func testEndToEndSQLite(t *testing.T, options dalgo2sql.Options) {
 	sqliteDb := sqlite.OpenTestDb(t)
-	db := dalgo2sql.NewDatabase(sqliteDb, options)
+	db := dalgo2sql.NewDatabase(sqliteDb, nil, options)
 	end2end.TestDalgoDB(t, db, dal.ErrNotImplementedYet, false)
 }

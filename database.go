@@ -73,8 +73,11 @@ var _ dal.DB = (*database)(nil)
 type database struct {
 	id              string
 	db              *sql.DB
-	options         Options
+	schema          dal.Schema
 	onlyReadWriteTx bool
+
+	// Deprecated - replaced by schema
+	options Options
 }
 
 //func (dtb *database) Connect(ctx context.Context) (dal.Connection, error) {
@@ -87,6 +90,10 @@ func (dtb *database) ID() string {
 
 func (dtb *database) Adapter() dal.Adapter {
 	return dal.NewAdapter("dalgo2sql", Version)
+}
+
+func (dtb *database) Schema() dal.Schema {
+	return dtb.schema
 }
 
 func (dtb *database) QueryReader(c context.Context, query dal.Query) (dal.Reader, error) {
@@ -185,12 +192,16 @@ func (dtb *database) Select(ctx context.Context, query dal.Query) (dal.Reader, e
 var _ dal.DB = (*database)(nil)
 
 // NewDatabase creates a new instance of DALgo adapter to SQL database
-func NewDatabase(db *sql.DB, options Options) dal.DB {
+func NewDatabase(db *sql.DB, schema dal.Schema, options Options) dal.DB {
 	if db == nil {
 		panic("db is a required parameter, got nil")
 	}
+	if schema == nil {
+		panic("schema is a required parameter, got nil")
+	}
 	return &database{
 		db:      db,
+		schema:  schema,
 		options: options,
 	}
 }
