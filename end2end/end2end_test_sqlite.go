@@ -10,6 +10,11 @@ import (
 
 func testEndToEndSQLite(t *testing.T, options dalgo2sql.Options) {
 	sqliteDb := sqlite.OpenTestDb(t)
-	db := dalgo2sql.NewDatabase(sqliteDb, nil, options)
+	schema := newEnd2EndSchema()
+	db := dalgo2sql.NewDatabase(sqliteDb, schema, options)
 	end2end.TestDalgoDB(t, db, dal.ErrNotImplementedYet, false)
+}
+
+func newEnd2EndSchema() dal.Schema {
+	return dalgo2sql.NewSimpleSchema("ID")
 }

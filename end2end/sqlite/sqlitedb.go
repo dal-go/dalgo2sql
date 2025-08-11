@@ -6,11 +6,23 @@ import (
 	"testing"
 )
 
+var openSQLiteDB = func(dataSourceName string) (*sql.DB, error) {
+	return sql.Open("sqlite3", dataSourceName)
+}
+
+var executeSql = func(db *sql.DB, query string) (sql.Result, error) {
+	return db.Exec(query)
+}
+
+var fatalf = func(t *testing.T, format string, args ...any) {
+	t.Fatalf(format, args...)
+}
+
 func OpenTestDb(t *testing.T) *sql.DB {
-	//db, err := sql.Open("sqlite3", "file:locked.sqlite?cache=shared")
-	db, err := sql.Open("sqlite3", "file::memory:?cache=shared")
+	db, err := openSQLiteDB("file::memory:?cache=shared")
 	if err != nil {
-		t.Fatalf("sql.Open : Error : %s\n", err)
+		fatalf(t, "sql.Open : Error : %s\n", err)
+		return nil
 	}
 	batch := []string{
 		"CREATE TABLE DalgoE2E_E2ETest1 (ID1 VARCHAR(10) PRIMARY KEY, StringProp TEXT, IntegerProp INT);",
@@ -18,9 +30,10 @@ func OpenTestDb(t *testing.T) *sql.DB {
 		"CREATE TABLE NonExistingKind (ID VARCHAR(10) PRIMARY KEY, StringProp TEXT, IntegerProp INT);",
 	}
 	for _, b := range batch {
-		_, err := db.Exec(b)
+		_, err = executeSql(db, b)
 		if err != nil {
-			t.Fatalf("sql.Exec: Error: %s\n", err)
+			fatalf(t, "sql.Exec: Error: %s\n", err)
+			return nil
 		}
 	}
 	return db
