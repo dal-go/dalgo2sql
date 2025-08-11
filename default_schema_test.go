@@ -139,7 +139,7 @@ func Test_simpleKeyToFields_ExportedIDField_ParentsIncluded(t *testing.T) {
 func Test_simpleKeyToFields_UnexportedIDField_AddOwnID(t *testing.T) {
 	f := simpleKeyToFields("ID")
 	k := dal.NewKeyWithID("users", 55)
-	data := hasUnexportedID{}
+	data := hasUnexportedID{id: 1}
 	fields, err := f(k, data)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

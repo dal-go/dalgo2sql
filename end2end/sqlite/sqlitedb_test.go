@@ -13,7 +13,7 @@ func getTableNames(t *testing.T, db *sql.DB) map[string]struct{} {
 	if err != nil {
 		t.Fatalf("query sqlite_master failed: %v", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	names := make(map[string]struct{})
 	for rows.Next() {
 		var name string
@@ -68,7 +68,7 @@ func getColumns(t *testing.T, db *sql.DB, table string) map[string]string {
 	if err != nil {
 		t.Fatalf("PRAGMA table_info(%s) failed: %v", table, err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	cols := map[string]string{}
 	for rows.Next() {
 		var cid int
