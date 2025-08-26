@@ -5,8 +5,8 @@ go 1.23.0
 toolchain go1.25.0
 
 require (
-	github.com/dal-go/dalgo v0.26.3
-	github.com/dal-go/dalgo-end2end-tests v0.0.61
+	github.com/dal-go/dalgo v0.26.4
+	github.com/dal-go/dalgo-end2end-tests v0.0.62
 	github.com/dal-go/dalgo2sql v0.0.0 // No version as we alway replace it with local version
 	github.com/mattn/go-sqlite3 v1.14.32
 )
@@ -19,7 +19,7 @@ require (
 	github.com/jackc/pgx/v5 v5.7.5 // indirect
 	github.com/lib/pq v1.10.9 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
-	github.com/stretchr/testify v1.10.0 // indirect
+	github.com/stretchr/testify v1.11.0 // indirect
 	github.com/strongo/random v0.0.1 // indirect
 	github.com/strongo/validation v0.0.7 // indirect
 	golang.org/x/crypto v0.38.0 // indirect

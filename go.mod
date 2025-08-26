@@ -5,7 +5,7 @@ go 1.23
 toolchain go1.25.0
 
 require (
-	github.com/dal-go/dalgo v0.26.3
+	github.com/dal-go/dalgo v0.26.4
 	github.com/georgysavva/scany/v2 v2.1.4
 )
 
