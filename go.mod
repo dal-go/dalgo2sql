@@ -2,10 +2,10 @@ module github.com/dal-go/dalgo2sql
 
 go 1.23
 
-toolchain go1.25.0
+toolchain go1.25.1
 
 require (
-	github.com/dal-go/dalgo v0.26.4
+	github.com/dal-go/dalgo v0.26.5
 	github.com/georgysavva/scany/v2 v2.1.4
 )
 
