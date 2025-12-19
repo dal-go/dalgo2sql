@@ -3,6 +3,7 @@ package dalgo2sql
 import (
 	"context"
 	"database/sql"
+
 	"github.com/dal-go/dalgo/dal"
 	"github.com/dal-go/dalgo/update"
 )
@@ -31,12 +32,12 @@ var _ dal.ReadTransaction = (*readTransaction)(nil)
 
 type readTransaction = transaction
 
-func (t readTransaction) QueryReader(c context.Context, query dal.Query) (dal.Reader, error) {
+func (t readTransaction) GetReader(c context.Context, query dal.Query) (dal.Reader, error) {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (t readTransaction) QueryAllRecords(ctx context.Context, query dal.Query) (records []dal.Record, err error) {
+func (t readTransaction) ReadAllRecords(ctx context.Context, query dal.Query, options ...dal.ReaderOption) (records []dal.Record, err error) {
 	//TODO implement me
 	panic("implement me")
 }

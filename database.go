@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+
 	"github.com/dal-go/dalgo/dal"
 )
 
@@ -96,12 +97,12 @@ func (dtb *database) Schema() dal.Schema {
 	return dtb.schema
 }
 
-func (dtb *database) QueryReader(c context.Context, query dal.Query) (dal.Reader, error) {
+func (dtb *database) GetReader(c context.Context, query dal.Query) (dal.Reader, error) {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (dtb *database) QueryAllRecords(ctx context.Context, query dal.Query) (records []dal.Record, err error) {
+func (dtb *database) ReadAllRecords(ctx context.Context, query dal.Query, options ...dal.ReaderOption) (records []dal.Record, err error) {
 	//TODO implement me
 	panic("implement me")
 }
