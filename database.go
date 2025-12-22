@@ -72,6 +72,7 @@ func (v *Recordset) Type() RecordsetType {
 var _ dal.DB = (*database)(nil)
 
 type database struct {
+	recordsReaderProvider
 	id              string
 	db              *sql.DB
 	schema          dal.Schema
@@ -95,16 +96,6 @@ func (dtb *database) Adapter() dal.Adapter {
 
 func (dtb *database) Schema() dal.Schema {
 	return dtb.schema
-}
-
-func (dtb *database) GetReader(c context.Context, query dal.Query) (dal.Reader, error) {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (dtb *database) ReadAllRecords(ctx context.Context, query dal.Query, options ...dal.ReaderOption) (records []dal.Record, err error) {
-	//TODO implement me
-	panic("implement me")
 }
 
 // Options provides database sqlOptions for DALgo - // TODO: document why & how to use
@@ -152,7 +143,7 @@ func (dtb *database) RunReadonlyTransaction(ctx context.Context, f dal.ROTxWorke
 	if dbTx == nil {
 		return fmt.Errorf("sql driver returned nil transaction")
 	}
-	if err = f(ctx, transaction{tx: dbTx, sqlOptions: dtb.options}); err != nil {
+	if err = f(ctx, newTransaction(dbTx, dtb.options)); err != nil {
 		if rollbackErr := dbTx.Rollback(); rollbackErr != nil {
 			return dal.NewRollbackError(rollbackErr, err)
 		}
@@ -174,7 +165,7 @@ func (dtb *database) RunReadwriteTransaction(ctx context.Context, f dal.RWTxWork
 	if err != nil {
 		return err
 	}
-	if err = f(ctx, readwriteTransaction{tx: dbTx, sqlOptions: dtb.options}); err != nil {
+	if err = f(ctx, newReadwriteTransaction(dbTx, dtb.options)); err != nil {
 		if rollbackErr := dbTx.Rollback(); rollbackErr != nil {
 			return dal.NewRollbackError(rollbackErr, err)
 		}
@@ -201,6 +192,9 @@ func NewDatabase(db *sql.DB, schema dal.Schema, options Options) dal.DB {
 		panic("schema is a required parameter, got nil")
 	}
 	return &database{
+		recordsReaderProvider: recordsReaderProvider{
+			executeQuery: db.QueryContext,
+		},
 		db:      db,
 		schema:  schema,
 		options: options,

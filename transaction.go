@@ -10,8 +10,17 @@ import (
 
 var _ dal.Transaction = (*transaction)(nil)
 
+func newTransaction(tx *sql.Tx, sqlOptions Options) transaction {
+	return transaction{
+		tx:                    tx,
+		recordsReaderProvider: recordsReaderProvider{executeQuery: tx.QueryContext},
+		sqlOptions:            sqlOptions,
+	}
+}
+
 type transaction struct {
-	tx         *sql.Tx
+	tx *sql.Tx
+	recordsReaderProvider
 	sqlOptions Options // TODO: document why & how to use
 	txOptions  dal.TransactionOptions
 }
@@ -32,19 +41,13 @@ var _ dal.ReadTransaction = (*readTransaction)(nil)
 
 type readTransaction = transaction
 
-func (t readTransaction) GetReader(c context.Context, query dal.Query) (dal.Reader, error) {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (t readTransaction) ReadAllRecords(ctx context.Context, query dal.Query, options ...dal.ReaderOption) (records []dal.Record, err error) {
-	//TODO implement me
-	panic("implement me")
-}
-
 var _ dal.ReadwriteTransaction = (*readwriteTransaction)(nil)
 
 type readwriteTransaction = readTransaction
+
+func newReadwriteTransaction(tx *sql.Tx, sqlOptions Options) readwriteTransaction {
+	return newTransaction(tx, sqlOptions)
+}
 
 func (t transaction) UpdateRecord(ctx context.Context, record dal.Record, updates []update.Update, preconditions ...dal.Precondition) error {
 	return t.Update(ctx, record.Key(), updates, preconditions...)
