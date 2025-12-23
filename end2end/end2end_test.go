@@ -7,7 +7,7 @@ import (
 )
 
 func TestEndToEnd(t *testing.T) {
-	options := dalgo2sql.Options{
+	options := dalgo2sql.DbOptions{
 		Recordsets: map[string]*dalgo2sql.Recordset{
 			"DalgoE2E_E2ETest1": dalgo2sql.NewRecordset(
 				"E2ETest1",

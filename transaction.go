@@ -10,7 +10,7 @@ import (
 
 var _ dal.Transaction = (*transaction)(nil)
 
-func newTransaction(tx *sql.Tx, sqlOptions Options) transaction {
+func newTransaction(tx *sql.Tx, sqlOptions DbOptions) transaction {
 	return transaction{
 		tx:                    tx,
 		recordsReaderProvider: recordsReaderProvider{executeQuery: tx.QueryContext},
@@ -21,7 +21,7 @@ func newTransaction(tx *sql.Tx, sqlOptions Options) transaction {
 type transaction struct {
 	tx *sql.Tx
 	recordsReaderProvider
-	sqlOptions Options // TODO: document why & how to use
+	sqlOptions DbOptions // TODO: document why & how to use
 	txOptions  dal.TransactionOptions
 }
 
@@ -45,7 +45,7 @@ var _ dal.ReadwriteTransaction = (*readwriteTransaction)(nil)
 
 type readwriteTransaction = readTransaction
 
-func newReadwriteTransaction(tx *sql.Tx, sqlOptions Options) readwriteTransaction {
+func newReadwriteTransaction(tx *sql.Tx, sqlOptions DbOptions) readwriteTransaction {
 	return newTransaction(tx, sqlOptions)
 }
 

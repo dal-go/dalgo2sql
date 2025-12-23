@@ -22,7 +22,7 @@ func (dtb *database) DeleteMulti(ctx context.Context, keys []*dal.Key) error {
 	return deleteMulti(ctx, dtb.options, keys, dtb.db.ExecContext)
 }
 
-func deleteSingle(ctx context.Context, options Options, key *dal.Key, exec statementExecutor) error {
+func deleteSingle(ctx context.Context, options DbOptions, key *dal.Key, exec statementExecutor) error {
 	collection := key.Collection()
 	//goland:noinspection SqlNoDataSourceInspection
 	query := fmt.Sprintf("DELETE FROM %v WHERE ", key.Collection())
@@ -38,7 +38,7 @@ func deleteSingle(ctx context.Context, options Options, key *dal.Key, exec state
 	return nil
 }
 
-func deleteMulti(ctx context.Context, options Options, keys []*dal.Key, exec statementExecutor) error {
+func deleteMulti(ctx context.Context, options DbOptions, keys []*dal.Key, exec statementExecutor) error {
 	var prevTable string
 	var tableKeys []*dal.Key
 	deleteByKeys := func(table string, keys []*dal.Key) error {
@@ -84,7 +84,7 @@ func deleteMulti(ctx context.Context, options Options, keys []*dal.Key, exec sta
 	return nil
 }
 
-func deleteMultiInSingleTable(ctx context.Context, options Options, keys []*dal.Key, exec statementExecutor) error {
+func deleteMultiInSingleTable(ctx context.Context, options DbOptions, keys []*dal.Key, exec statementExecutor) error {
 	pkCol := "ID"
 
 	collection := keys[0].Collection()

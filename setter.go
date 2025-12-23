@@ -26,7 +26,7 @@ func (t transaction) SetMulti(ctx context.Context, records []dal.Record) error {
 	return setMulti(ctx, t.sqlOptions, records, t.tx.Query, t.tx.ExecContext)
 }
 
-func setSingle(ctx context.Context, options Options, record dal.Record, execQuery queryExecutor, exec statementExecutor) error {
+func setSingle(ctx context.Context, options DbOptions, record dal.Record, execQuery queryExecutor, exec statementExecutor) error {
 	key := record.Key()
 	exists, err := existsSingle(options, key, execQuery)
 	if err != nil {
@@ -45,7 +45,7 @@ func setSingle(ctx context.Context, options Options, record dal.Record, execQuer
 	return nil
 }
 
-func setMulti(ctx context.Context, options Options, records []dal.Record, execQuery queryExecutor, execStatement statementExecutor) error {
+func setMulti(ctx context.Context, options DbOptions, records []dal.Record, execQuery queryExecutor, execStatement statementExecutor) error {
 	// TODO(help-wanted): insertOperation of multiple rows at once as: "INSERT INTO table (colA, colB) VALUES (a1, b2), (a2, b2)"
 	for i, record := range records {
 		if err := setSingle(ctx, options, record, execQuery, execStatement); err != nil {
@@ -55,7 +55,7 @@ func setMulti(ctx context.Context, options Options, records []dal.Record, execQu
 	return nil
 }
 
-func existsSingle(options Options, key *dal.Key, execQuery queryExecutor) (bool, error) {
+func existsSingle(options DbOptions, key *dal.Key, execQuery queryExecutor) (bool, error) {
 	collection := key.Collection()
 	pk := options.PrimaryKeyFieldNames(key)
 	var where string

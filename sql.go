@@ -51,7 +51,7 @@ func processPrimaryKey(primaryKey []string, key *dal.Key, f func(i int, name str
 	}
 }
 
-func buildSingleRecordQuery(o operation, options Options, record dal.Record) (query query) {
+func buildSingleRecordQuery(o operation, options DbOptions, record dal.Record) (query query) {
 	key := record.Key()
 	collection := getRecordsetName(key)
 	pk := options.PrimaryKeyFieldNames(key)

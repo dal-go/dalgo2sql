@@ -23,7 +23,7 @@ func (t transaction) UpdateMulti(ctx context.Context, keys []*dal.Key, updates [
 	return updateMulti(ctx, t.sqlOptions, t.tx.ExecContext, keys, updates, preconditions...)
 }
 
-func updateSingle(ctx context.Context, options Options, execStatement statementExecutor, key *dal.Key, updates []update.Update, preconditions ...dal.Precondition) error {
+func updateSingle(ctx context.Context, options DbOptions, execStatement statementExecutor, key *dal.Key, updates []update.Update, preconditions ...dal.Precondition) error {
 	qry := query{
 		text: fmt.Sprintf("UPDATE %v SET", key.Collection()),
 	}
@@ -51,7 +51,7 @@ func updateSingle(ctx context.Context, options Options, execStatement statementE
 	return nil
 }
 
-func updateMulti(ctx context.Context, options Options, execStatement statementExecutor, keys []*dal.Key, updates []update.Update, preconditions ...dal.Precondition) error {
+func updateMulti(ctx context.Context, options DbOptions, execStatement statementExecutor, keys []*dal.Key, updates []update.Update, preconditions ...dal.Precondition) error {
 	for i, key := range keys {
 		if err := updateSingle(ctx, options, execStatement, key, updates, preconditions...); err != nil {
 			return fmt.Errorf("failed to updateOperation record #%d of %d: %w", i+1, len(keys), err)

@@ -8,67 +8,6 @@ import (
 	"github.com/dal-go/dalgo/dal"
 )
 
-// Field defines field
-type Field struct {
-	Name string
-}
-
-func (v Field) String() string {
-	return v.Name
-}
-
-// RecordsetType defines type of a database recordset
-type RecordsetType = int
-
-const (
-	// Table identifies a table in a database
-	Table RecordsetType = iota
-	// View identifies a view in a database
-	View
-	// StoredProcedure identifies a stored procedure in a database
-	StoredProcedure
-)
-
-// Recordset hold recordset settings
-type Recordset struct {
-	name       string
-	t          RecordsetType
-	primaryKey []dal.FieldRef // Primary keys by table name
-}
-
-func (v *Recordset) Name() string {
-	return v.name
-}
-
-func (v *Recordset) PrimaryKey() []dal.FieldRef {
-	if v == nil {
-		return nil
-	}
-	pk := make([]dal.FieldRef, len(v.primaryKey))
-	copy(pk, v.primaryKey)
-	return pk
-}
-
-func (v *Recordset) PrimaryKeyFieldNames() []string {
-	pk := make([]string, len(v.primaryKey))
-	for i, f := range v.primaryKey {
-		pk[i] = f.Name()
-	}
-	return pk
-}
-
-func NewRecordset(name string, t RecordsetType, primaryKey []dal.FieldRef) *Recordset {
-	return &Recordset{
-		name:       name,
-		t:          t,
-		primaryKey: primaryKey,
-	}
-}
-
-func (v *Recordset) Type() RecordsetType {
-	return v.t
-}
-
 var _ dal.DB = (*database)(nil)
 
 type database struct {
@@ -79,7 +18,7 @@ type database struct {
 	onlyReadWriteTx bool
 
 	// Deprecated - replaced by schema
-	options Options
+	options DbOptions
 }
 
 //func (dtb *database) Connect(ctx context.Context) (dal.Connection, error) {
@@ -96,29 +35,6 @@ func (dtb *database) Adapter() dal.Adapter {
 
 func (dtb *database) Schema() dal.Schema {
 	return dtb.schema
-}
-
-// Options provides database sqlOptions for DALgo - // TODO: document why & how to use
-type Options struct {
-	PrimaryKey []string
-	Recordsets map[string]*Recordset
-}
-
-func (o Options) GetRecordsetByKey(key *dal.Key) *Recordset {
-	rsName := getRecordsetName(key)
-	return o.Recordsets[rsName]
-}
-
-func (o Options) PrimaryKeyFieldNames(key *dal.Key) (primaryKey []string) {
-	rs := o.GetRecordsetByKey(key)
-	if pk := rs.PrimaryKey(); len(pk) > 0 {
-		primaryKey = make([]string, len(pk))
-		for i, f := range pk {
-			primaryKey[i] = f.Name()
-		}
-		return
-	}
-	return nil
 }
 
 func (dtb *database) RunReadonlyTransaction(ctx context.Context, f dal.ROTxWorker, options ...dal.TransactionOption) error {
@@ -177,14 +93,14 @@ func (dtb *database) RunReadwriteTransaction(ctx context.Context, f dal.RWTxWork
 	return nil
 }
 
-func (dtb *database) Select(ctx context.Context, query dal.Query) (dal.Reader, error) {
-	panic("implement me")
+func (dtb *database) GetReader(ctx context.Context, query dal.Query) (dal.Reader, error) {
+	return getReader(ctx, query, dtb.db.QueryContext)
 }
 
 var _ dal.DB = (*database)(nil)
 
 // NewDatabase creates a new instance of DALgo adapter to SQL database
-func NewDatabase(db *sql.DB, schema dal.Schema, options Options) dal.DB {
+func NewDatabase(db *sql.DB, schema dal.Schema, options DbOptions) dal.DB {
 	if db == nil {
 		panic("db is a required parameter, got nil")
 	}
@@ -195,6 +111,7 @@ func NewDatabase(db *sql.DB, schema dal.Schema, options Options) dal.DB {
 		recordsReaderProvider: recordsReaderProvider{
 			executeQuery: db.QueryContext,
 		},
+		id:      options.ID,
 		db:      db,
 		schema:  schema,
 		options: options,

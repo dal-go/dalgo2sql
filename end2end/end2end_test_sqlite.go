@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func testEndToEndSQLite(t *testing.T, options dalgo2sql.Options) {
+func testEndToEndSQLite(t *testing.T, options dalgo2sql.DbOptions) {
 	sqliteDb := sqlite.OpenTestDb(t)
 	schema := newEnd2EndSchema()
 	db := dalgo2sql.NewDatabase(sqliteDb, schema, options)

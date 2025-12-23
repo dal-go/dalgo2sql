@@ -13,7 +13,7 @@ func (t transaction) Insert(ctx context.Context, record dal.Record, opts ...dal.
 	return insertSingle(ctx, t.sqlOptions, record, t.tx.ExecContext)
 }
 
-func insertSingle(ctx context.Context, options Options, record dal.Record, exec statementExecutor, opts ...dal.InsertOption) error {
+func insertSingle(ctx context.Context, options DbOptions, record dal.Record, exec statementExecutor, opts ...dal.InsertOption) error {
 	q := buildSingleRecordQuery(insertOperation, options, record)
 	if _, err := exec(ctx, q.text, q.args...); err != nil {
 		return err
