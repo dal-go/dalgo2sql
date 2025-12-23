@@ -2,12 +2,6 @@ github.com/DATA-DOG/go-sqlmock v1.5.2 h1:OcvFkGmslmlZibjAjaHm3L//6LiuBgolP7Oputl
 github.com/DATA-DOG/go-sqlmock v1.5.2/go.mod h1:88MAG/4G7SMwSE3CeA0ZKzrT5CiOU3OJ+JlNzwDqpNU=
 github.com/cockroachdb/cockroach-go/v2 v2.2.0 h1:/5znzg5n373N/3ESjHF5SMLxiW4RKB05Ql//KWfeTFs=
 github.com/cockroachdb/cockroach-go/v2 v2.2.0/go.mod h1:u3MiKYGupPPjkn3ozknpMUpxPaNLTFWAya419/zv6eI=
-github.com/dal-go/dalgo v0.29.1 h1:tIyGxn4Vv7gYGxxXQ1AIZdG5sdXyPUfHJfdx4Ibltr0=
-github.com/dal-go/dalgo v0.29.1/go.mod h1:5pxs6KCdhMjtfNiFCQZS9Qsupqphcr9cP01lwQ7vvUs=
-github.com/dal-go/dalgo v0.29.3 h1:RGep+caRNT1/t4cYsWW3pSSmmpeBWIewNPQ/pLSesyg=
-github.com/dal-go/dalgo v0.29.3/go.mod h1:5pxs6KCdhMjtfNiFCQZS9Qsupqphcr9cP01lwQ7vvUs=
-github.com/dal-go/dalgo v0.30.1 h1:aTX4sD7rBhm7yx/4WgUFeL+C4WQDOsuW2zazLjSHD+w=
-github.com/dal-go/dalgo v0.30.1/go.mod h1:5pxs6KCdhMjtfNiFCQZS9Qsupqphcr9cP01lwQ7vvUs=
 github.com/dal-go/dalgo v0.32.1 h1:CzjcXFjLCG6xqmC55lICi4dxozURNV6qYo5Ga7RX7/w=
 github.com/dal-go/dalgo v0.32.1/go.mod h1:/dO2kbsiQuqjq7BEK5cDDcroQ3mmpA/j7mloUrkxoaY=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
