@@ -2,6 +2,7 @@ package dalgo2sql
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"reflect"
 	"testing"
@@ -95,23 +96,28 @@ func TestOptions_PrimaryKeyFieldNames(t *testing.T) {
 	}
 }
 
-func TestDatabase_RunReadonlyTransaction(t *testing.T) {
-	sqlDB, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatalf("failed to create sqlmock: %v", err)
-	}
-	defer func() {
+func newDatabase() (sqlDB *sql.DB, mock sqlmock.Sqlmock, db *database, closer func(), err error) {
+	sqlDB, mock, err = sqlmock.New()
+	db = NewDatabase(sqlDB, newSchema(), DbOptions{}).(*database)
+	closer = func() {
 		_ = sqlDB.Close()
-	}()
+	}
+	return
+}
 
-	d := NewDatabase(sqlDB, newSchema(), DbOptions{}).(*database)
+func TestDatabase_RunReadonlyTransaction(t *testing.T) {
+	_, mock, db, closer, err := newDatabase()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closer()
 
 	ctx := context.Background()
 
 	t.Run("success", func(t *testing.T) {
 		mock.ExpectBegin().WillReturnError(nil)
 		mock.ExpectCommit().WillReturnError(nil)
-		err := d.RunReadonlyTransaction(ctx, func(ctx context.Context, tx dal.ReadTransaction) error {
+		err := db.RunReadonlyTransaction(ctx, func(ctx context.Context, tx dal.ReadTransaction) error {
 			return nil
 		})
 		if err != nil {
@@ -121,7 +127,7 @@ func TestDatabase_RunReadonlyTransaction(t *testing.T) {
 
 	t.Run("begin_error", func(t *testing.T) {
 		mock.ExpectBegin().WillReturnError(errors.New("begin error"))
-		err := d.RunReadonlyTransaction(ctx, func(ctx context.Context, tx dal.ReadTransaction) error {
+		err := db.RunReadonlyTransaction(ctx, func(ctx context.Context, tx dal.ReadTransaction) error {
 			return nil
 		})
 		if err == nil {
@@ -133,13 +139,13 @@ func TestDatabase_RunReadonlyTransaction(t *testing.T) {
 		mock.ExpectBegin().WillReturnError(errors.New("sql: driver does not support read-only transactions"))
 		mock.ExpectBegin().WillReturnError(nil) // second attempt without readonly
 		mock.ExpectCommit().WillReturnError(nil)
-		err := d.RunReadonlyTransaction(ctx, func(ctx context.Context, tx dal.ReadTransaction) error {
+		err := db.RunReadonlyTransaction(ctx, func(ctx context.Context, tx dal.ReadTransaction) error {
 			return nil
 		})
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
-		if !d.onlyReadWriteTx {
+		if !db.onlyReadWriteTx {
 			t.Errorf("expected onlyReadWriteTx to be true")
 		}
 	})
@@ -147,7 +153,7 @@ func TestDatabase_RunReadonlyTransaction(t *testing.T) {
 	t.Run("worker_error_rollback_success", func(t *testing.T) {
 		mock.ExpectBegin().WillReturnError(nil)
 		mock.ExpectRollback().WillReturnError(nil)
-		err := d.RunReadonlyTransaction(ctx, func(ctx context.Context, tx dal.ReadTransaction) error {
+		err := db.RunReadonlyTransaction(ctx, func(ctx context.Context, tx dal.ReadTransaction) error {
 			return errors.New("worker error")
 		})
 		if err == nil || err.Error() != "worker error" {
@@ -158,7 +164,7 @@ func TestDatabase_RunReadonlyTransaction(t *testing.T) {
 	t.Run("worker_error_rollback_error", func(t *testing.T) {
 		mock.ExpectBegin().WillReturnError(nil)
 		mock.ExpectRollback().WillReturnError(errors.New("rollback error"))
-		err := d.RunReadonlyTransaction(ctx, func(ctx context.Context, tx dal.ReadTransaction) error {
+		err := db.RunReadonlyTransaction(ctx, func(ctx context.Context, tx dal.ReadTransaction) error {
 			return errors.New("worker error")
 		})
 		if err == nil {
@@ -169,7 +175,7 @@ func TestDatabase_RunReadonlyTransaction(t *testing.T) {
 	t.Run("commit_error", func(t *testing.T) {
 		mock.ExpectBegin().WillReturnError(nil)
 		mock.ExpectCommit().WillReturnError(errors.New("commit error"))
-		err := d.RunReadonlyTransaction(ctx, func(ctx context.Context, tx dal.ReadTransaction) error {
+		err := db.RunReadonlyTransaction(ctx, func(ctx context.Context, tx dal.ReadTransaction) error {
 			return nil
 		})
 		if err == nil {
@@ -180,21 +186,18 @@ func TestDatabase_RunReadonlyTransaction(t *testing.T) {
 	t.Run("missing_readonly_option", func(t *testing.T) {
 		// RunReadonlyTransaction forces dal.TxWithReadonly()
 		// so dalgoTxOptions.IsReadonly() will always be true.
-		// To test the "else" branch, we'd need to bypass RunReadonlyTransaction
+		// To test the "else" branch, we'db need to bypass RunReadonlyTransaction
 		// or change its implementation.
 	})
 }
 
 func TestDatabase_RunReadwriteTransaction(t *testing.T) {
-	sqlDB, mock, err := sqlmock.New()
+	_, mock, d, closer, err := newDatabase()
 	if err != nil {
-		t.Fatalf("failed to create sqlmock: %v", err)
+		t.Fatal(err)
 	}
-	defer func() {
-		_ = sqlDB.Close()
-	}()
+	defer closer()
 
-	d := NewDatabase(sqlDB, newSchema(), DbOptions{}).(*database)
 	ctx := context.Background()
 
 	t.Run("success", func(t *testing.T) {
@@ -246,7 +249,7 @@ func TestDatabase_GetReader(t *testing.T) {
 
 	t.Run("success", func(t *testing.T) {
 		mock.ExpectQuery("").WillReturnRows(sqlmock.NewRows([]string{"id"}))
-		_, err := d.GetReader(ctx, nil)
+		_, err := d.GetRecordsReader(ctx, nil)
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}

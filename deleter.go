@@ -4,8 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"github.com/dal-go/dalgo/dal"
 	"strings"
+
+	"github.com/dal-go/dalgo/dal"
 )
 
 type statementExecutor = func(ctx context.Context, query string, args ...interface{}) (sql.Result, error)

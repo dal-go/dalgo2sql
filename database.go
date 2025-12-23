@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/dal-go/dalgo/dal"
+	"github.com/dal-go/dalgo/recordset"
 )
 
 var _ dal.DB = (*database)(nil)
@@ -19,6 +20,10 @@ type database struct {
 
 	// Deprecated - replaced by schema
 	options DbOptions
+}
+
+func (dtb *database) GetRecordsetReader(_ context.Context, _ dal.Query, _ *recordset.Recordset) (dal.RecordsetReader, error) {
+	return nil, dal.ErrNotImplementedYet
 }
 
 //func (dtb *database) Connect(ctx context.Context) (dal.Connection, error) {
@@ -93,7 +98,7 @@ func (dtb *database) RunReadwriteTransaction(ctx context.Context, f dal.RWTxWork
 	return nil
 }
 
-func (dtb *database) GetReader(ctx context.Context, query dal.Query) (dal.Reader, error) {
+func (dtb *database) GetRecordsReader(ctx context.Context, query dal.Query) (dal.RecordsReader, error) {
 	return getReader(ctx, query, dtb.db.QueryContext)
 }
 

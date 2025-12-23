@@ -1,8 +1,9 @@
 package dalgo2sql
 
 import (
-	"github.com/dal-go/dalgo/dal"
 	"strings"
+
+	"github.com/dal-go/dalgo/dal"
 )
 
 func getRecordsetName(key *dal.Key) string {

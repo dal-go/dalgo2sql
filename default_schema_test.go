@@ -11,11 +11,11 @@ import (
 
 type withSetIDValue struct{}
 
-func (withSetIDValue) SetID(id any) {}
+func (withSetIDValue) SetID(_ any) {}
 
 type withSetIDPtr struct{}
 
-func (*withSetIDPtr) SetID(id any) {}
+func (*withSetIDPtr) SetID(_ any) {}
 
 // Types for field presence
 

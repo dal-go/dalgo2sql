@@ -3,6 +3,7 @@ package dalgo2sql
 import (
 	"context"
 	"fmt"
+
 	"github.com/dal-go/dalgo/dal"
 )
 

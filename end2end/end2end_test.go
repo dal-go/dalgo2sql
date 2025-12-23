@@ -1,9 +1,10 @@
 package end2end
 
 import (
+	"testing"
+
 	"github.com/dal-go/dalgo/dal"
 	"github.com/dal-go/dalgo2sql"
-	"testing"
 )
 
 func TestEndToEnd(t *testing.T) {

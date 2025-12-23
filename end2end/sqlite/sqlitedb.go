@@ -2,8 +2,9 @@ package sqlite
 
 import (
 	"database/sql"
-	_ "github.com/mattn/go-sqlite3"
 	"testing"
+
+	_ "github.com/mattn/go-sqlite3"
 )
 
 var openSQLiteDB = func(dataSourceName string) (*sql.DB, error) {

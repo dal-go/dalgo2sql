@@ -206,7 +206,7 @@ func simpleFieldsToKey(idFieldName string) dal.DataToKeyFunc {
 				var t reflect.Type
 				switch kt {
 				case reflect.Int:
-					t = reflect.TypeOf(int(0))
+					t = reflect.TypeOf(0)
 				case reflect.Int8:
 					t = reflect.TypeOf(int8(0))
 				case reflect.Int16:
@@ -231,11 +231,15 @@ func simpleFieldsToKey(idFieldName string) dal.DataToKeyFunc {
 					t = reflect.TypeOf(float32(0))
 				case reflect.Float64:
 					t = reflect.TypeOf(float64(0))
+				default:
+					return nil, fmt.Errorf("unsupported type %v", kt)
 				}
 				if rv.Type().ConvertibleTo(t) {
 					cv := rv.Convert(t)
 					return cv.Interface(), nil
 				}
+			default:
+				return nil, fmt.Errorf("cannot convert id of type %T to kind %v", val, kind)
 			}
 			_ = target
 			return nil, fmt.Errorf("cannot convert id of type %T to kind %v", val, kind)

@@ -2,11 +2,12 @@ package dalgo2sql
 
 import (
 	"fmt"
-	"github.com/dal-go/dalgo/dal"
 	"reflect"
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/dal-go/dalgo/dal"
 )
 
 type operation = int

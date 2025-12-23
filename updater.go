@@ -3,6 +3,7 @@ package dalgo2sql
 import (
 	"context"
 	"fmt"
+
 	"github.com/dal-go/dalgo/dal"
 	"github.com/dal-go/dalgo/update"
 )
@@ -23,7 +24,7 @@ func (t transaction) UpdateMulti(ctx context.Context, keys []*dal.Key, updates [
 	return updateMulti(ctx, t.sqlOptions, t.tx.ExecContext, keys, updates, preconditions...)
 }
 
-func updateSingle(ctx context.Context, options DbOptions, execStatement statementExecutor, key *dal.Key, updates []update.Update, preconditions ...dal.Precondition) error {
+func updateSingle(ctx context.Context, options DbOptions, execStatement statementExecutor, key *dal.Key, updates []update.Update, _ ...dal.Precondition) error {
 	qry := query{
 		text: fmt.Sprintf("UPDATE %v SET", key.Collection()),
 	}

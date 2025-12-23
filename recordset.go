@@ -18,9 +18,9 @@ const (
 	// Table identifies a table in a database
 	Table RecordsetType = iota
 	// View identifies a view in a database
-	View
+	//View
 	// StoredProcedure identifies a stored procedure in a database
-	StoredProcedure
+	//StoredProcedure
 )
 
 // Recordset hold recordset settings

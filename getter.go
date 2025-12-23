@@ -5,10 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/dal-go/dalgo/dal"
-	"github.com/georgysavva/scany/v2/sqlscan"
 	"reflect"
 	"strings"
+
+	"github.com/dal-go/dalgo/dal"
+	"github.com/georgysavva/scany/v2/sqlscan"
 )
 
 type queryExecutor = func(query string, args ...interface{}) (*sql.Rows, error)
@@ -212,7 +213,7 @@ func getMultiFromSingleTable(_ context.Context, options DbOptions, records []dal
 			}
 		}
 	}
-	if err = rows.Err(); err == sql.ErrNoRows {
+	if err = rows.Err(); errors.Is(err, sql.ErrNoRows) {
 		err = nil
 	} else if err != nil {
 		return err

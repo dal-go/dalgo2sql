@@ -9,9 +9,9 @@ import (
 	"github.com/dal-go/dalgo/dal"
 )
 
-var _ dal.Reader = (*reader)(nil)
+var _ dal.RecordsReader = (*recordsReader)(nil)
 
-func getReader(ctx context.Context, query dal.Query, execute func(ctx context.Context, query string, args ...any) (*sql.Rows, error)) (*reader, error) {
+func getReader(ctx context.Context, query dal.Query, execute func(ctx context.Context, query string, args ...any) (*sql.Rows, error)) (*recordsReader, error) {
 	var a []any
 	var text string
 	var newRecord func() dal.Record
@@ -25,23 +25,23 @@ func getReader(ctx context.Context, query dal.Query, execute func(ctx context.Co
 		}
 	case dal.StructuredQuery:
 		text = q.String()
-		newRecord = q.Into()
+		newRecord = q.IntoRecord
 	}
 	rows, err := execute(ctx, text, a...)
 	if err != nil {
 		return nil, err
 	}
-	return &reader{rows: rows, newRecord: newRecord}, nil
+	return &recordsReader{rows: rows, newRecord: newRecord}, nil
 }
 
-type reader struct {
+type recordsReader struct {
 	rows      *sql.Rows
 	colNames  []string
 	colTypes  []*sql.ColumnType
 	newRecord func() dal.Record
 }
 
-func (r reader) Next() (record dal.Record, err error) {
+func (r recordsReader) Next() (record dal.Record, err error) {
 	if !r.rows.Next() {
 		if err := r.rows.Err(); err != nil {
 			return nil, err
@@ -76,11 +76,11 @@ func (r reader) Next() (record dal.Record, err error) {
 	return
 }
 
-func (r reader) Cursor() (string, error) {
+func (r recordsReader) Cursor() (string, error) {
 	return "", dal.ErrNotSupported
 }
 
-func (r reader) Close() error {
+func (r recordsReader) Close() error {
 	return r.rows.Close()
 }
 
@@ -89,14 +89,14 @@ type recordsReaderProvider struct {
 	executeQuery func(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 }
 
-func (rrp recordsReaderProvider) GetReader(ctx context.Context, query dal.Query) (dal.Reader, error) {
+func (rrp recordsReaderProvider) GetRecordsReader(ctx context.Context, query dal.Query) (dal.RecordsReader, error) {
 	return getReader(ctx, query, rrp.executeQuery)
 }
 
 func (rrp recordsReaderProvider) ReadAllRecords(ctx context.Context, query dal.Query, options ...dal.ReaderOption) ([]dal.Record, error) {
-	r, err := rrp.GetReader(ctx, query)
+	r, err := rrp.GetRecordsReader(ctx, query)
 	if err != nil {
 		return nil, err
 	}
-	return dal.ReadAllRecords(r, options...)
+	return dal.ReadAllToRecords(ctx, r, options...)
 }

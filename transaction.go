@@ -5,6 +5,7 @@ import (
 	"database/sql"
 
 	"github.com/dal-go/dalgo/dal"
+	"github.com/dal-go/dalgo/recordset"
 	"github.com/dal-go/dalgo/update"
 )
 
@@ -33,13 +34,17 @@ func (t readwriteTransaction) ID() string {
 	return ""
 }
 
-func (t transaction) Select(ctx context.Context, query dal.Query) (dal.Reader, error) {
+func (t transaction) Select(_ context.Context, _ dal.Query) (dal.Reader, error) {
 	panic("implement me") // TODO: implement me
 }
 
 var _ dal.ReadTransaction = (*readTransaction)(nil)
 
 type readTransaction = transaction
+
+func (t readTransaction) GetRecordsetReader(_ context.Context, _ dal.Query, _ *recordset.Recordset) (dal.RecordsetReader, error) {
+	return nil, dal.ErrNotImplementedYet
+}
 
 var _ dal.ReadwriteTransaction = (*readwriteTransaction)(nil)
 
