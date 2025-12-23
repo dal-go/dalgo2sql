@@ -7,12 +7,10 @@ github.com/bits-and-blooms/bitset v1.24.4 h1:95H15Og1clikBrKr/DuzMXkQzECs1M6hhoG
 github.com/bits-and-blooms/bitset v1.24.4/go.mod h1:7hO7Gc7Pp1vODcmWvKMRA9BNmbv6a/7QIWpPxHddWR8=
 github.com/cockroachdb/cockroach-go/v2 v2.2.0 h1:/5znzg5n373N/3ESjHF5SMLxiW4RKB05Ql//KWfeTFs=
 github.com/cockroachdb/cockroach-go/v2 v2.2.0/go.mod h1:u3MiKYGupPPjkn3ozknpMUpxPaNLTFWAya419/zv6eI=
-github.com/dal-go/dalgo v0.36.0 h1:srq74jTwvGS1hwFV/EDv7aqf4ALgfoAP37iZ2nSf1po=
-github.com/dal-go/dalgo v0.36.0/go.mod h1:/dO2kbsiQuqjq7BEK5cDDcroQ3mmpA/j7mloUrkxoaY=
-github.com/dal-go/dalgo-end2end-tests v0.0.67 h1:la8A+wj5846QnURamzzs8TUWTKXl52Jh4j7bZiiIotU=
-github.com/dal-go/dalgo-end2end-tests v0.0.67/go.mod h1:DWy2S9jv5SmvZSTo44VwlFyKpsTrxSk4bo0dX6hXYsQ=
-github.com/dal-go/mocks4dalgo v0.3.12 h1:qfiQk6fLwzQtgDGSPx82LSUVNiPY2Koq4raYSuslnY0=
-github.com/dal-go/mocks4dalgo v0.3.12/go.mod h1:Y5YwXTtq+ZBt1CuKsp8oEZXL/wKKw0XHGfLbth9BpDs=
+github.com/dal-go/dalgo v0.37.0 h1:tIAD3Pii2KTrqM01TS4u1RyOB/dyuy5jK17XIbEpU68=
+github.com/dal-go/dalgo v0.37.0/go.mod h1:BJQ/N3I40KjoT0+diGNfST1nCU9TP0Hjjy6gM20GPhI=
+github.com/dal-go/dalgo-end2end-tests v0.0.68 h1:uytA7sfqRlyiIqrgzbmB3jTa4AxfA8ADCuVzKXEb51w=
+github.com/dal-go/dalgo-end2end-tests v0.0.68/go.mod h1:D4tZQTeVMu/G/CHeJSpBDjbDdYvIYAXD9l464sNFORE=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
