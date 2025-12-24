@@ -42,7 +42,7 @@ var _ dal.ReadTransaction = (*readTransaction)(nil)
 
 type readTransaction = transaction
 
-func (t readTransaction) GetRecordsetReader(_ context.Context, _ dal.Query, _ *recordset.Recordset) (dal.RecordsetReader, error) {
+func (t readTransaction) GetRecordsetReader(_ context.Context, _ dal.Query, _ recordset.Recordset) (dal.RecordsetReader, error) {
 	return nil, dal.ErrNotImplementedYet
 }
 

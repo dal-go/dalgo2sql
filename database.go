@@ -22,7 +22,7 @@ type database struct {
 	options DbOptions
 }
 
-func (dtb *database) GetRecordsetReader(_ context.Context, _ dal.Query, _ *recordset.Recordset) (dal.RecordsetReader, error) {
+func (dtb *database) GetRecordsetReader(_ context.Context, _ dal.Query, _ recordset.Recordset) (dal.RecordsetReader, error) {
 	return nil, dal.ErrNotImplementedYet
 }
 

@@ -30,6 +30,9 @@ func getReader(ctx context.Context, query dal.Query, execute func(ctx context.Co
 
 	var rows *sql.Rows
 	rows, err = execute(ctx, text, a...)
+	if err != nil {
+		return
+	}
 	rr = &recordsReader{rows: rows, newRecord: newRecord}
 	if rr.colNames, err = rows.Columns(); err != nil {
 		return nil, fmt.Errorf("failed to read column names: %w", err)
