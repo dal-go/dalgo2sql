@@ -14,10 +14,11 @@ var _ dal.RecordsetReader = (*recordsetReader)(nil)
 
 func getRecordsetReader(ctx context.Context, query dal.Query, execute executeQueryFunc, options ...recordset.Option) (rr *recordsetReader, err error) {
 	rr = &recordsetReader{}
-	rr.name = recordset.NewOptions(options...).Name()
 	if rr.readerBase, err = getReaderBase(ctx, query, execute); err != nil {
 		return nil, err
 	}
+
+	rsOptions := recordset.NewOptions(options...)
 
 	var cols []recordset.Column[any]
 	for _, col := range rr.colTypes {
@@ -99,7 +100,7 @@ func getRecordsetReader(ctx context.Context, query dal.Query, execute executeQue
 		}
 		cols = append(cols, c)
 	}
-	rr.rs = recordset.NewColumnarRecordset(cols...)
+	rr.rs = recordset.NewColumnarRecordset(rsOptions.Name(), cols...)
 	return rr, nil
 }
 
