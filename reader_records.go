@@ -11,45 +11,23 @@ import (
 
 var _ dal.RecordsReader = (*recordsReader)(nil)
 
-func getReader(ctx context.Context, query dal.Query, execute func(ctx context.Context, query string, args ...any) (*sql.Rows, error)) (rr *recordsReader, err error) {
-	var a []any
-	var text string
+func getRecordsReader(ctx context.Context, query dal.Query, execute executeQueryFunc) (rr *recordsReader, err error) {
 	var newRecord func() dal.Record
-	switch q := query.(type) {
-	case dal.TextQuery:
-		text = q.Text()
-		args := q.Args()
-		a := make([]any, len(args))
-		for i, arg := range args {
-			a[i] = arg
-		}
-	case dal.StructuredQuery:
-		text = q.String()
-		newRecord = q.IntoRecord
+
+	rr = &recordsReader{
+		newRecord: newRecord,
 	}
 
-	var rows *sql.Rows
-	rows, err = execute(ctx, text, a...)
-	if err != nil {
+	if rr.readerBase, err = getReaderBase(ctx, query, execute); err != nil {
+		err = fmt.Errorf("failed to get SQL reader: %w", err)
 		return
 	}
-	rr = &recordsReader{rows: rows, newRecord: newRecord}
-	if rr.colNames, err = rows.Columns(); err != nil {
-		return nil, fmt.Errorf("failed to read column names: %w", err)
-	}
-	if rr.colTypes, err = rows.ColumnTypes(); err != nil {
-		return nil, fmt.Errorf("failed to read column types: %w", err)
-	}
-	if len(rr.colNames) != len(rr.colTypes) {
-		return nil, fmt.Errorf("length if column names and column types don't match")
-	}
+
 	return
 }
 
 type recordsReader struct {
-	rows      *sql.Rows
-	colNames  []string
-	colTypes  []*sql.ColumnType
+	readerBase
 	newRecord func() dal.Record
 }
 
@@ -65,12 +43,8 @@ func (r recordsReader) Next() (record dal.Record, err error) {
 	data := record.Data()
 	switch d := data.(type) {
 	case map[string]any:
-		values := make([]any, len(r.colNames))
-		scanArgs := make([]any, len(r.colNames))
-		for i := range values {
-			scanArgs[i] = &values[i]
-		}
-		if err = r.rows.Scan(scanArgs...); err != nil {
+		var values []any
+		if values, err = r.scanValues(); err != nil {
 			return nil, err
 		}
 		for i, n := range r.colNames {
@@ -99,7 +73,7 @@ type recordsReaderProvider struct {
 }
 
 func (rrp recordsReaderProvider) GetRecordsReader(ctx context.Context, query dal.Query) (dal.RecordsReader, error) {
-	return getReader(ctx, query, rrp.executeQuery)
+	return getRecordsReader(ctx, query, rrp.executeQuery)
 }
 
 func (rrp recordsReaderProvider) ReadAllRecords(ctx context.Context, query dal.Query, options ...dal.ReaderOption) ([]dal.Record, error) {

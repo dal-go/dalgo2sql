@@ -249,7 +249,7 @@ func TestDatabase_GetReader(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		mock.ExpectQuery("").WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
 		q := dal.NewTextQuery("SELECT id FROM users", nil)
-		reader, err := getReader(ctx, q, func(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+		reader, err := getRecordsReader(ctx, q, func(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
 			return db.QueryContext(ctx, query, args...)
 		})
 		if err != nil {

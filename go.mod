@@ -4,9 +4,11 @@ go 1.23.0
 
 toolchain go1.25.5
 
+//replace github.com/dal-go/dalgo => ../dalgo
+
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
-	github.com/dal-go/dalgo v0.38.0
+	github.com/dal-go/dalgo v0.39.0
 	github.com/georgysavva/scany/v2 v2.1.4
 )
 
