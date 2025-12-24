@@ -244,14 +244,26 @@ func TestDatabase_RunReadwriteTransaction(t *testing.T) {
 
 func TestDatabase_GetReader(t *testing.T) {
 	db, mock, _ := sqlmock.New()
-	d := NewDatabase(db, newSchema(), DbOptions{})
 	ctx := context.Background()
 
 	t.Run("success", func(t *testing.T) {
-		mock.ExpectQuery("").WillReturnRows(sqlmock.NewRows([]string{"id"}))
-		_, err := d.GetRecordsReader(ctx, nil)
+		mock.ExpectQuery("").WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
+		q := dal.NewTextQuery("SELECT id FROM users", nil)
+		reader, err := getReader(ctx, q, func(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+			return db.QueryContext(ctx, query, args...)
+		})
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
+		}
+		reader.newRecord = func() dal.Record {
+			return dal.NewRecordWithData(dal.NewKeyWithID("users", 1), make(map[string]any))
+		}
+		record, err := reader.Next()
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if record.Data().(map[string]any)["id"] != int64(1) {
+			t.Errorf("expected 1, got %v", record.Data().(map[string]any)["id"])
 		}
 	})
 }

@@ -11,7 +11,7 @@ import (
 
 var _ dal.RecordsReader = (*recordsReader)(nil)
 
-func getReader(ctx context.Context, query dal.Query, execute func(ctx context.Context, query string, args ...any) (*sql.Rows, error)) (*recordsReader, error) {
+func getReader(ctx context.Context, query dal.Query, execute func(ctx context.Context, query string, args ...any) (*sql.Rows, error)) (rr *recordsReader, err error) {
 	var a []any
 	var text string
 	var newRecord func() dal.Record
@@ -27,11 +27,20 @@ func getReader(ctx context.Context, query dal.Query, execute func(ctx context.Co
 		text = q.String()
 		newRecord = q.IntoRecord
 	}
-	rows, err := execute(ctx, text, a...)
-	if err != nil {
-		return nil, err
+
+	var rows *sql.Rows
+	rows, err = execute(ctx, text, a...)
+	rr = &recordsReader{rows: rows, newRecord: newRecord}
+	if rr.colNames, err = rows.Columns(); err != nil {
+		return nil, fmt.Errorf("failed to read column names: %w", err)
 	}
-	return &recordsReader{rows: rows, newRecord: newRecord}, nil
+	if rr.colTypes, err = rows.ColumnTypes(); err != nil {
+		return nil, fmt.Errorf("failed to read column types: %w", err)
+	}
+	if len(rr.colNames) != len(rr.colTypes) {
+		return nil, fmt.Errorf("length if column names and column types don't match")
+	}
+	return
 }
 
 type recordsReader struct {
@@ -48,22 +57,19 @@ func (r recordsReader) Next() (record dal.Record, err error) {
 		}
 		return nil, io.EOF
 	}
-	if r.colNames == nil || r.colTypes == nil {
-		if r.colNames, err = r.rows.Columns(); err != nil {
-			return nil, fmt.Errorf("failed to read column names: %w", err)
-		}
-		if r.colTypes, err = r.rows.ColumnTypes(); err != nil {
-			return nil, fmt.Errorf("failed to read column types: %w", err)
-		}
-		if len(r.colNames) != len(r.colTypes) {
-			return nil, fmt.Errorf("length if column names and column types don't match")
-		}
-	}
 	record = r.newRecord()
+	record.SetError(nil)
 	data := record.Data()
 	switch d := data.(type) {
 	case map[string]any:
-		values := make([]any, len(r.colNames)) // TODO: read rows into value
+		values := make([]any, len(r.colNames))
+		scanArgs := make([]any, len(r.colNames))
+		for i := range values {
+			scanArgs[i] = &values[i]
+		}
+		if err = r.rows.Scan(scanArgs...); err != nil {
+			return nil, err
+		}
 		for i, n := range r.colNames {
 			d[n] = values[i]
 		}
