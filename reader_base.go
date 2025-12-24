@@ -11,6 +11,7 @@ import (
 type executeQueryFunc func(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 
 type readerBase struct {
+	name     string
 	rows     *sql.Rows
 	colNames []string
 	colTypes []*sql.ColumnType

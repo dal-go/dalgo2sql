@@ -22,8 +22,8 @@ type database struct {
 	options DbOptions
 }
 
-func (dtb *database) GetRecordsetReader(ctx context.Context, query dal.Query, _ recordset.Recordset) (dal.RecordsetReader, error) {
-	return getRecordsetReader(ctx, query, dtb.executeQuery)
+func (dtb *database) ExecuteQueryToRecordsetReader(ctx context.Context, query dal.Query, options ...recordset.Option) (dal.RecordsetReader, error) {
+	return getRecordsetReader(ctx, query, dtb.executeQuery, options...)
 }
 
 //func (dtb *database) Connect(ctx context.Context) (dal.Connection, error) {
@@ -98,7 +98,7 @@ func (dtb *database) RunReadwriteTransaction(ctx context.Context, f dal.RWTxWork
 	return nil
 }
 
-func (dtb *database) GetRecordsReader(ctx context.Context, query dal.Query) (dal.RecordsReader, error) {
+func (dtb *database) ExecuteQueryToRecordsReader(ctx context.Context, query dal.Query) (dal.RecordsReader, error) {
 	return getRecordsReader(ctx, query, dtb.db.QueryContext)
 }
 

@@ -72,14 +72,14 @@ type recordsReaderProvider struct {
 	executeQuery func(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 }
 
-func (rrp recordsReaderProvider) GetRecordsReader(ctx context.Context, query dal.Query) (dal.RecordsReader, error) {
+func (rrp recordsReaderProvider) ExecuteQueryToRecordsReader(ctx context.Context, query dal.Query) (dal.RecordsReader, error) {
 	return getRecordsReader(ctx, query, rrp.executeQuery)
 }
 
-func (rrp recordsReaderProvider) ReadAllRecords(ctx context.Context, query dal.Query, options ...dal.ReaderOption) ([]dal.Record, error) {
-	r, err := rrp.GetRecordsReader(ctx, query)
-	if err != nil {
-		return nil, err
-	}
-	return dal.ReadAllToRecords(ctx, r, options...)
-}
+//func (rrp recordsReaderProvider) ReadAllRecords(ctx context.Context, query dal.Query, options ...dal.ReaderOption) ([]dal.Record, error) {
+//	r, err := rrp.ExecuteQueryToRecordsReader(ctx, query)
+//	if err != nil {
+//		return nil, err
+//	}
+//	return dal.ReadAllToRecords(ctx, r, options...)
+//}
