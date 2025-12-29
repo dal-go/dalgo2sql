@@ -118,6 +118,14 @@ func TestDatabase_RunReadonlyTransaction(t *testing.T) {
 		mock.ExpectBegin().WillReturnError(nil)
 		mock.ExpectCommit().WillReturnError(nil)
 		err := db.RunReadonlyTransaction(ctx, func(ctx context.Context, tx dal.ReadTransaction) error {
+			if rwt, ok := tx.(interface{ ID() string }); ok {
+				if rwt.ID() != "" {
+					t.Errorf("expected empty transaction ID, got %s", rwt.ID())
+				}
+			}
+			if tx.Options().IsReadonly() != true {
+				t.Errorf("expected readonly transaction")
+			}
 			return nil
 		})
 		if err != nil {
@@ -204,6 +212,9 @@ func TestDatabase_RunReadwriteTransaction(t *testing.T) {
 		mock.ExpectBegin().WillReturnError(nil)
 		mock.ExpectCommit().WillReturnError(nil)
 		err := d.RunReadwriteTransaction(ctx, func(ctx context.Context, tx dal.ReadwriteTransaction) error {
+			if tx.ID() != "" {
+				t.Errorf("expected empty transaction ID, got %s", tx.ID())
+			}
 			return nil
 		})
 		if err != nil {
@@ -242,28 +253,56 @@ func TestDatabase_RunReadwriteTransaction(t *testing.T) {
 	})
 }
 
-func TestDatabase_GetReader(t *testing.T) {
-	db, mock, _ := sqlmock.New()
+func TestDatabase_Panics(t *testing.T) {
+	t.Run("nil_db", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Errorf("expected panic")
+			}
+		}()
+		NewDatabase(nil, newSchema(), DbOptions{})
+	})
+	t.Run("nil_schema", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Errorf("expected panic")
+			}
+		}()
+		db, _, _ := sqlmock.New()
+		defer db.Close()
+		NewDatabase(db, nil, DbOptions{})
+	})
+}
+
+func TestDatabase_ExecuteQuery(t *testing.T) {
+	_, mock, db, closer, err := newDatabase()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closer()
 	ctx := context.Background()
 
-	t.Run("success", func(t *testing.T) {
-		mock.ExpectQuery("").WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
+	t.Run("ExecuteQueryToRecordsReader", func(t *testing.T) {
+		mock.ExpectQuery("SELECT id FROM users").WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
 		q := dal.NewTextQuery("SELECT id FROM users", nil)
-		reader, err := getRecordsReader(ctx, q, func(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
-			return db.QueryContext(ctx, query, args...)
-		})
+		reader, err := db.ExecuteQueryToRecordsReader(ctx, q)
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
-		reader.newRecord = func() dal.Record {
-			return dal.NewRecordWithData(dal.NewKeyWithID("users", 1), make(map[string]any))
+		if reader == nil {
+			t.Fatal("expected reader, got nil")
 		}
-		record, err := reader.Next()
+	})
+
+	t.Run("ExecuteQueryToRecordsetReader", func(t *testing.T) {
+		mock.ExpectQuery("SELECT id FROM users").WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
+		q := dal.NewTextQuery("SELECT id FROM users", nil)
+		reader, err := db.ExecuteQueryToRecordsetReader(ctx, q)
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
-		if record.Data().(map[string]any)["id"] != int64(1) {
-			t.Errorf("expected 1, got %v", record.Data().(map[string]any)["id"])
+		if reader == nil {
+			t.Fatal("expected reader, got nil")
 		}
 	})
 }

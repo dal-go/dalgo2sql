@@ -23,7 +23,7 @@ func getReaderBase(ctx context.Context, query dal.Query, execute executeQueryFun
 	case dal.TextQuery:
 		text = q.Text()
 		args := q.Args()
-		a := make([]any, len(args))
+		a = make([]any, len(args))
 		for i, arg := range args {
 			a[i] = arg
 		}

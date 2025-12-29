@@ -11,11 +11,12 @@ import (
 
 var _ dal.Transaction = (*transaction)(nil)
 
-func newTransaction(tx *sql.Tx, sqlOptions DbOptions) transaction {
+func newTransaction(tx *sql.Tx, sqlOptions DbOptions, txOptions dal.TransactionOptions) transaction {
 	return transaction{
 		tx:                    tx,
 		recordsReaderProvider: recordsReaderProvider{executeQuery: tx.QueryContext},
 		sqlOptions:            sqlOptions,
+		txOptions:             txOptions,
 	}
 }
 
@@ -30,28 +31,28 @@ func (t transaction) Options() dal.TransactionOptions {
 	return t.txOptions
 }
 
-func (t readwriteTransaction) ID() string {
+func (t transaction) ID() string {
 	return ""
 }
 
-func (t transaction) Select(_ context.Context, _ dal.Query) (dal.Reader, error) {
-	panic("implement me") // TODO: implement me
+func (t transaction) Select(ctx context.Context, query dal.Query) (dal.Reader, error) {
+	return getRecordsReader(ctx, query, t.tx.QueryContext)
 }
 
 var _ dal.ReadTransaction = (*readTransaction)(nil)
 
 type readTransaction = transaction
 
-func (t readTransaction) ExecuteQueryToRecordsetReader(_ context.Context, _ dal.Query, _ ...recordset.Option) (dal.RecordsetReader, error) {
-	return nil, dal.ErrNotImplementedYet
+func (t readTransaction) ExecuteQueryToRecordsetReader(ctx context.Context, query dal.Query, options ...recordset.Option) (dal.RecordsetReader, error) {
+	return getRecordsetReader(ctx, query, t.tx.QueryContext, options...)
 }
 
 var _ dal.ReadwriteTransaction = (*readwriteTransaction)(nil)
 
 type readwriteTransaction = readTransaction
 
-func newReadwriteTransaction(tx *sql.Tx, sqlOptions DbOptions) readwriteTransaction {
-	return newTransaction(tx, sqlOptions)
+func newReadwriteTransaction(tx *sql.Tx, sqlOptions DbOptions, txOptions dal.TransactionOptions) readwriteTransaction {
+	return newTransaction(tx, sqlOptions, txOptions)
 }
 
 func (t transaction) UpdateRecord(ctx context.Context, record dal.Record, updates []update.Update, preconditions ...dal.Precondition) error {

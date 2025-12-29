@@ -64,7 +64,7 @@ func (dtb *database) RunReadonlyTransaction(ctx context.Context, f dal.ROTxWorke
 	if dbTx == nil {
 		return fmt.Errorf("sql driver returned nil transaction")
 	}
-	if err = f(ctx, newTransaction(dbTx, dtb.options)); err != nil {
+	if err = f(ctx, newTransaction(dbTx, dtb.options, dalgoTxOptions)); err != nil {
 		if rollbackErr := dbTx.Rollback(); rollbackErr != nil {
 			return dal.NewRollbackError(rollbackErr, err)
 		}
@@ -86,7 +86,7 @@ func (dtb *database) RunReadwriteTransaction(ctx context.Context, f dal.RWTxWork
 	if err != nil {
 		return err
 	}
-	if err = f(ctx, newReadwriteTransaction(dbTx, dtb.options)); err != nil {
+	if err = f(ctx, newReadwriteTransaction(dbTx, dtb.options, dalgoTxOptions)); err != nil {
 		if rollbackErr := dbTx.Rollback(); rollbackErr != nil {
 			return dal.NewRollbackError(rollbackErr, err)
 		}

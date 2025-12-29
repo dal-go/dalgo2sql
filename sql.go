@@ -60,7 +60,7 @@ func buildSingleRecordQuery(o operation, options DbOptions, record dal.Record) (
 	case insertOperation:
 		query.text = "INSERT INTO " + collection
 	case updateOperation:
-		query.text = fmt.Sprintf("UPDATE %v SET", collection)
+		query.text = fmt.Sprintf("UPDATE %v SET ", collection)
 	}
 	var cols []string
 	var argPlaceholders []string
@@ -116,8 +116,8 @@ func buildSingleRecordQuery(o operation, options DbOptions, record dal.Record) (
 			pkConditions = append(pkConditions, name+" = ?")
 			query.args = append(query.args, v)
 		})
-		query.text += strings.Join(argPlaceholders, ",\n") +
-			fmt.Sprintf(" WHERE %v = ?", strings.Join(pkConditions, " AND "))
+		query.text += " " + strings.Join(argPlaceholders, ", ") +
+			fmt.Sprintf(" WHERE %v", strings.Join(pkConditions, " AND "))
 	}
 	return query
 }

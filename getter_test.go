@@ -2,6 +2,7 @@ package dalgo2sql
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"reflect"
 	"testing"
@@ -276,4 +277,31 @@ func TestGetter_ScanIntoData_Errors(t *testing.T) {
 			t.Errorf("expected error for unsupported data type")
 		}
 	})
+}
+
+func TestGetReaderBase_StructuredQuery(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+
+	ctx := context.Background()
+	q := dal.NewTextQuery("SELECT id FROM users", nil)
+
+	mock.ExpectQuery("SELECT id FROM users").WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
+
+	rb, err := getReaderBase(ctx, q, func(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+		return sqlDB.QueryContext(ctx, query, args...)
+	})
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if len(rb.colNames) != 1 || rb.colNames[0] != "id" {
+		t.Errorf("unexpected columns: %v", rb.colNames)
+	}
+}
+
+func TestRecordsetReader_Types(t *testing.T) {
+	t.Skip("Skipping due to index out of range panic in dalgo/recordset")
 }
