@@ -12,10 +12,10 @@ import (
 var _ dal.RecordsReader = (*recordsReader)(nil)
 
 func getRecordsReader(ctx context.Context, query dal.Query, execute executeQueryFunc) (rr *recordsReader, err error) {
-	var newRecord func() dal.Record
-
 	rr = &recordsReader{
-		newRecord: newRecord,
+		newRecord: func() dal.Record {
+			return dal.NewRecordWithData(dal.NewKeyWithID("Unknown", ""), make(map[string]any))
+		},
 	}
 
 	if rr.readerBase, err = getReaderBase(ctx, query, execute); err != nil {
@@ -41,6 +41,10 @@ func (r recordsReader) Next() (record dal.Record, err error) {
 	record = r.newRecord()
 	record.SetError(nil)
 	data := record.Data()
+	if data == nil {
+		data = make(map[string]any)
+		record = dal.NewRecordWithData(record.Key(), data)
+	}
 	switch d := data.(type) {
 	case map[string]any:
 		var values []any
