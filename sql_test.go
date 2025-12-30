@@ -21,11 +21,12 @@ func TestProcessPrimaryKey(t *testing.T) {
 		id := []string{"u1", "p1"}
 		key := &dal.Key{ID: id}
 		processPrimaryKey([]string{"ID", "ParentID"}, key, func(i int, name string, v any) {
-			if i == 0 {
+			switch i {
+			case 0:
 				if name != "ID" || v != "u1" {
 					t.Errorf("unexpected values at 0: name=%s, v=%v", name, v)
 				}
-			} else if i == 1 {
+			case 1:
 				if name != "ParentID" || v != "p1" {
 					t.Errorf("unexpected values at 1: name=%s, v=%v", name, v)
 				}

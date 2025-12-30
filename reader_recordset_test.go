@@ -14,7 +14,7 @@ func TestGetRecordsetReader_Binary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open sqlmock: %v", err)
 	}
-	defer func() { _ = db.Close() }()
+	defer closeDatabase(t, db)
 
 	ctx := context.Background()
 	query := dal.NewTextQuery("SELECT blob_col FROM test_table", nil)

@@ -17,7 +17,7 @@ func TestDeleter(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer sqlDB.Close()
+		defer closeDatabase(t, sqlDB)
 
 		db := NewDatabase(sqlDB, newSchema(), DbOptions{}).(*database)
 		key := dal.NewKeyWithID("users", "u1")
@@ -37,7 +37,7 @@ func TestDeleter(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer sqlDB.Close()
+		defer closeDatabase(t, sqlDB)
 
 		rs := NewRecordset("users", Table, []dal.FieldRef{dal.Field("uid")})
 		db := NewDatabase(sqlDB, newSchema(), DbOptions{
@@ -62,7 +62,7 @@ func TestDeleter(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer sqlDB.Close()
+		defer closeDatabase(t, sqlDB)
 
 		db := NewDatabase(sqlDB, newSchema(), DbOptions{}).(*database)
 		keys := []*dal.Key{
@@ -87,7 +87,7 @@ func TestDeleter(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer sqlDB.Close()
+		defer closeDatabase(t, sqlDB)
 
 		db := NewDatabase(sqlDB, newSchema(), DbOptions{}).(*database)
 		keys := []*dal.Key{
@@ -109,7 +109,7 @@ func TestDeleter(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer sqlDB.Close()
+		defer closeDatabase(t, sqlDB)
 
 		db := NewDatabase(sqlDB, newSchema(), DbOptions{}).(*database)
 		key := dal.NewKeyWithID("users", "u1")
@@ -129,7 +129,7 @@ func TestDeleter(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer sqlDB.Close()
+		defer closeDatabase(t, sqlDB)
 
 		db := NewDatabase(sqlDB, newSchema(), DbOptions{}).(*database)
 		keys := []*dal.Key{
@@ -150,7 +150,7 @@ func TestDeleter(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer sqlDB.Close()
+		defer closeDatabase(t, sqlDB)
 
 		db := NewDatabase(sqlDB, newSchema(), DbOptions{})
 		key := dal.NewKeyWithID("users", "u1")
@@ -172,7 +172,7 @@ func TestDeleter(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer sqlDB.Close()
+		defer closeDatabase(t, sqlDB)
 
 		db := NewDatabase(sqlDB, newSchema(), DbOptions{})
 		keys := []*dal.Key{

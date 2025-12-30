@@ -18,7 +18,7 @@ func TestTransaction(t *testing.T) {
 
 	t.Run("Insert", func(t *testing.T) {
 		sqlDB, mock, _ := sqlmock.New()
-		defer sqlDB.Close()
+		defer closeDatabase(t, sqlDB)
 		db := NewDatabase(sqlDB, newSchema(), DbOptions{
 			Recordsets: map[string]*Recordset{
 				"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID")}),
@@ -35,7 +35,7 @@ func TestTransaction(t *testing.T) {
 
 	t.Run("InsertMulti", func(t *testing.T) {
 		sqlDB, mock, _ := sqlmock.New()
-		defer sqlDB.Close()
+		defer closeDatabase(t, sqlDB)
 		db := NewDatabase(sqlDB, newSchema(), DbOptions{
 			Recordsets: map[string]*Recordset{
 				"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID")}),
@@ -56,7 +56,7 @@ func TestTransaction(t *testing.T) {
 
 	t.Run("Update", func(t *testing.T) {
 		sqlDB, mock, _ := sqlmock.New()
-		defer sqlDB.Close()
+		defer closeDatabase(t, sqlDB)
 		db := NewDatabase(sqlDB, newSchema(), DbOptions{
 			Recordsets: map[string]*Recordset{
 				"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID")}),
@@ -74,7 +74,7 @@ func TestTransaction(t *testing.T) {
 
 	t.Run("UpdateMulti", func(t *testing.T) {
 		sqlDB, mock, _ := sqlmock.New()
-		defer sqlDB.Close()
+		defer closeDatabase(t, sqlDB)
 		db := NewDatabase(sqlDB, newSchema(), DbOptions{
 			Recordsets: map[string]*Recordset{
 				"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID")}),
@@ -96,7 +96,7 @@ func TestTransaction(t *testing.T) {
 
 	t.Run("UpdateRecord", func(t *testing.T) {
 		sqlDB, mock, _ := sqlmock.New()
-		defer sqlDB.Close()
+		defer closeDatabase(t, sqlDB)
 		db := NewDatabase(sqlDB, newSchema(), DbOptions{
 			Recordsets: map[string]*Recordset{
 				"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID")}),
@@ -115,7 +115,7 @@ func TestTransaction(t *testing.T) {
 
 	t.Run("DeleteMulti", func(t *testing.T) {
 		sqlDB, mock, _ := sqlmock.New()
-		defer sqlDB.Close()
+		defer closeDatabase(t, sqlDB)
 		db := NewDatabase(sqlDB, newSchema(), DbOptions{
 			Recordsets: map[string]*Recordset{
 				"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID")}),
@@ -131,7 +131,7 @@ func TestTransaction(t *testing.T) {
 
 	t.Run("Set", func(t *testing.T) {
 		sqlDB, mock, _ := sqlmock.New()
-		defer sqlDB.Close()
+		defer closeDatabase(t, sqlDB)
 		db := NewDatabase(sqlDB, newSchema(), DbOptions{
 			Recordsets: map[string]*Recordset{
 				"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID")}),
@@ -149,7 +149,7 @@ func TestTransaction(t *testing.T) {
 
 	t.Run("SetMulti", func(t *testing.T) {
 		sqlDB, mock, _ := sqlmock.New()
-		defer sqlDB.Close()
+		defer closeDatabase(t, sqlDB)
 		db := NewDatabase(sqlDB, newSchema(), DbOptions{
 			Recordsets: map[string]*Recordset{
 				"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID")}),
@@ -169,7 +169,7 @@ func TestTransaction(t *testing.T) {
 
 	t.Run("Upsert", func(t *testing.T) {
 		sqlDB, mock, _ := sqlmock.New()
-		defer sqlDB.Close()
+		defer closeDatabase(t, sqlDB)
 		db := NewDatabase(sqlDB, newSchema(), DbOptions{
 			Recordsets: map[string]*Recordset{
 				"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID")}),
@@ -192,7 +192,7 @@ func TestTransaction(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer sqlDB.Close()
+		defer closeDatabase(t, sqlDB)
 
 		db := NewDatabase(sqlDB, newSchema(), DbOptions{})
 
@@ -223,7 +223,7 @@ func TestTransaction(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer sqlDB.Close()
+		defer closeDatabase(t, sqlDB)
 
 		db := NewDatabase(sqlDB, newSchema(), DbOptions{})
 
@@ -252,7 +252,7 @@ func TestTransaction(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer sqlDB.Close()
+		defer closeDatabase(t, sqlDB)
 
 		db := NewDatabase(sqlDB, newSchema(), DbOptions{
 			Recordsets: map[string]*Recordset{

@@ -200,9 +200,7 @@ func TestGetter_Get(t *testing.T) {
 
 func TestGetter_GetMulti(t *testing.T) {
 	db, mock, _ := sqlmock.New()
-	defer func() {
-		_ = db.Close()
-	}()
+	defer closeDatabase(t, db)
 
 	opts := DbOptions{
 		Recordsets: map[string]*Recordset{
@@ -264,9 +262,7 @@ func TestGetter_GetMulti(t *testing.T) {
 
 func TestGetter_ScanIntoData_Errors(t *testing.T) {
 	db, mock, _ := sqlmock.New()
-	defer func() {
-		_ = db.Close()
-	}()
+	defer closeDatabase(t, db)
 
 	t.Run("unsupported_data_type", func(t *testing.T) {
 		mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"col1"}).AddRow(1))
@@ -284,7 +280,7 @@ func TestGetReaderBase_StructuredQuery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer sqlDB.Close()
+	defer closeDatabase(t, sqlDB)
 
 	ctx := context.Background()
 	q := dal.NewTextQuery("SELECT id FROM users", nil)

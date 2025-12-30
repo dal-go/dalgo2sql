@@ -17,7 +17,7 @@ func TestUpdater(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer sqlDB.Close()
+		defer closeDatabase(t, sqlDB)
 
 		db := NewDatabase(sqlDB, newSchema(), DbOptions{
 			Recordsets: map[string]*Recordset{
@@ -45,7 +45,7 @@ func TestUpdater(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer sqlDB.Close()
+		defer closeDatabase(t, sqlDB)
 
 		db := NewDatabase(sqlDB, newSchema(), DbOptions{
 			Recordsets: map[string]*Recordset{
@@ -79,7 +79,7 @@ func TestUpserter(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer sqlDB.Close()
+		defer closeDatabase(t, sqlDB)
 
 		db := NewDatabase(sqlDB, newSchema(), DbOptions{
 			Recordsets: map[string]*Recordset{

@@ -96,17 +96,17 @@ func TestOptions_PrimaryKeyFieldNames(t *testing.T) {
 	}
 }
 
-func newDatabase() (sqlDB *sql.DB, mock sqlmock.Sqlmock, db *database, closer func(), err error) {
+func newDatabase(t *testing.T) (sqlDB *sql.DB, mock sqlmock.Sqlmock, db *database, closer func(), err error) {
 	sqlDB, mock, err = sqlmock.New()
 	db = NewDatabase(sqlDB, newSchema(), DbOptions{}).(*database)
 	closer = func() {
-		_ = sqlDB.Close()
+		closeDatabase(t, sqlDB)
 	}
 	return
 }
 
 func TestDatabase_RunReadonlyTransaction(t *testing.T) {
-	_, mock, db, closer, err := newDatabase()
+	_, mock, db, closer, err := newDatabase(t)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +200,7 @@ func TestDatabase_RunReadonlyTransaction(t *testing.T) {
 }
 
 func TestDatabase_RunReadwriteTransaction(t *testing.T) {
-	_, mock, d, closer, err := newDatabase()
+	_, mock, d, closer, err := newDatabase(t)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,13 +269,13 @@ func TestDatabase_Panics(t *testing.T) {
 			}
 		}()
 		db, _, _ := sqlmock.New()
-		defer db.Close()
+		defer closeDatabase(t, db)
 		NewDatabase(db, nil, DbOptions{})
 	})
 }
 
 func TestDatabase_ExecuteQuery(t *testing.T) {
-	_, mock, db, closer, err := newDatabase()
+	_, mock, db, closer, err := newDatabase(t)
 	if err != nil {
 		t.Fatal(err)
 	}

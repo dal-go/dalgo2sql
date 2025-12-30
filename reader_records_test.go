@@ -15,7 +15,7 @@ func TestRecordsReader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer closeDatabase(t, db)
 
 	ctx := context.Background()
 	query := dal.NewTextQuery("SELECT id, name FROM users", nil)
@@ -24,13 +24,18 @@ func TestRecordsReader(t *testing.T) {
 		rows := sqlmock.NewRows([]string{"id", "name"}).
 			AddRow(1, "John").
 			AddRow(2, "Jane")
-		mock.ExpectQuery("SELECT id, name FROM users").WillReturnRows(rows)
+		_ = mock.ExpectQuery("SELECT id, name FROM users").WillReturnRows(rows)
 
 		rr, err := getRecordsReader(ctx, query, db.QueryContext)
 		if err != nil {
 			t.Fatalf("failed to get records reader: %v", err)
 		}
-		defer rr.Close()
+		defer func(rr *recordsReader) {
+			err := rr.Close()
+			if err != nil {
+				t.Errorf("failed to close records reader: %v", err)
+			}
+		}(rr)
 
 		record, err := rr.Next()
 		if err != nil {
