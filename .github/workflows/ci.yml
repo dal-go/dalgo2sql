@@ -2,33 +2,24 @@ name: Go CI
 
 on:
   push:
-    branches:
-      - main
+    branches-ignore:
+      - renovate/**
     tags:
-      - 'v[0-9]+\.[0-9]+\.[0-9]+'
+      - 'v[0-9]+\.[0-9]+\.[0-9]+' # Push events to matching v*, i.e. v20.15.10
   pull_request:
     branches:
-      - main
+      - '**'
 
 jobs:
 
-  go_ci:
-    runs-on: ubuntu-latest
+  strongo_workflow:
     permissions:
       contents: write
+    uses: strongo/go-ci-action/.github/workflows/workflow.yml@main
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Install Go
-        uses: actions/setup-go@v6
-        with:
-          go-version: '^1.20'
-
-      - uses: strongo/go-ci-action@main
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: end2end
-        run: go test -v ./end2end
+    secrets:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      COVERALLS_REPO_TOKEN: ${{ secrets.COVERALLS_REPO_TOKEN }}
+    with:
+      code_coverage: true
+      min_test_coverage_percent: 10
