@@ -8,6 +8,8 @@ github.com/cockroachdb/cockroach-go/v2 v2.2.0 h1:/5znzg5n373N/3ESjHF5SMLxiW4RKB0
 github.com/cockroachdb/cockroach-go/v2 v2.2.0/go.mod h1:u3MiKYGupPPjkn3ozknpMUpxPaNLTFWAya419/zv6eI=
 github.com/dal-go/dalgo v0.41.1 h1:M3j/oMqE3MQD2l170X04IZBn2MHenrMKL76ma7IXVYM=
 github.com/dal-go/dalgo v0.41.1/go.mod h1:c9vfeYEwt1Emqa9sntGvZlFSLWOfyRAcngefNrk3AoI=
+github.com/dal-go/dalgo v0.41.3 h1:CGalpahqyQ3D5xTD85jwLnsZ+H2m9kSg7BCxsu4Wljk=
+github.com/dal-go/dalgo v0.41.3/go.mod h1:UsfnN3vdZ58s3gGRHNadEiqGheo8yqirEHUWTxGR8a0=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/georgysavva/scany/v2 v2.1.4 h1:nrzHEJ4oQVRoiKmocRqA1IyGOmM/GQOEsg9UjMR5Ip4=
