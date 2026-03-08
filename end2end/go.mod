@@ -2,11 +2,11 @@ module github.com/dal-go/dalgo2sql/end2end
 
 go 1.24.0
 
-toolchain go1.26.0
+toolchain go1.26.1
 
 require (
-	github.com/dal-go/dalgo v0.41.5
-	github.com/dal-go/dalgo-end2end-tests v0.0.74
+	github.com/dal-go/dalgo v0.41.6
+	github.com/dal-go/dalgo-end2end-tests v0.0.76
 	github.com/dal-go/dalgo2sql v0.0.0 // No version as we alway replace it with local version
 	github.com/mattn/go-sqlite3 v1.14.34
 )
