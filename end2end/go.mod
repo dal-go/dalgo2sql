@@ -5,10 +5,10 @@ go 1.24.0
 toolchain go1.26.1
 
 require (
-	github.com/dal-go/dalgo v0.41.7
-	github.com/dal-go/dalgo-end2end-tests v0.0.77
+	github.com/dal-go/dalgo v0.41.8
+	github.com/dal-go/dalgo-end2end-tests v0.0.78
 	github.com/dal-go/dalgo2sql v0.0.0 // No version as we alway replace it with local version
-	github.com/mattn/go-sqlite3 v1.14.34
+	github.com/mattn/go-sqlite3 v1.14.37
 )
 
 replace github.com/dal-go/dalgo2sql => ./../
