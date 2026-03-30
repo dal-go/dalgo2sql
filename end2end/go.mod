@@ -5,10 +5,10 @@ go 1.24.0
 toolchain go1.26.1
 
 require (
-	github.com/dal-go/dalgo v0.41.9
-	github.com/dal-go/dalgo-end2end-tests v0.0.79
+	github.com/dal-go/dalgo v0.41.10
+	github.com/dal-go/dalgo-end2end-tests v0.0.81
 	github.com/dal-go/dalgo2sql v0.0.0 // No version as we alway replace it with local version
-	github.com/mattn/go-sqlite3 v1.14.37
+	github.com/mattn/go-sqlite3 v1.14.38
 )
 
 replace github.com/dal-go/dalgo2sql => ./../
@@ -25,7 +25,7 @@ require (
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/stretchr/testify v1.11.1 // indirect
 	github.com/strongo/random v0.0.1 // indirect
-	github.com/strongo/validation v0.0.7 // indirect
+	github.com/strongo/validation v0.0.8 // indirect
 	golang.org/x/crypto v0.46.0 // indirect
 	golang.org/x/sys v0.39.0 // indirect
 	golang.org/x/text v0.32.0 // indirect
