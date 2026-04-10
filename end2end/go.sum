@@ -55,6 +55,8 @@ github.com/dal-go/dalgo-end2end-tests v0.0.79 h1:vd2v2FphtU2pq1iCo4kFkx1fujf7mRk
 github.com/dal-go/dalgo-end2end-tests v0.0.79/go.mod h1:C58QIXhvsLNCzQImdSa8JjsjJUcYc8U0TeDTSxLkxxg=
 github.com/dal-go/dalgo-end2end-tests v0.0.81 h1:jP1YpA23HLBLNHZsDcIRJdSDaVerEqe5sXVEQjq3Q7U=
 github.com/dal-go/dalgo-end2end-tests v0.0.81/go.mod h1:Jm8qIaZmYz0EjbP6JEfIiQVMToQl6yjys2fYKeIvT/E=
+github.com/dal-go/dalgo-end2end-tests v0.0.82 h1:15KeQyfSes1ghJwhfhbtqifXgwlb/UMjeHJGq0lKDEM=
+github.com/dal-go/dalgo-end2end-tests v0.0.82/go.mod h1:PbioIZpfFn3I1q1DSR8KwFc0s9HWt6XDVtLmwQb8/QE=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
@@ -94,6 +96,8 @@ github.com/mattn/go-sqlite3 v1.14.38 h1:tDUzL85kMvOrvpCt8P64SbGgVFtJB11GPi2AdmIT
 github.com/mattn/go-sqlite3 v1.14.38/go.mod h1:Uh1q+B4BYcTPb+yiD3kU8Ct7aC0hY9fxUwlHK0RXw+Y=
 github.com/mattn/go-sqlite3 v1.14.40 h1:f7+saIsbq4EF86mUqe0uiecQOJYMOdfi5uATADmUG94=
 github.com/mattn/go-sqlite3 v1.14.40/go.mod h1:pjEuOr8IwzLJP2MfGeTb0A35jauH+C2kbHKBr7yXKVQ=
+github.com/mattn/go-sqlite3 v1.14.42 h1:MigqEP4ZmHw3aIdIT7T+9TLa90Z6smwcthx+Azv4Cgo=
+github.com/mattn/go-sqlite3 v1.14.42/go.mod h1:pjEuOr8IwzLJP2MfGeTb0A35jauH+C2kbHKBr7yXKVQ=
 github.com/microsoft/go-mssqldb v1.6.0 h1:mM3gYdVwEPFrlg/Dvr2DNVEgYFG7L42l+dGc67NNNpc=
 github.com/microsoft/go-mssqldb v1.6.0/go.mod h1:00mDtPbeQCRGC1HwOOR5K/gr30P1NcEG0vx6Kbv2aJU=
 github.com/mschoch/smat v0.2.0 h1:8imxQsjDm8yFEAVBe7azKmKSgzSkZXDuKkSq9374khM=
