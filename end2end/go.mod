@@ -5,7 +5,7 @@ go 1.24.0
 toolchain go1.26.2
 
 require (
-	github.com/dal-go/dalgo v0.41.12
+	github.com/dal-go/dalgo v0.41.13
 	github.com/dal-go/dalgo-end2end-tests v0.0.84
 	github.com/dal-go/dalgo2sql v0.0.0 // No version as we alway replace it with local version
 	github.com/mattn/go-sqlite3 v1.14.42
@@ -15,7 +15,7 @@ replace github.com/dal-go/dalgo2sql => ./../
 
 require (
 	github.com/RoaringBitmap/roaring v1.9.4 // indirect
-	github.com/RoaringBitmap/roaring/v2 v2.17.0 // indirect
+	github.com/RoaringBitmap/roaring/v2 v2.18.0 // indirect
 	github.com/bits-and-blooms/bitset v1.24.4 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/georgysavva/scany/v2 v2.1.4 // indirect
