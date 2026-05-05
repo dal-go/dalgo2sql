@@ -67,7 +67,7 @@ func buildSingleRecordQuery(o operation, options DbOptions, record dal.Record) (
 	record.SetError(nil)
 	data := record.Data()
 	val := reflect.ValueOf(data)
-	if kind := val.Kind(); kind == reflect.Interface || kind == reflect.Ptr {
+	if kind := val.Kind(); kind == reflect.Interface || kind == reflect.Pointer {
 		val = val.Elem()
 	}
 	valType := val.Type()
