@@ -52,7 +52,7 @@ func simpleKeyToFields(idFieldName string) dal.KeyToFieldsFunc {
 				}
 			}
 			// If value is not a pointer, also check a pointer to it (for pointer receiver methods)
-			if v.Kind() != reflect.Ptr {
+			if v.Kind() != reflect.Pointer {
 				pv := reflect.New(v.Type())
 				if m := pv.MethodByName("SetID"); m.IsValid() {
 					t := m.Type()
@@ -60,7 +60,7 @@ func simpleKeyToFields(idFieldName string) dal.KeyToFieldsFunc {
 						return true
 					}
 				}
-			} else if v.Kind() == reflect.Ptr {
+			} else if v.Kind() == reflect.Pointer {
 				// Additionally check the element (for value receiver methods)
 				e := v.Elem()
 				if e.IsValid() {
@@ -82,7 +82,7 @@ func simpleKeyToFields(idFieldName string) dal.KeyToFieldsFunc {
 
 		// Check for exported field named `idFieldName` on struct or pointer to struct
 		t := v.Type()
-		if t.Kind() == reflect.Ptr {
+		if t.Kind() == reflect.Pointer {
 			t = t.Elem()
 		}
 		if t.Kind() == reflect.Struct {
@@ -124,7 +124,7 @@ func simpleFieldsToKey(idFieldName string) dal.DataToKeyFunc {
 				}
 			}
 			// If pointer, also check value receiver; if value, also check pointer receiver
-			if v.Kind() == reflect.Ptr {
+			if v.Kind() == reflect.Pointer {
 				e := v.Elem()
 				if e.IsValid() {
 					if m := e.MethodByName("GetID"); m.IsValid() {
@@ -159,7 +159,7 @@ func simpleFieldsToKey(idFieldName string) dal.DataToKeyFunc {
 			}
 			// Dereference pointer if needed
 			vt := v.Type()
-			if vt.Kind() == reflect.Ptr {
+			if vt.Kind() == reflect.Pointer {
 				v = v.Elem()
 				vt = v.Type()
 			}
