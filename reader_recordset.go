@@ -77,7 +77,7 @@ func getRecordsetReader(ctx context.Context, query dal.Query, execute executeQue
 			case reflect.Interface:
 				// Assume it's a nullable []byte/blob if it's an interface (common for some drivers/sqlmock)
 				c = recordset.UntypedCol(recordset.NewTypedColumn[[]byte](name, nil, dbType))
-			case reflect.Ptr:
+			case reflect.Pointer:
 				elem := scanType.Elem()
 				switch elem.Kind() {
 				case reflect.Uint8:

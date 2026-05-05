@@ -317,7 +317,7 @@ func getSelectFields(includePK bool, options DbOptions, records ...dal.Record) (
 	}
 	val := reflect.ValueOf(data)
 	kind := val.Kind()
-	if kind == reflect.Ptr || kind == reflect.Interface {
+	if kind == reflect.Pointer || kind == reflect.Interface {
 		val = val.Elem()
 	} // TODO: throw panic
 
