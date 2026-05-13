@@ -12,6 +12,7 @@ import (
 var _ dal.DB = (*database)(nil)
 
 type database struct {
+	dal.ConcurrencyAvailable // SupportsConcurrentConnections() = true (standard SQL pool)
 	recordsReaderProvider
 	id              string
 	db              *sql.DB
