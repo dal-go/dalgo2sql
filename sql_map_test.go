@@ -99,7 +99,7 @@ func TestBuildSingleRecordQuery_Map(t *testing.T) {
 				t.Errorf("expected panic for unsupported data kind")
 			}
 		}()
-		var data int = 42
+		data := 42
 		record := dal.NewRecordWithData(dal.NewIncompleteKey("users", reflect.String, nil), &data)
 		buildSingleRecordQuery(insertOperation, DbOptions{
 			Recordsets: map[string]*Recordset{
