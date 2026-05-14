@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -70,7 +71,6 @@ func buildSingleRecordQuery(o operation, options DbOptions, record dal.Record) (
 	if kind := val.Kind(); kind == reflect.Interface || kind == reflect.Pointer {
 		val = val.Elem()
 	}
-	valType := val.Type()
 
 	if key.ID != nil && o == insertOperation {
 		if len(pk) == 0 {
@@ -85,20 +85,43 @@ func buildSingleRecordQuery(o operation, options DbOptions, record dal.Record) (
 
 	setColsCount := 0
 
-	for i := 0; i < val.NumField(); i++ {
-		name := valType.Field(i).Name
+	addField := func(name string, value any) {
 		if slices.Contains(pk, name) {
-			continue
+			return
 		}
 		cols = append(cols, name)
-		query.args = append(query.args, val.Field(i).Interface())
+		query.args = append(query.args, value)
 		switch o {
 		case insertOperation:
 			argPlaceholders = append(argPlaceholders, "?")
 		case updateOperation:
-			argPlaceholders = append(argPlaceholders, valType.Field(i).Name+" = ?")
+			argPlaceholders = append(argPlaceholders, name+" = ?")
 			setColsCount++
 		}
+	}
+
+	switch val.Kind() {
+	case reflect.Struct:
+		valType := val.Type()
+		for i := 0; i < val.NumField(); i++ {
+			addField(valType.Field(i).Name, val.Field(i).Interface())
+		}
+	case reflect.Map:
+		if val.Type().Key().Kind() != reflect.String {
+			panic(fmt.Sprintf("record data is a map but its keys are not strings: key kind=%s for collection '%s'", val.Type().Key().Kind(), collection))
+		}
+		mapKeys := val.MapKeys()
+		names := make([]string, len(mapKeys))
+		for i, k := range mapKeys {
+			names[i] = k.String()
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			v := val.MapIndex(reflect.ValueOf(name))
+			addField(name, v.Interface())
+		}
+	default:
+		panic(fmt.Sprintf("unsupported record data kind %s for collection '%s': expected struct or map[string]any", val.Kind(), collection))
 	}
 
 	switch o {
