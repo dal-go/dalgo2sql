@@ -1,5 +1,9 @@
 .idea/
 
+# Go workspace files reference local sibling repos - keep local only
+go.work
+go.work.sum
+
 # Binaries for programs and plugins
 *.exe
 *.exe~
