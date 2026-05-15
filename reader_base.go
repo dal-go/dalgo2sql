@@ -28,7 +28,11 @@ func getReaderBase(ctx context.Context, query dal.Query, execute executeQueryFun
 			a[i] = arg
 		}
 	case dal.StructuredQuery:
-		text = q.String()
+		// emitSQL rewrites dalgo's `SELECT TOP N` into ANSI `LIMIT N`
+		// so SQLite (and Postgres/MySQL) accept the SQL. Stopgap until
+		// upstream dalgo gains dialect-aware emission — see the
+		// `dalgo-dialect-aware-sql-emission` Idea.
+		text = emitSQL(q)
 	}
 
 	rows, err := execute(ctx, text, a...)
