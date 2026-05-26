@@ -2,6 +2,8 @@ github.com/DATA-DOG/go-sqlmock v1.5.2 h1:OcvFkGmslmlZibjAjaHm3L//6LiuBgolP7Oputl
 github.com/DATA-DOG/go-sqlmock v1.5.2/go.mod h1:88MAG/4G7SMwSE3CeA0ZKzrT5CiOU3OJ+JlNzwDqpNU=
 github.com/RoaringBitmap/roaring/v2 v2.18.0 h1:h7sS0VqCkfBMGgcHaudJFB4FE6Td71H6svRB2poRnGY=
 github.com/RoaringBitmap/roaring/v2 v2.18.0/go.mod h1:eq4wdNXxtJIS/oikeCzdX1rBzek7ANzbth041hrU8Q4=
+github.com/RoaringBitmap/roaring/v2 v2.18.1 h1:pnpEbe82inIrzSuHajiR6yBlAavwbjH0l7mr/oioea0=
+github.com/RoaringBitmap/roaring/v2 v2.18.1/go.mod h1:eq4wdNXxtJIS/oikeCzdX1rBzek7ANzbth041hrU8Q4=
 github.com/bits-and-blooms/bitset v1.24.4 h1:95H15Og1clikBrKr/DuzMXkQzECs1M6hhoGXLwLQOZE=
 github.com/bits-and-blooms/bitset v1.24.4/go.mod h1:7hO7Gc7Pp1vODcmWvKMRA9BNmbv6a/7QIWpPxHddWR8=
 github.com/cockroachdb/cockroach-go/v2 v2.2.0 h1:/5znzg5n373N/3ESjHF5SMLxiW4RKB05Ql//KWfeTFs=
@@ -12,6 +14,8 @@ github.com/dal-go/dalgo v0.42.2 h1:Yqcjia04OEPMlvurypA2mxvo6n8xTRZb+q1txh5nl8U=
 github.com/dal-go/dalgo v0.42.2/go.mod h1:mGR/cl9X6O2QCmu1FzrM8gVgFkkhdR33Ur3msnJJJXU=
 github.com/dal-go/dalgo v0.43.1 h1:MnsOzMurG8we9+U+uvj3CqsZU08SWh/8HzcCF3SkJmo=
 github.com/dal-go/dalgo v0.43.1/go.mod h1:5Y8SHjlwiUx+2as1XnhOjfFaZ33+T0HlZ+va2zwTSZo=
+github.com/dal-go/dalgo v0.43.2 h1:oO3VqVpfT0y+Wcvh8Gn8yoMyDZiRHTSGozxFNsxd6TE=
+github.com/dal-go/dalgo v0.43.2/go.mod h1:rg5SsKwl6YDcZGaOu9YElWvKZQrv9DPCCqRwNQ4FM9I=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/georgysavva/scany/v2 v2.1.4 h1:nrzHEJ4oQVRoiKmocRqA1IyGOmM/GQOEsg9UjMR5Ip4=
