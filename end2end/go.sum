@@ -6,10 +6,8 @@ github.com/bits-and-blooms/bitset v1.24.4 h1:95H15Og1clikBrKr/DuzMXkQzECs1M6hhoG
 github.com/bits-and-blooms/bitset v1.24.4/go.mod h1:7hO7Gc7Pp1vODcmWvKMRA9BNmbv6a/7QIWpPxHddWR8=
 github.com/cockroachdb/cockroach-go/v2 v2.2.0 h1:/5znzg5n373N/3ESjHF5SMLxiW4RKB05Ql//KWfeTFs=
 github.com/cockroachdb/cockroach-go/v2 v2.2.0/go.mod h1:u3MiKYGupPPjkn3ozknpMUpxPaNLTFWAya419/zv6eI=
-github.com/dal-go/dalgo v0.44.2 h1:+eJG5WTiGcy82jAgJrNzuDhlpyWISDfIAnMJ3l7G7wE=
-github.com/dal-go/dalgo v0.44.2/go.mod h1:HHMUuCMutAlYEblDTVws7jeZs56jvOCbOuxVs6I01tE=
-github.com/dal-go/dalgo v0.46.0 h1:j/FWUr6Gawm59pxi6cgFoGKeg+D7iy1FPww0LgbzliA=
-github.com/dal-go/dalgo v0.46.0/go.mod h1:HHMUuCMutAlYEblDTVws7jeZs56jvOCbOuxVs6I01tE=
+github.com/dal-go/dalgo v0.59.0 h1:IKJru3MmZ7DlR9BGc5zToNelHAg3rL7OFYgZrs9VRqI=
+github.com/dal-go/dalgo v0.59.0/go.mod h1:20tJJx7yt8qI8CZhUv1E/Q0HbIDRZXLVBU3JMzDpdvU=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/georgysavva/scany/v2 v2.1.4 h1:nrzHEJ4oQVRoiKmocRqA1IyGOmM/GQOEsg9UjMR5Ip4=
