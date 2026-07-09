@@ -28,9 +28,9 @@ func deleteSingle(ctx context.Context, options DbOptions, key *dal.Key, exec sta
 	//goland:noinspection SqlNoDataSourceInspection
 	query := fmt.Sprintf("DELETE FROM %v WHERE ", key.Collection())
 	if rs, hasOptions := options.Recordsets[collection]; hasOptions && len(rs.PrimaryKey()) == 1 {
-		query += rs.PrimaryKey()[0].Name() + " = ?"
+		query += rs.PrimaryKey()[0].Name() + " = " + options.Placeholder.placeholder(1)
 	} else {
-		query += "ID = ?"
+		query += "ID = " + options.Placeholder.placeholder(1)
 	}
 	_, err := exec(ctx, query, key.ID)
 	if err != nil {
@@ -98,7 +98,7 @@ func deleteMultiInSingleTable(ctx context.Context, options DbOptions, keys []*da
 	q := make([]string, len(keys))
 	for i, key := range keys {
 		args[i] = key.ID
-		q[i] = "?"
+		q[i] = options.Placeholder.placeholder(i + 1)
 	}
 	query += strings.Join(q, ", ") + ")"
 	_, err := exec(ctx, query, args...)

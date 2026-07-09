@@ -142,5 +142,7 @@ func buildSingleRecordQuery(o operation, options DbOptions, record dal.Record) (
 		query.text += " " + strings.Join(argPlaceholders, ", ") +
 			fmt.Sprintf(" WHERE %v", strings.Join(pkConditions, " AND "))
 	}
+	// Rewrite "?" placeholders to the dialect-specific form (e.g. "$1" for Postgres).
+	query.text = options.Placeholder.rewritePlaceholders(query.text)
 	return query
 }

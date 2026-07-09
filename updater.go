@@ -28,16 +28,18 @@ func updateSingle(ctx context.Context, options DbOptions, execStatement statemen
 	qry := query{
 		text: fmt.Sprintf("UPDATE %v SET", key.Collection()),
 	}
+	n := 1
 	for _, u := range updates {
-		qry.text += fmt.Sprintf("\n\t%v = ?", u.FieldName())
+		qry.text += fmt.Sprintf("\n\t%v = %s", u.FieldName(), options.Placeholder.placeholder(n))
 		qry.args = append(qry.args, u.Value())
+		n++
 	}
 	primaryKey := options.PrimaryKeyFieldNames(key)
 	switch len(primaryKey) {
 	case 0:
 		return fmt.Errorf("primary key is not defined for %s", getRecordsetName(key))
 	case 1:
-		qry.text += fmt.Sprintf("\n\tWHERE %v = ?", primaryKey[0])
+		qry.text += fmt.Sprintf("\n\tWHERE %v = %s", primaryKey[0], options.Placeholder.placeholder(n))
 	default:
 		return fmt.Errorf("%w: updateOperation by composite primary key is not supported yet", dal.ErrNotImplementedYet)
 	}

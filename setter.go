@@ -61,7 +61,7 @@ func existsSingle(options DbOptions, key *dal.Key, execQuery queryExecutor) (boo
 	pk := options.PrimaryKeyFieldNames(key)
 	var where string
 	if len(pk) == 1 {
-		where = pk[0] + " = ?"
+		where = pk[0] + " = " + options.Placeholder.placeholder(1)
 	} else {
 		return false, fmt.Errorf("%w: composite primary keys are not suported yet", dal.ErrNotImplementedYet)
 	}

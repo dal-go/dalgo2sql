@@ -50,7 +50,7 @@ func executeExists(_ context.Context, options DbOptions, key *dal.Key, exec quer
 		err = fmt.Errorf("%w: select by composite primary key is not supported yet", dal.ErrNotImplementedYet)
 		return
 	}
-	queryText += pk[0] + " = ?"
+	queryText += pk[0] + " = " + options.Placeholder.placeholder(1)
 
 	var rows *sql.Rows
 	if rows, err = exec(queryText, key.ID); err != nil {
@@ -81,7 +81,7 @@ func getSingle(_ context.Context, options DbOptions, record dal.Record, exec que
 	} else if len(pk) > 1 {
 		return fmt.Errorf("%w: select by composite primary key is not supported yet", dal.ErrNotImplementedYet)
 	}
-	queryText += pk[0] + " = ?"
+	queryText += pk[0] + " = " + options.Placeholder.placeholder(1)
 
 	rows, err := exec(queryText, key.ID)
 	if err != nil {
@@ -172,8 +172,10 @@ func getMultiFromSingleTable(_ context.Context, options DbOptions, records []dal
 	if len(records) == 1 /*len(records) == 1*/ {
 		args = []any{}
 		var pkConditions []string
+		n := 1
 		processPrimaryKey(primaryKey, records[0].Key(), func(_ int, name string, v any) {
-			pkConditions = append(pkConditions, name+" = ?")
+			pkConditions = append(pkConditions, name+" = "+options.Placeholder.placeholder(n))
+			n++
 		})
 		queryText += " " + strings.Join(pkConditions, " AND ")
 	} else {
@@ -183,8 +185,9 @@ func getMultiFromSingleTable(_ context.Context, options DbOptions, records []dal
 		queryText += fmt.Sprintf("%s IN (", primaryKey[0]) // TODO(help-wanted): support composite primary keys
 		var argPlaceholders []string
 		for i, record := range records {
+			n := i + 1
 			processPrimaryKey(primaryKey, record.Key(), func(_ int, name string, v any) {
-				argPlaceholders = append(argPlaceholders, "?")
+				argPlaceholders = append(argPlaceholders, options.Placeholder.placeholder(n))
 				args[i] = v
 			})
 		}
