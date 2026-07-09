@@ -51,7 +51,15 @@ func (r recordsReader) Next() (record dal.Record, err error) {
 			return nil, err
 		}
 		for i, n := range r.colNames {
-			d[n] = values[i]
+			v := values[i]
+			// database/sql returns []byte for TEXT/VARCHAR columns with some
+			// drivers (notably go-sql-driver/mysql); store as string so the
+			// map is usable and JSON-serializes as text, not base64. Matches
+			// scanRowIntoMap on the Get path.
+			if b, ok := v.([]byte); ok {
+				v = string(b)
+			}
+			d[n] = v
 		}
 	default:
 		// TODO: implement Scan into `*struct` and into `[]any`
