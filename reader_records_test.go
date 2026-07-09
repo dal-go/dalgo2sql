@@ -56,7 +56,7 @@ func TestRecordsReader(t *testing.T) {
 		}
 
 		_, err = rr.Next()
-		if err != io.EOF {
+		if !errors.Is(err, io.EOF) {
 			t.Errorf("expected EOF, got %v", err)
 		}
 	})

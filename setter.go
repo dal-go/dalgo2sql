@@ -68,5 +68,9 @@ func existsSingle(options DbOptions, key *dal.Key, execQuery queryExecutor) (boo
 	// `SELECT 1` is not supported by some SQL drivers so select 1st column from primary key
 	queryText := fmt.Sprintf("SELECT %s FROM %s WHERE %s", pk[0], collection, where)
 	rows, err := execQuery(queryText, key.ID)
-	return err == nil && rows.Next(), err
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = rows.Close() }()
+	return rows.Next(), rows.Err()
 }

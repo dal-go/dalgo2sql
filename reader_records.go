@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"io"
 
 	"github.com/dal-go/dalgo/dal"
 )
@@ -36,7 +35,7 @@ func (r recordsReader) Next() (record dal.Record, err error) {
 		if err := r.rows.Err(); err != nil {
 			return nil, err
 		}
-		return nil, io.EOF
+		return nil, dal.ErrNoMoreRecords
 	}
 	record = r.newRecord()
 	record.SetError(nil)

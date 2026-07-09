@@ -145,12 +145,16 @@ func TestGetter_Get(t *testing.T) {
 	t.Run("success_map", func(t *testing.T) {
 		data := make(map[string]any)
 		record := dal.NewRecordWithData(dal.NewKeyWithID("users", "u1"), &data)
-		mock.ExpectQuery("SELECT 1 FROM users WHERE id = ?").
+		// Map data causes getSelectFields to return ["*"] => SELECT * FROM users WHERE id = ?
+		mock.ExpectQuery("SELECT \\* FROM users WHERE id = ?").
 			WithArgs("u1").
-			WillReturnRows(sqlmock.NewRows([]string{"1"}).AddRow(1))
+			WillReturnRows(sqlmock.NewRows([]string{"id", "Name"}).AddRow("u1", "Alice"))
 		err := d.Get(ctx, record)
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
+		}
+		if data["Name"] != "Alice" {
+			t.Errorf("expected Name=Alice in map, got %v", data)
 		}
 	})
 

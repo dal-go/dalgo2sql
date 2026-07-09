@@ -93,8 +93,9 @@ func getSingle(_ context.Context, options DbOptions, record dal.Record, exec que
 	}()
 
 	if !rows.Next() {
-		record.SetError(dal.ErrRecordNotFound)
-		return dal.ErrRecordNotFound
+		notFound := dal.NewErrNotFoundByKey(key, nil)
+		record.SetError(notFound)
+		return notFound
 	}
 	if err = rowIntoRecord(rows, record, false); err != nil {
 		return err
@@ -147,10 +148,22 @@ func getMultiFromSingleTable(_ context.Context, options DbOptions, records []dal
 		return nil
 	}
 
-	records[0].SetError(nil)
-	val := reflect.ValueOf(records[0].Data()).Elem()
-	valType := val.Type()
-	fields := getSelectFields(true, options, records...)
+	// Call SetError(nil) on all records so that Data() is accessible below.
+	for _, r := range records {
+		r.SetError(nil)
+	}
+
+	// For map data we use SELECT * and identify the PK column after reading columns.
+	// For struct data we enumerate fields explicitly.
+	dataIsMap := isMapData(records[0].Data())
+
+	var fields []string
+	if dataIsMap {
+		fields = []string{"*"}
+	} else {
+		fields = getSelectFields(true, options, records...)
+	}
+
 	queryText := fmt.Sprintf("SELECT %v FROM %v WHERE ",
 		strings.Join(fields, ", "),
 		records[0].Key().Collection(),
@@ -184,32 +197,86 @@ func getMultiFromSingleTable(_ context.Context, options DbOptions, records []dal
 		return err
 	}
 
-	for rows.Next() {
-		var id string
-		cells := make([]interface{}, len(fields))
-		cells[0] = &id
-
-		for i := 0; i < valType.NumField(); i++ {
-			switch valType.Field(i).Type {
-			case reflect.ValueOf("").Type():
-				v := ""
-				cells[i+1] = &v
-			case reflect.ValueOf(1).Type():
-				v := 0
-				cells[i+1] = &v
+	if dataIsMap {
+		// For map data: scan each row generically, then match by PK value.
+		pkCol := primaryKey[0]
+		for rows.Next() {
+			cols, colErr := rows.Columns()
+			if colErr != nil {
+				return colErr
+			}
+			cells := make([]interface{}, len(cols))
+			cellPtrs := make([]interface{}, len(cols))
+			for i := range cells {
+				cellPtrs[i] = &cells[i]
+			}
+			if err = rows.Scan(cellPtrs...); err != nil {
+				return err
+			}
+			// Find PK column value.
+			var rowIDVal interface{}
+			for i, col := range cols {
+				if col == pkCol {
+					rowIDVal = cells[i]
+					if b, ok := rowIDVal.([]byte); ok {
+						rowIDVal = string(b)
+					}
+					break
+				}
+			}
+			rowID := fmt.Sprintf("%v", rowIDVal)
+			for i, record := range records {
+				if fmt.Sprintf("%v", record.Key().ID) == rowID {
+					records = append(records[:i], records[i+1:]...)
+					// Fill the target map.
+					m := record.Data()
+					mv := reflect.ValueOf(m)
+					if mv.Kind() == reflect.Pointer || mv.Kind() == reflect.Interface {
+						mv = mv.Elem()
+					}
+					for ci, col := range cols {
+						val := cells[ci]
+						if b, ok := val.([]byte); ok {
+							val = string(b)
+						}
+						mv.SetMapIndex(reflect.ValueOf(col), reflect.ValueOf(val))
+					}
+					record.SetError(dal.ErrNoError)
+					break
+				}
 			}
 		}
+	} else {
+		// Struct data path: use the struct-field-aware scan.
+		val := reflect.ValueOf(records[0].Data()).Elem()
+		valType := val.Type()
+		for rows.Next() {
+			var id string
+			cells := make([]interface{}, len(fields))
+			cells[0] = &id
 
-		if err = rows.Scan(cells...); err != nil {
-			return err
-		}
-		for i, record := range records {
-			if record.Key().ID == id {
-				records = append(records[:i], records[i+1:]...)
-				if err = rowIntoRecord(rows, record, true); err != nil {
-					return err
+			for i := 0; i < valType.NumField(); i++ {
+				switch valType.Field(i).Type {
+				case reflect.ValueOf("").Type():
+					v := ""
+					cells[i+1] = &v
+				case reflect.ValueOf(1).Type():
+					v := 0
+					cells[i+1] = &v
 				}
-				break
+			}
+
+			if err = rows.Scan(cells...); err != nil {
+				return err
+			}
+			for i, record := range records {
+				if record.Key().ID == id {
+					records = append(records[:i], records[i+1:]...)
+					if err = rowIntoRecord(rows, record, true); err != nil {
+						return err
+					}
+					break
+				}
 			}
 		}
 	}
@@ -263,10 +330,70 @@ func rowIntoRecord(rows *sql.Rows, record dal.Record, pkIncluded bool) error {
 //}
 
 func scanIntoData(rows *sql.Rows, data interface{}, pkIncluded bool) error {
+	if isMapData(data) {
+		return scanRowIntoMap(rows, data, pkIncluded)
+	}
 	if pkIncluded {
 		return scanIntoDataWithPrimaryKeyIncluded(rows, data)
 	}
 	return sqlscan.ScanRow(data, rows)
+}
+
+// isMapData reports whether data is a map[string]any or *map[string]any.
+func isMapData(data interface{}) bool {
+	if data == nil {
+		return false
+	}
+	v := reflect.ValueOf(data)
+	if v.Kind() == reflect.Pointer || v.Kind() == reflect.Interface {
+		v = v.Elem()
+	}
+	return v.Kind() == reflect.Map && v.Type().Key().Kind() == reflect.String
+}
+
+// scanRowIntoMap scans the current sql.Rows row into a map[string]any (or
+// *map[string]any). PK columns are skipped if pkIncluded is false; when
+// pkIncluded is true they are also included in the result map.
+func scanRowIntoMap(rows *sql.Rows, data interface{}, pkIncluded bool) error {
+	cols, err := rows.Columns()
+	if err != nil {
+		return err
+	}
+
+	// Build generic scan targets.
+	cells := make([]interface{}, len(cols))
+	cellPtrs := make([]interface{}, len(cols))
+	for i := range cells {
+		cellPtrs[i] = &cells[i]
+	}
+	if err = rows.Scan(cellPtrs...); err != nil {
+		return err
+	}
+
+	// Resolve the target map (handle *map[string]any or map[string]any).
+	v := reflect.ValueOf(data)
+	if v.Kind() == reflect.Pointer || v.Kind() == reflect.Interface {
+		// If it's a pointer to a nil map, initialize the map first.
+		if v.Elem().Kind() == reflect.Map && v.Elem().IsNil() {
+			v.Elem().Set(reflect.MakeMap(v.Elem().Type()))
+		}
+		v = v.Elem()
+	}
+
+	for i, col := range cols {
+		// Include all columns in the map (including PK column).
+		// Callers that do not want the PK in the map can delete it afterward.
+		_ = pkIncluded
+		val := cells[i]
+		// database/sql returns []byte for TEXT columns; convert to string for usability.
+		if b, ok := val.([]byte); ok {
+			val = string(b)
+		}
+		if val != nil {
+			v.SetMapIndex(reflect.ValueOf(col), reflect.ValueOf(val))
+		}
+	}
+	return nil
 }
 
 func scanIntoDataWithPrimaryKeyIncluded(rows *sql.Rows, data interface{}) error {
@@ -320,6 +447,12 @@ func getSelectFields(includePK bool, options DbOptions, records ...dal.Record) (
 	if kind == reflect.Pointer || kind == reflect.Interface {
 		val = val.Elem()
 	} // TODO: throw panic
+
+	// For map data we cannot enumerate columns ahead of time, so use SELECT *.
+	// The scan path (scanRowIntoMap) handles the result columns generically.
+	if val.Kind() == reflect.Map {
+		return []string{"*"}
+	}
 
 	valType := val.Type()
 	var numberOfFields int
