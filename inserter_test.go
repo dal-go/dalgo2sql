@@ -6,6 +6,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/dal-go/dalgo/dal"
+	dalrecord "github.com/dal-go/record"
 )
 
 type user struct {
@@ -29,7 +30,7 @@ func TestInserter(t *testing.T) {
 		}).(*database)
 
 		u := user{Name: "u1"}
-		record := dal.NewRecordWithData(dal.NewKeyWithID("users", "id1"), &u)
+		record := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "id1"), &u)
 
 		mock.ExpectExec("INSERT INTO users(ID, Name) VALUES (?, ?)").
 			WithArgs("id1", "u1").
@@ -54,9 +55,9 @@ func TestInserter(t *testing.T) {
 			},
 		}).(*database)
 
-		records := []dal.Record{
-			dal.NewRecordWithData(dal.NewKeyWithID("users", "id1"), &user{Name: "u1"}),
-			dal.NewRecordWithData(dal.NewKeyWithID("users", "id2"), &user{Name: "u2"}),
+		records := []dalrecord.Record{
+			dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "id1"), &user{Name: "u1"}),
+			dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "id2"), &user{Name: "u2"}),
 		}
 
 		mock.ExpectBegin()

@@ -5,17 +5,18 @@ import (
 	"fmt"
 
 	"github.com/dal-go/dalgo/dal"
+	dalrecord "github.com/dal-go/record"
 )
 
-func (dtb *database) Set(ctx context.Context, record dal.Record) error {
+func (dtb *database) Set(ctx context.Context, record dalrecord.Record) error {
 	return setSingle(ctx, dtb.options, record, dtb.db.Query, dtb.db.ExecContext)
 }
 
-func (t transaction) Set(ctx context.Context, record dal.Record) error {
+func (t transaction) Set(ctx context.Context, record dalrecord.Record) error {
 	return setSingle(ctx, t.sqlOptions, record, t.tx.Query, t.tx.ExecContext)
 }
 
-func (dtb *database) SetMulti(ctx context.Context, records []dal.Record) error {
+func (dtb *database) SetMulti(ctx context.Context, records []dalrecord.Record) error {
 	err := dtb.RunReadwriteTransaction(ctx, func(ctx context.Context, tx dal.ReadwriteTransaction) error {
 		return setMulti(ctx, dtb.options, records, dtb.db.Query, dtb.db.ExecContext)
 	})
@@ -23,11 +24,11 @@ func (dtb *database) SetMulti(ctx context.Context, records []dal.Record) error {
 
 }
 
-func (t transaction) SetMulti(ctx context.Context, records []dal.Record) error {
+func (t transaction) SetMulti(ctx context.Context, records []dalrecord.Record) error {
 	return setMulti(ctx, t.sqlOptions, records, t.tx.Query, t.tx.ExecContext)
 }
 
-func setSingle(ctx context.Context, options DbOptions, record dal.Record, execQuery queryExecutor, exec statementExecutor) error {
+func setSingle(ctx context.Context, options DbOptions, record dalrecord.Record, execQuery queryExecutor, exec statementExecutor) error {
 	key := record.Key()
 	exists, err := existsSingle(options, key, execQuery)
 	if err != nil {
@@ -46,7 +47,7 @@ func setSingle(ctx context.Context, options DbOptions, record dal.Record, execQu
 	return nil
 }
 
-func setMulti(ctx context.Context, options DbOptions, records []dal.Record, execQuery queryExecutor, execStatement statementExecutor) error {
+func setMulti(ctx context.Context, options DbOptions, records []dalrecord.Record, execQuery queryExecutor, execStatement statementExecutor) error {
 	// TODO(help-wanted): insertOperation of multiple rows at once as: "INSERT INTO table (colA, colB) VALUES (a1, b2), (a2, b2)"
 	for i, record := range records {
 		if err := setSingle(ctx, options, record, execQuery, execStatement); err != nil {
@@ -56,7 +57,7 @@ func setMulti(ctx context.Context, options DbOptions, records []dal.Record, exec
 	return nil
 }
 
-func existsSingle(options DbOptions, key *dal.Key, execQuery queryExecutor) (bool, error) {
+func existsSingle(options DbOptions, key *dalrecord.Key, execQuery queryExecutor) (bool, error) {
 	collection := key.Collection()
 	pk := options.PrimaryKeyFieldNames(key)
 	var where string

@@ -7,6 +7,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/dal-go/dalgo/dal"
+	"github.com/dal-go/record"
 )
 
 func TestDeleter(t *testing.T) {
@@ -20,7 +21,7 @@ func TestDeleter(t *testing.T) {
 		defer closeDatabase(t, sqlDB)
 
 		db := NewDatabase(sqlDB, newSchema(), DbOptions{}).(*database)
-		key := dal.NewKeyWithID("users", "u1")
+		key := record.NewKeyWithID("users", "u1")
 
 		mock.ExpectExec("DELETE FROM users WHERE ID = ?").
 			WithArgs("u1").
@@ -45,7 +46,7 @@ func TestDeleter(t *testing.T) {
 				"users": rs,
 			},
 		}).(*database)
-		key := dal.NewKeyWithID("users", "u1")
+		key := record.NewKeyWithID("users", "u1")
 
 		mock.ExpectExec("DELETE FROM users WHERE uid = ?").
 			WithArgs("u1").
@@ -65,9 +66,9 @@ func TestDeleter(t *testing.T) {
 		defer closeDatabase(t, sqlDB)
 
 		db := NewDatabase(sqlDB, newSchema(), DbOptions{}).(*database)
-		keys := []*dal.Key{
-			dal.NewKeyWithID("users", "u1"),
-			dal.NewKeyWithID("users", "u2"),
+		keys := []*record.Key{
+			record.NewKeyWithID("users", "u1"),
+			record.NewKeyWithID("users", "u2"),
 		}
 
 		// Currently deleteMulti calls deleteSingle for each key AND then deleteMultiInSingleTable
@@ -90,9 +91,9 @@ func TestDeleter(t *testing.T) {
 		defer closeDatabase(t, sqlDB)
 
 		db := NewDatabase(sqlDB, newSchema(), DbOptions{}).(*database)
-		keys := []*dal.Key{
-			dal.NewKeyWithID("users", "u1"),
-			dal.NewKeyWithID("posts", "p1"),
+		keys := []*record.Key{
+			record.NewKeyWithID("users", "u1"),
+			record.NewKeyWithID("posts", "p1"),
 		}
 
 		mock.ExpectExec("DELETE FROM users WHERE ID = ?").WithArgs("u1").WillReturnResult(sqlmock.NewResult(0, 1))
@@ -112,7 +113,7 @@ func TestDeleter(t *testing.T) {
 		defer closeDatabase(t, sqlDB)
 
 		db := NewDatabase(sqlDB, newSchema(), DbOptions{}).(*database)
-		key := dal.NewKeyWithID("users", "u1")
+		key := record.NewKeyWithID("users", "u1")
 
 		mock.ExpectExec("DELETE FROM users WHERE ID = ?").
 			WithArgs("u1").
@@ -132,9 +133,9 @@ func TestDeleter(t *testing.T) {
 		defer closeDatabase(t, sqlDB)
 
 		db := NewDatabase(sqlDB, newSchema(), DbOptions{}).(*database)
-		keys := []*dal.Key{
-			dal.NewKeyWithID("users", "u1"),
-			dal.NewKeyWithID("users", "u2"),
+		keys := []*record.Key{
+			record.NewKeyWithID("users", "u1"),
+			record.NewKeyWithID("users", "u2"),
 		}
 
 		mock.ExpectExec("DELETE FROM users WHERE ID = ?").WithArgs("u1").WillReturnError(errors.New("delete error"))
@@ -153,7 +154,7 @@ func TestDeleter(t *testing.T) {
 		defer closeDatabase(t, sqlDB)
 
 		db := NewDatabase(sqlDB, newSchema(), DbOptions{})
-		key := dal.NewKeyWithID("users", "u1")
+		key := record.NewKeyWithID("users", "u1")
 
 		mock.ExpectBegin()
 		mock.ExpectExec("DELETE FROM users WHERE ID = ?").WithArgs("u1").WillReturnResult(sqlmock.NewResult(0, 1))
@@ -175,8 +176,8 @@ func TestDeleter(t *testing.T) {
 		defer closeDatabase(t, sqlDB)
 
 		db := NewDatabase(sqlDB, newSchema(), DbOptions{})
-		keys := []*dal.Key{
-			dal.NewKeyWithID("users", "u1"),
+		keys := []*record.Key{
+			record.NewKeyWithID("users", "u1"),
 		}
 
 		mock.ExpectBegin()

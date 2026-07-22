@@ -9,13 +9,14 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/dal-go/dalgo/dal"
+	"github.com/dal-go/record"
 )
 
 func newSchema() dal.Schema {
-	keyToField := func(key *dal.Key, data any) (fields []dal.ExtraField, err error) {
+	keyToField := func(key *record.Key, data any) (fields []dal.ExtraField, err error) {
 		return
 	}
-	dataToKey := func(incompleteKey *dal.Key, data any) (key *dal.Key, err error) {
+	dataToKey := func(incompleteKey *record.Key, data any) (key *record.Key, err error) {
 		return
 	}
 	return dal.NewSchema(keyToField, dataToKey)
@@ -84,13 +85,13 @@ func TestOptions_PrimaryKeyFieldNames(t *testing.T) {
 		},
 	}
 
-	key := dal.NewKeyWithID("table1", "1")
+	key := record.NewKeyWithID("table1", "1")
 	pkNames := opts.PrimaryKeyFieldNames(key)
 	if len(pkNames) != 2 || pkNames[0] != "pk1" || pkNames[1] != "pk2" {
 		t.Errorf("unexpected pk names: %v", pkNames)
 	}
 
-	key2 := dal.NewKeyWithID("unknown", "1")
+	key2 := record.NewKeyWithID("unknown", "1")
 	if opts.PrimaryKeyFieldNames(key2) != nil {
 		t.Errorf("expected nil for unknown recordset")
 	}
@@ -310,7 +311,7 @@ func TestDatabase_ExecuteQuery(t *testing.T) {
 func Test_simpleKeyToFields_Additional(t *testing.T) {
 	t.Run("invalid_reflect_value", func(t *testing.T) {
 		f := simpleKeyToFields("ID")
-		key := dal.NewKeyWithID("users", 123)
+		key := record.NewKeyWithID("users", 123)
 		// We need to pass something that reflect.ValueOf(data) returns an invalid value.
 		// Actually reflect.ValueOf(nil) is invalid, but the code checks data == nil before that.
 		// Wait, if I pass a nil pointer?
@@ -326,7 +327,7 @@ func Test_simpleKeyToFields_Additional(t *testing.T) {
 
 	t.Run("SetID_pointer_receiver_on_pointer", func(t *testing.T) {
 		f := simpleKeyToFields("ID")
-		key := dal.NewKeyWithID("users", 123)
+		key := record.NewKeyWithID("users", 123)
 		data := &withSetIDPtr{}
 		fields, err := f(key, data)
 		if err != nil {
@@ -339,7 +340,7 @@ func Test_simpleKeyToFields_Additional(t *testing.T) {
 
 	t.Run("SetID_value_receiver_on_pointer", func(t *testing.T) {
 		f := simpleKeyToFields("ID")
-		key := dal.NewKeyWithID("users", 123)
+		key := record.NewKeyWithID("users", 123)
 		data := &withSetIDValue{}
 		fields, err := f(key, data)
 		if err != nil {
@@ -352,7 +353,7 @@ func Test_simpleKeyToFields_Additional(t *testing.T) {
 
 	t.Run("struct_field_unexported", func(t *testing.T) {
 		f := simpleKeyToFields("id")
-		key := dal.NewKeyWithID("users", 123)
+		key := record.NewKeyWithID("users", 123)
 		data := struct{ id int }{id: 1}
 		fields, err := f(key, data)
 		if err != nil {
@@ -367,7 +368,7 @@ func Test_simpleKeyToFields_Additional(t *testing.T) {
 func Test_simpleFieldsToKey_Additional(t *testing.T) {
 	t.Run("GetID_value_receiver_on_pointer", func(t *testing.T) {
 		schema := NewSimpleSchema("ID")
-		incomplete := dal.NewIncompleteKey("users", reflect.Int64, nil)
+		incomplete := record.NewIncompleteKey("users", reflect.Int64, nil)
 		data := &getIDVal{}
 		key, err := schema.DataToKey(incomplete, data)
 		if err != nil {
@@ -380,7 +381,7 @@ func Test_simpleFieldsToKey_Additional(t *testing.T) {
 
 	t.Run("GetID_pointer_receiver_on_value", func(t *testing.T) {
 		schema := NewSimpleSchema("ID")
-		incomplete := dal.NewIncompleteKey("users", reflect.String, nil)
+		incomplete := record.NewIncompleteKey("users", reflect.String, nil)
 		// getIDPtr has pointer receiver. Passing a value.
 		// reflect.ValueOf(getIDPtr{}).MethodByName("GetID") should be invalid.
 		// But if it's addressable, it might work?

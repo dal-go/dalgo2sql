@@ -7,6 +7,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/dal-go/dalgo/dal"
+	dalrecord "github.com/dal-go/record"
 )
 
 func TestBuildSingleRecordQuery_Map(t *testing.T) {
@@ -14,7 +15,7 @@ func TestBuildSingleRecordQuery_Map(t *testing.T) {
 		// Use an incomplete key (no ID) so PK-injection branch is skipped,
 		// allowing assertion of pure sorted-key ordering from the map.
 		data := map[string]any{"col_b": 42, "col_a": "x"}
-		record := dal.NewRecordWithData(dal.NewIncompleteKey("users", reflect.String, nil), data)
+		record := dalrecord.NewRecordWithData(dalrecord.NewIncompleteKey("users", reflect.String, nil), data)
 		q := buildSingleRecordQuery(insertOperation, DbOptions{}, record)
 		const want = "INSERT INTO users(col_a, col_b) VALUES (?, ?)"
 		if q.text != want {
@@ -27,7 +28,7 @@ func TestBuildSingleRecordQuery_Map(t *testing.T) {
 
 	t.Run("insert_map_with_pk", func(t *testing.T) {
 		data := map[string]any{"Name": "John", "Age": 30}
-		record := dal.NewRecordWithData(dal.NewKeyWithID("users", "id1"), data)
+		record := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "id1"), data)
 		q := buildSingleRecordQuery(insertOperation, DbOptions{
 			Recordsets: map[string]*Recordset{
 				"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID")}),
@@ -45,7 +46,7 @@ func TestBuildSingleRecordQuery_Map(t *testing.T) {
 	t.Run("insert_map_skips_pk_key_in_data", func(t *testing.T) {
 		// "ID" appears both as PK and as a data key; the data entry must be skipped.
 		data := map[string]any{"ID": "should-be-ignored", "Name": "John"}
-		record := dal.NewRecordWithData(dal.NewKeyWithID("users", "id1"), data)
+		record := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "id1"), data)
 		q := buildSingleRecordQuery(insertOperation, DbOptions{
 			Recordsets: map[string]*Recordset{
 				"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID")}),
@@ -62,7 +63,7 @@ func TestBuildSingleRecordQuery_Map(t *testing.T) {
 
 	t.Run("update_map_sorted_set", func(t *testing.T) {
 		data := map[string]any{"col_b": 42, "col_a": "x"}
-		record := dal.NewRecordWithData(dal.NewKeyWithID("users", "id1"), data)
+		record := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "id1"), data)
 		q := buildSingleRecordQuery(updateOperation, DbOptions{
 			Recordsets: map[string]*Recordset{
 				"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID")}),
@@ -85,7 +86,7 @@ func TestBuildSingleRecordQuery_Map(t *testing.T) {
 			}
 		}()
 		data := map[int]any{1: "x"}
-		record := dal.NewRecordWithData(dal.NewIncompleteKey("users", reflect.String, nil), data)
+		record := dalrecord.NewRecordWithData(dalrecord.NewIncompleteKey("users", reflect.String, nil), data)
 		buildSingleRecordQuery(insertOperation, DbOptions{
 			Recordsets: map[string]*Recordset{
 				"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID")}),
@@ -100,7 +101,7 @@ func TestBuildSingleRecordQuery_Map(t *testing.T) {
 			}
 		}()
 		data := 42
-		record := dal.NewRecordWithData(dal.NewIncompleteKey("users", reflect.String, nil), &data)
+		record := dalrecord.NewRecordWithData(dalrecord.NewIncompleteKey("users", reflect.String, nil), &data)
 		buildSingleRecordQuery(insertOperation, DbOptions{
 			Recordsets: map[string]*Recordset{
 				"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID")}),
@@ -126,7 +127,7 @@ func TestInserter_MapData(t *testing.T) {
 		}).(*database)
 
 		data := map[string]any{"col_b": 42, "col_a": "x"}
-		record := dal.NewRecordWithData(dal.NewKeyWithID("users", "id1"), data)
+		record := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "id1"), data)
 
 		mock.ExpectExec("INSERT INTO users(ID, col_a, col_b) VALUES (?, ?, ?)").
 			WithArgs("id1", "x", 42).

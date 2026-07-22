@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/dal-go/dalgo/dal"
+	"github.com/dal-go/record"
 	_ "modernc.org/sqlite"
 )
 
@@ -53,8 +54,8 @@ func TestMapDataGetRoundTrip(t *testing.T) {
 		db := newDB(t)
 
 		// Insert via map[string]any.
-		rec := dal.NewRecordWithData(
-			dal.NewKeyWithID("widgets", "w1"),
+		rec := record.NewRecordWithData(
+			record.NewKeyWithID("widgets", "w1"),
 			map[string]any{"name": "Sprocket", "price": "9.99"},
 		)
 		if err := db.Insert(ctx, rec); err != nil {
@@ -63,7 +64,7 @@ func TestMapDataGetRoundTrip(t *testing.T) {
 
 		// Get back into a new map.
 		got := make(map[string]any)
-		getRec := dal.NewRecordWithData(dal.NewKeyWithID("widgets", "w1"), got)
+		getRec := record.NewRecordWithData(record.NewKeyWithID("widgets", "w1"), got)
 		if err := db.Get(ctx, getRec); err != nil {
 			t.Fatalf("Get: %v", err)
 		}
@@ -84,12 +85,12 @@ func TestMapDataGetRoundTrip(t *testing.T) {
 		db := newDB(t)
 
 		got := make(map[string]any)
-		getRec := dal.NewRecordWithData(dal.NewKeyWithID("widgets", "missing"), got)
+		getRec := record.NewRecordWithData(record.NewKeyWithID("widgets", "missing"), got)
 		err := db.Get(ctx, getRec)
 		if err == nil {
 			t.Fatal("expected error for missing record, got nil")
 		}
-		if !dal.IsNotFound(err) {
+		if !record.IsNotFound(err) {
 			t.Errorf("expected IsNotFound error, got: %v", err)
 		}
 	})
@@ -98,8 +99,8 @@ func TestMapDataGetRoundTrip(t *testing.T) {
 		db := newDB(t)
 
 		// Set (insert new).
-		rec := dal.NewRecordWithData(
-			dal.NewKeyWithID("widgets", "w2"),
+		rec := record.NewRecordWithData(
+			record.NewKeyWithID("widgets", "w2"),
 			map[string]any{"name": "Bolt", "price": "1.50"},
 		)
 		if err := db.Set(ctx, rec); err != nil {
@@ -108,7 +109,7 @@ func TestMapDataGetRoundTrip(t *testing.T) {
 
 		// Get to verify.
 		got := make(map[string]any)
-		getRec := dal.NewRecordWithData(dal.NewKeyWithID("widgets", "w2"), got)
+		getRec := record.NewRecordWithData(record.NewKeyWithID("widgets", "w2"), got)
 		if err := db.Get(ctx, getRec); err != nil {
 			t.Fatalf("Get after Set (insert): %v", err)
 		}
@@ -117,8 +118,8 @@ func TestMapDataGetRoundTrip(t *testing.T) {
 		}
 
 		// Set (update existing).
-		updRec := dal.NewRecordWithData(
-			dal.NewKeyWithID("widgets", "w2"),
+		updRec := record.NewRecordWithData(
+			record.NewKeyWithID("widgets", "w2"),
 			map[string]any{"name": "Big Bolt", "price": "3.00"},
 		)
 		if err := db.Set(ctx, updRec); err != nil {
@@ -127,7 +128,7 @@ func TestMapDataGetRoundTrip(t *testing.T) {
 
 		// Get again to verify update.
 		got2 := make(map[string]any)
-		getRec2 := dal.NewRecordWithData(dal.NewKeyWithID("widgets", "w2"), got2)
+		getRec2 := record.NewRecordWithData(record.NewKeyWithID("widgets", "w2"), got2)
 		if err := db.Get(ctx, getRec2); err != nil {
 			t.Fatalf("Get after Set (update): %v", err)
 		}
@@ -151,8 +152,8 @@ func TestMapDataGetRoundTrip(t *testing.T) {
 			{"m1", "WidgetA", "10.00"},
 			{"m2", "WidgetB", "20.00"},
 		} {
-			r := dal.NewRecordWithData(
-				dal.NewKeyWithID("widgets", d.id),
+			r := record.NewRecordWithData(
+				record.NewKeyWithID("widgets", d.id),
 				map[string]any{"name": d.name, "price": d.price},
 			)
 			if err := db.Insert(ctx, r); err != nil {
@@ -163,9 +164,9 @@ func TestMapDataGetRoundTrip(t *testing.T) {
 		// GetMulti both back.
 		m1 := make(map[string]any)
 		m2 := make(map[string]any)
-		records := []dal.Record{
-			dal.NewRecordWithData(dal.NewKeyWithID("widgets", "m1"), m1),
-			dal.NewRecordWithData(dal.NewKeyWithID("widgets", "m2"), m2),
+		records := []record.Record{
+			record.NewRecordWithData(record.NewKeyWithID("widgets", "m1"), m1),
+			record.NewRecordWithData(record.NewKeyWithID("widgets", "m2"), m2),
 		}
 		if err := db.GetMulti(ctx, records); err != nil {
 			t.Fatalf("GetMulti: %v", err)

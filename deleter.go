@@ -4,26 +4,25 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/dal-go/record"
 	"strings"
-
-	"github.com/dal-go/dalgo/dal"
 )
 
 type statementExecutor = func(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
 
-func (dtb *database) Delete(ctx context.Context, key *dal.Key) error {
+func (dtb *database) Delete(ctx context.Context, key *record.Key) error {
 	return deleteSingle(ctx, dtb.options, key, dtb.db.ExecContext)
 }
 
-func (t transaction) Delete(ctx context.Context, key *dal.Key) error {
+func (t transaction) Delete(ctx context.Context, key *record.Key) error {
 	return deleteSingle(ctx, t.sqlOptions, key, t.tx.ExecContext)
 }
 
-func (dtb *database) DeleteMulti(ctx context.Context, keys []*dal.Key) error {
+func (dtb *database) DeleteMulti(ctx context.Context, keys []*record.Key) error {
 	return deleteMulti(ctx, dtb.options, keys, dtb.db.ExecContext)
 }
 
-func deleteSingle(ctx context.Context, options DbOptions, key *dal.Key, exec statementExecutor) error {
+func deleteSingle(ctx context.Context, options DbOptions, key *record.Key, exec statementExecutor) error {
 	collection := key.Collection()
 	//goland:noinspection SqlNoDataSourceInspection
 	query := fmt.Sprintf("DELETE FROM %v WHERE ", key.Collection())
@@ -39,10 +38,10 @@ func deleteSingle(ctx context.Context, options DbOptions, key *dal.Key, exec sta
 	return nil
 }
 
-func deleteMulti(ctx context.Context, options DbOptions, keys []*dal.Key, exec statementExecutor) error {
+func deleteMulti(ctx context.Context, options DbOptions, keys []*record.Key, exec statementExecutor) error {
 	var prevTable string
-	var tableKeys []*dal.Key
-	deleteByKeys := func(table string, keys []*dal.Key) error {
+	var tableKeys []*record.Key
+	deleteByKeys := func(table string, keys []*record.Key) error {
 		if len(keys) == 0 {
 			return nil
 		}
@@ -74,7 +73,7 @@ func deleteMulti(ctx context.Context, options DbOptions, keys []*dal.Key, exec s
 			}
 		}
 		prevTable = kind
-		tableKeys = make([]*dal.Key, 1, len(keys)-i)
+		tableKeys = make([]*record.Key, 1, len(keys)-i)
 		tableKeys[0] = key
 	}
 	if len(tableKeys) > 0 {
@@ -85,7 +84,7 @@ func deleteMulti(ctx context.Context, options DbOptions, keys []*dal.Key, exec s
 	return nil
 }
 
-func deleteMultiInSingleTable(ctx context.Context, options DbOptions, keys []*dal.Key, exec statementExecutor) error {
+func deleteMultiInSingleTable(ctx context.Context, options DbOptions, keys []*record.Key, exec statementExecutor) error {
 	pkCol := "ID"
 
 	collection := keys[0].Collection()
@@ -108,6 +107,6 @@ func deleteMultiInSingleTable(ctx context.Context, options DbOptions, keys []*da
 	return nil
 }
 
-func (t transaction) DeleteMulti(ctx context.Context, keys []*dal.Key) error {
+func (t transaction) DeleteMulti(ctx context.Context, keys []*record.Key) error {
 	return deleteMulti(ctx, t.sqlOptions, keys, t.tx.ExecContext)
 }

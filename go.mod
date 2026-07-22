@@ -8,14 +8,15 @@ toolchain go1.26.5
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
-	github.com/dal-go/dalgo v0.63.0
+	github.com/dal-go/dalgo v0.63.1
+	github.com/dal-go/record v0.1.0
 	github.com/georgysavva/scany/v2 v2.1.4
 	modernc.org/sqlite v1.54.0
 )
 
 require (
-	github.com/RoaringBitmap/roaring/v2 v2.21.0 // indirect
-	github.com/bits-and-blooms/bitset v1.24.4 // indirect
+	github.com/RoaringBitmap/roaring/v2 v2.22.0 // indirect
+	github.com/bits-and-blooms/bitset v1.24.6 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
