@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/dal-go/dalgo/dal"
+	"github.com/dal-go/record"
 	_ "modernc.org/sqlite"
 )
 
@@ -47,8 +48,8 @@ func TestMapDataGetIntoNilMapPointer(t *testing.T) {
 	sqlDB := openTestSQLiteDB(t, createSQL)
 	db := NewDatabase(sqlDB, newSchema(), opts).(*database)
 
-	rec := dal.NewRecordWithData(
-		dal.NewKeyWithID("widgets", "w1"),
+	rec := record.NewRecordWithData(
+		record.NewKeyWithID("widgets", "w1"),
 		map[string]any{"name": "Sprocket"},
 	)
 	if err := db.Insert(ctx, rec); err != nil {
@@ -56,7 +57,7 @@ func TestMapDataGetIntoNilMapPointer(t *testing.T) {
 	}
 
 	var got map[string]any // nil map
-	getRec := dal.NewRecordWithData(dal.NewKeyWithID("widgets", "w1"), &got)
+	getRec := record.NewRecordWithData(record.NewKeyWithID("widgets", "w1"), &got)
 	if err := db.Get(ctx, getRec); err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -92,7 +93,7 @@ func TestMapDataGetBlobAsString(t *testing.T) {
 	}
 
 	got := make(map[string]any)
-	getRec := dal.NewRecordWithData(dal.NewKeyWithID("blobs", "b1"), got)
+	getRec := record.NewRecordWithData(record.NewKeyWithID("blobs", "b1"), got)
 	if err := db.Get(ctx, getRec); err != nil {
 		t.Fatalf("Get: %v", err)
 	}

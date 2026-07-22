@@ -8,6 +8,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/dal-go/dalgo/dal"
+	dalrecord "github.com/dal-go/record"
 )
 
 func newUsersDatabaseWithMock(t *testing.T) (*database, sqlmock.Sqlmock, func()) {
@@ -24,8 +25,8 @@ func newUsersDatabaseWithMock(t *testing.T) (*database, sqlmock.Sqlmock, func())
 	return db, mock, func() { closeDatabase(t, sqlDB) }
 }
 
-func newIncompleteUserRecord() dal.Record {
-	return dal.NewRecordWithData(dal.NewIncompleteKey("users", reflect.String, nil), &user{Name: "u1"})
+func newIncompleteUserRecord() dalrecord.Record {
+	return dalrecord.NewRecordWithData(dalrecord.NewIncompleteKey("users", reflect.String, nil), &user{Name: "u1"})
 }
 
 func TestInsertWithIDGenerator(t *testing.T) {
@@ -154,7 +155,7 @@ func TestInsertWithIDGenerator(t *testing.T) {
 		}
 		mock.ExpectCommit()
 
-		records := []dal.Record{newIncompleteUserRecord(), newIncompleteUserRecord()}
+		records := []dalrecord.Record{newIncompleteUserRecord(), newIncompleteUserRecord()}
 		err := db.RunReadwriteTransaction(ctx, func(ctx context.Context, tx dal.ReadwriteTransaction) error {
 			return tx.InsertMulti(ctx, records, dal.WithRandomStringKey(10, 5))
 		})

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/dal-go/dalgo/dal"
+	"github.com/dal-go/record"
 )
 
 // Types for testing SetID detection
@@ -48,7 +49,7 @@ func toMap(fields []dal.ExtraField) map[string]any {
 
 func Test_simpleKeyToFields_DataNil_NoParents(t *testing.T) {
 	f := simpleKeyToFields("ID")
-	key := dal.NewKeyWithID("users", 123)
+	key := record.NewKeyWithID("users", 123)
 	fields, err := f(key, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -64,8 +65,8 @@ func Test_simpleKeyToFields_DataNil_NoParents(t *testing.T) {
 
 func Test_simpleKeyToFields_DataNil_WithParents(t *testing.T) {
 	f := simpleKeyToFields("ID")
-	root := dal.NewKeyWithID("orgs", "acme")
-	child := dal.NewKeyWithParentAndID(root, "users", 7)
+	root := record.NewKeyWithID("orgs", "acme")
+	child := record.NewKeyWithParentAndID(root, "users", 7)
 	fields, err := f(child, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -84,8 +85,8 @@ func Test_simpleKeyToFields_DataNil_WithParents(t *testing.T) {
 
 func Test_simpleKeyToFields_SetID_ValueReceiver_ParentsIncluded(t *testing.T) {
 	f := simpleKeyToFields("ID")
-	p := dal.NewKeyWithID("teams", "t1")
-	k := dal.NewKeyWithParentAndID(p, "users", 1)
+	p := record.NewKeyWithID("teams", "t1")
+	k := record.NewKeyWithParentAndID(p, "users", 1)
 	data := withSetIDValue{}
 	fields, err := f(k, data)
 	if err != nil {
@@ -103,8 +104,8 @@ func Test_simpleKeyToFields_SetID_ValueReceiver_ParentsIncluded(t *testing.T) {
 
 func Test_simpleKeyToFields_SetID_PtrReceiver_ParentsIncluded(t *testing.T) {
 	f := simpleKeyToFields("ID")
-	p := dal.NewKeyWithID("teams", "t1")
-	k := dal.NewKeyWithParentAndID(p, "users", 1)
+	p := record.NewKeyWithID("teams", "t1")
+	k := record.NewKeyWithParentAndID(p, "users", 1)
 	data := &withSetIDPtr{}
 	fields, err := f(k, data)
 	if err != nil {
@@ -120,8 +121,8 @@ func Test_simpleKeyToFields_SetID_PtrReceiver_ParentsIncluded(t *testing.T) {
 
 func Test_simpleKeyToFields_ExportedIDField_ParentsIncluded(t *testing.T) {
 	f := simpleKeyToFields("ID")
-	p := dal.NewKeyWithID("departments", 42)
-	k := dal.NewKeyWithParentAndID(p, "users", 99)
+	p := record.NewKeyWithID("departments", 42)
+	k := record.NewKeyWithParentAndID(p, "users", 99)
 	data := hasExportedID{}
 	fields, err := f(k, data)
 	if err != nil {
@@ -138,7 +139,7 @@ func Test_simpleKeyToFields_ExportedIDField_ParentsIncluded(t *testing.T) {
 
 func Test_simpleKeyToFields_UnexportedIDField_AddOwnID(t *testing.T) {
 	f := simpleKeyToFields("ID")
-	k := dal.NewKeyWithID("users", 55)
+	k := record.NewKeyWithID("users", 55)
 	data := hasUnexportedID{id: 1}
 	fields, err := f(k, data)
 	if err != nil {
@@ -154,9 +155,9 @@ func Test_simpleKeyToFields_UnexportedIDField_AddOwnID(t *testing.T) {
 
 func Test_simpleKeyToFields_EmptyFieldName_Computed_IncludesParents(t *testing.T) {
 	f := simpleKeyToFields("")
-	grand := dal.NewKeyWithID("companies", "globex")
-	parent := dal.NewKeyWithParentAndID(grand, "projects", 777)
-	k := dal.NewKeyWithParentAndID(parent, "tasks", "a1")
+	grand := record.NewKeyWithID("companies", "globex")
+	parent := record.NewKeyWithParentAndID(grand, "projects", 777)
+	k := record.NewKeyWithParentAndID(parent, "tasks", "a1")
 	data := struct{}{}
 	fields, err := f(k, data)
 	if err != nil {
@@ -183,8 +184,8 @@ func Test_simpleKeyToFields_EmptyFieldName_Computed_IncludesParents(t *testing.T
 
 func Test_simpleFieldsToKey_GetID_ValueReceiver_Int64Kind(t *testing.T) {
 	schema := NewSimpleSchema("ID")
-	parent := dal.NewKeyWithID("orgs", "acme")
-	incomplete := dal.NewIncompleteKey("users", reflect.Int64, parent)
+	parent := record.NewKeyWithID("orgs", "acme")
+	incomplete := record.NewIncompleteKey("users", reflect.Int64, parent)
 	data := getIDVal{}
 	key, err := schema.DataToKey(incomplete, data)
 	if err != nil {
@@ -203,8 +204,8 @@ func Test_simpleFieldsToKey_GetID_ValueReceiver_Int64Kind(t *testing.T) {
 
 func Test_simpleFieldsToKey_GetID_PtrReceiver_StringKind(t *testing.T) {
 	schema := NewSimpleSchema("ID")
-	parent := dal.NewKeyWithID("orgs", "acme")
-	incomplete := dal.NewIncompleteKey("users", reflect.String, parent)
+	parent := record.NewKeyWithID("orgs", "acme")
+	incomplete := record.NewIncompleteKey("users", reflect.String, parent)
 	data := &getIDPtr{}
 	key, err := schema.DataToKey(incomplete, data)
 	if err != nil {
@@ -220,8 +221,8 @@ func Test_simpleFieldsToKey_GetID_PtrReceiver_StringKind(t *testing.T) {
 
 func Test_simpleFieldsToKey_FieldByName_Custom(t *testing.T) {
 	schema := NewSimpleSchema("UserID")
-	parent := dal.NewKeyWithID("orgs", "acme")
-	incomplete := dal.NewIncompleteKey("users", reflect.Int, parent)
+	parent := record.NewKeyWithID("orgs", "acme")
+	incomplete := record.NewIncompleteKey("users", reflect.Int, parent)
 	data := struct{ UserID int }{UserID: 7}
 	key, err := schema.DataToKey(incomplete, data)
 	if err != nil {
@@ -234,8 +235,8 @@ func Test_simpleFieldsToKey_FieldByName_Custom(t *testing.T) {
 
 func Test_simpleFieldsToKey_FieldByName_DefaultID_WhenEmptyName(t *testing.T) {
 	schema := NewSimpleSchema("")
-	parent := dal.NewKeyWithID("orgs", "acme")
-	incomplete := dal.NewIncompleteKey("users", reflect.Uint32, parent)
+	parent := record.NewKeyWithID("orgs", "acme")
+	incomplete := record.NewIncompleteKey("users", reflect.Uint32, parent)
 	data := struct{ ID uint32 }{ID: 42}
 	key, err := schema.DataToKey(incomplete, data)
 	if err != nil {
@@ -248,7 +249,7 @@ func Test_simpleFieldsToKey_FieldByName_DefaultID_WhenEmptyName(t *testing.T) {
 
 func Test_simpleFieldsToKey_FieldByName_OnPointer(t *testing.T) {
 	schema := NewSimpleSchema("UserID")
-	incomplete := dal.NewIncompleteKey("users", reflect.Int, nil)
+	incomplete := record.NewIncompleteKey("users", reflect.Int, nil)
 	ptr := &struct{ UserID int }{UserID: 8}
 	key, err := schema.DataToKey(incomplete, ptr)
 	if err != nil {
@@ -261,7 +262,7 @@ func Test_simpleFieldsToKey_FieldByName_OnPointer(t *testing.T) {
 
 func Test_simpleFieldsToKey_TypeConversion(t *testing.T) {
 	schema := NewSimpleSchema("ID")
-	incomplete := dal.NewIncompleteKey("things", reflect.Int64, nil)
+	incomplete := record.NewIncompleteKey("things", reflect.Int64, nil)
 	data := struct{ ID int32 }{ID: 9}
 	key, err := schema.DataToKey(incomplete, data)
 	if err != nil {
@@ -277,7 +278,7 @@ func Test_simpleFieldsToKey_TypeConversion(t *testing.T) {
 
 func Test_simpleFieldsToKey_ErrorWhenMissingID(t *testing.T) {
 	schema := NewSimpleSchema("UserID")
-	incomplete := dal.NewIncompleteKey("users", reflect.Int, nil)
+	incomplete := record.NewIncompleteKey("users", reflect.Int, nil)
 	data := struct{ Name string }{Name: "x"}
 	_, err := schema.DataToKey(incomplete, data)
 	if err == nil {
@@ -287,7 +288,7 @@ func Test_simpleFieldsToKey_ErrorWhenMissingID(t *testing.T) {
 
 func Test_simpleFieldsToKey_ErrorOnUnexportedField(t *testing.T) {
 	schema := NewSimpleSchema("id")
-	incomplete := dal.NewIncompleteKey("users", reflect.Int, nil)
+	incomplete := record.NewIncompleteKey("users", reflect.Int, nil)
 	data := struct{ id int }{id: 1}
 	_, err := schema.DataToKey(incomplete, data)
 	if err == nil {
@@ -297,7 +298,7 @@ func Test_simpleFieldsToKey_ErrorOnUnexportedField(t *testing.T) {
 
 func Test_simpleFieldsToKey_ErrorOnNonStructData(t *testing.T) {
 	schema := NewSimpleSchema("ID")
-	incomplete := dal.NewIncompleteKey("users", reflect.Int, nil)
+	incomplete := record.NewIncompleteKey("users", reflect.Int, nil)
 	var data any = 5
 	_, err := schema.DataToKey(incomplete, data)
 	if err == nil {
@@ -307,7 +308,7 @@ func Test_simpleFieldsToKey_ErrorOnNonStructData(t *testing.T) {
 
 func Test_simpleFieldsToKey_ErrorOnConvertFailure(t *testing.T) {
 	schema := NewSimpleSchema("ID")
-	incomplete := dal.NewIncompleteKey("users", reflect.Int, nil)
+	incomplete := record.NewIncompleteKey("users", reflect.Int, nil)
 	data := struct{ ID string }{ID: "abc"}
 	_, err := schema.DataToKey(incomplete, data)
 	if err == nil {
@@ -317,7 +318,7 @@ func Test_simpleFieldsToKey_ErrorOnConvertFailure(t *testing.T) {
 
 func Test_simpleFieldsToKey_ErrorOnNilData(t *testing.T) {
 	schema := NewSimpleSchema("ID")
-	incomplete := dal.NewIncompleteKey("users", reflect.Int, nil)
+	incomplete := record.NewIncompleteKey("users", reflect.Int, nil)
 	_, err := schema.DataToKey(incomplete, nil)
 	if err == nil {
 		t.Fatalf("expected error for nil data, got nil")

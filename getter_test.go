@@ -9,11 +9,12 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/dal-go/dalgo/dal"
+	dalrecord "github.com/dal-go/record"
 )
 
 func Test_getSelectFields(t *testing.T) {
 	type args struct {
-		record    dal.Record
+		record    dalrecord.Record
 		includePK bool
 		options   DbOptions
 	}
@@ -26,7 +27,7 @@ func Test_getSelectFields(t *testing.T) {
 		{
 			name: "simple_fields_exclude_primary_key",
 			args: args{
-				record: dal.NewRecordWithIncompleteKey("SomeCollection", reflect.String, struct {
+				record: dalrecord.NewRecordWithIncompleteKey("SomeCollection", reflect.String, struct {
 					StrField string
 					IntField int
 				}{}),
@@ -37,8 +38,8 @@ func Test_getSelectFields(t *testing.T) {
 		{
 			name: "simple_fields_include_primary_key",
 			args: args{
-				record: dal.NewRecordWithData(
-					dal.NewKeyWithID("TestTable", "r1"),
+				record: dalrecord.NewRecordWithData(
+					dalrecord.NewKeyWithID("TestTable", "r1"),
 					struct {
 						StrField string
 						IntField int
@@ -69,7 +70,7 @@ func TestGetter_Exists(t *testing.T) {
 		},
 	})
 	ctx := context.Background()
-	key := dal.NewKeyWithID("users", "u1")
+	key := dalrecord.NewKeyWithID("users", "u1")
 
 	t.Run("exists", func(t *testing.T) {
 		mock.ExpectQuery("SELECT 1 FROM users WHERE id = ?").
@@ -110,7 +111,7 @@ func TestGetter_Exists(t *testing.T) {
 	t.Run("no_primary_key", func(t *testing.T) {
 		d2 := NewDatabase(db, newSchema(), DbOptions{})
 		_, err := d2.Exists(ctx, key)
-		if !errors.Is(err, dal.ErrRecordNotFound) {
+		if !errors.Is(err, dalrecord.ErrRecordNotFound) {
 			t.Errorf("expected ErrRecordNotFound, got %v", err)
 		}
 	})
@@ -144,7 +145,7 @@ func TestGetter_Get(t *testing.T) {
 
 	t.Run("success_map", func(t *testing.T) {
 		data := make(map[string]any)
-		record := dal.NewRecordWithData(dal.NewKeyWithID("users", "u1"), &data)
+		record := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "u1"), &data)
 		// Map data causes getSelectFields to return ["*"] => SELECT * FROM users WHERE id = ?
 		mock.ExpectQuery("SELECT \\* FROM users WHERE id = ?").
 			WithArgs("u1").
@@ -163,7 +164,7 @@ func TestGetter_Get(t *testing.T) {
 			Name string `db:"Name"`
 		}
 		user := User{}
-		record := dal.NewRecordWithData(dal.NewKeyWithID("users", "u1"), &user)
+		record := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "u1"), &user)
 		mock.ExpectQuery("SELECT Name FROM users WHERE id = ?").
 			WithArgs("u1").
 			WillReturnRows(sqlmock.NewRows([]string{"Name"}).AddRow("John"))
@@ -177,12 +178,12 @@ func TestGetter_Get(t *testing.T) {
 	})
 
 	t.Run("not_found", func(t *testing.T) {
-		record := dal.NewRecordWithData(dal.NewKeyWithID("users", "u1"), &struct{ Name string }{})
+		record := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "u1"), &struct{ Name string }{})
 		mock.ExpectQuery("SELECT Name FROM users WHERE id = ?").
 			WithArgs("u1").
 			WillReturnRows(sqlmock.NewRows([]string{"Name"}))
 		err := d.Get(ctx, record)
-		if !errors.Is(err, dal.ErrRecordNotFound) {
+		if !errors.Is(err, dalrecord.ErrRecordNotFound) {
 			t.Errorf("expected ErrRecordNotFound, got %v", err)
 		}
 	})
@@ -191,7 +192,7 @@ func TestGetter_Get(t *testing.T) {
 		type User struct {
 			Name string `db:"Name"`
 		}
-		record := dal.NewRecordWithData(dal.NewKeyWithID("users", "u1"), &User{})
+		record := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "u1"), &User{})
 		mock.ExpectQuery("SELECT Name FROM users WHERE id = ?").
 			WithArgs("u1").
 			WillReturnRows(sqlmock.NewRows([]string{"Name"}).AddRow("John").AddRow("Jane"))
@@ -220,9 +221,9 @@ func TestGetter_GetMulti(t *testing.T) {
 		}
 		u1 := User{}
 		u2 := User{}
-		records := []dal.Record{
-			dal.NewRecordWithData(dal.NewKeyWithID("users", "u1"), &u1),
-			dal.NewRecordWithData(dal.NewKeyWithID("users", "u2"), &u2),
+		records := []dalrecord.Record{
+			dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "u1"), &u1),
+			dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "u2"), &u2),
 		}
 		// getMultiFromSingleTable uses "SELECT id, Name FROM users WHERE id IN (?, ?)"
 		mock.ExpectQuery("SELECT id, Name FROM users WHERE id IN \\(\\?, \\?\\)").
@@ -249,9 +250,9 @@ func TestGetter_GetMulti(t *testing.T) {
 		type User struct {
 			Name string `db:"Name"`
 		}
-		records := []dal.Record{
-			dal.NewRecordWithData(dal.NewKeyWithID("users", "u1"), &User{}),
-			dal.NewRecordWithData(dal.NewKeyWithID("groups", "g1"), &User{}),
+		records := []dalrecord.Record{
+			dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "u1"), &User{}),
+			dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("groups", "g1"), &User{}),
 		}
 		mock.ExpectQuery("SELECT id, Name FROM users WHERE id IN \\(\\?\\)").WithArgs("u1").
 			WillReturnRows(sqlmock.NewRows([]string{"id", "Name"}).AddRow("u1", "John"))

@@ -2,13 +2,12 @@ package dalgo2sql
 
 import (
 	"fmt"
+	dalrecord "github.com/dal-go/record"
 	"reflect"
 	"slices"
 	"sort"
 	"strings"
 	"time"
-
-	"github.com/dal-go/dalgo/dal"
 )
 
 type operation = int
@@ -23,7 +22,7 @@ type query struct {
 	args []interface{}
 }
 
-func processPrimaryKey(primaryKey []string, key *dal.Key, f func(i int, name string, v any)) {
+func processPrimaryKey(primaryKey []string, key *dalrecord.Key, f func(i int, name string, v any)) {
 	if len(primaryKey) == 1 {
 		f(0, primaryKey[0], key.ID)
 		return
@@ -53,7 +52,7 @@ func processPrimaryKey(primaryKey []string, key *dal.Key, f func(i int, name str
 	}
 }
 
-func buildSingleRecordQuery(o operation, options DbOptions, record dal.Record) (query query) {
+func buildSingleRecordQuery(o operation, options DbOptions, record dalrecord.Record) (query query) {
 	key := record.Key()
 	collection := getRecordsetName(key)
 	pk := options.PrimaryKeyFieldNames(key)

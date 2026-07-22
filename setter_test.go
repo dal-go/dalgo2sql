@@ -7,6 +7,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/dal-go/dalgo/dal"
+	dalrecord "github.com/dal-go/record"
 )
 
 func TestSetter(t *testing.T) {
@@ -26,7 +27,7 @@ func TestSetter(t *testing.T) {
 		}).(*database)
 
 		u := user{Name: "u1"}
-		record := dal.NewRecordWithData(dal.NewKeyWithID("users", "id1"), &u)
+		record := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "id1"), &u)
 
 		mock.ExpectQuery("SELECT ID FROM users WHERE ID = ?").WithArgs("id1").WillReturnRows(sqlmock.NewRows([]string{"ID"}))
 		mock.ExpectExec("INSERT INTO users(ID, Name) VALUES (?, ?)").WithArgs("id1", "u1").WillReturnResult(sqlmock.NewResult(1, 1))
@@ -51,7 +52,7 @@ func TestSetter(t *testing.T) {
 		}).(*database)
 
 		u := user{Name: "u1"}
-		record := dal.NewRecordWithData(dal.NewKeyWithID("users", "id1"), &u)
+		record := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "id1"), &u)
 
 		mock.ExpectQuery("SELECT ID FROM users WHERE ID = ?").WithArgs("id1").WillReturnRows(sqlmock.NewRows([]string{"ID"}).AddRow("id1"))
 		mock.ExpectExec("UPDATE users SET Name = ? WHERE ID = ?").WithArgs("u1", "id1").WillReturnResult(sqlmock.NewResult(1, 1))
@@ -75,8 +76,8 @@ func TestSetter(t *testing.T) {
 			},
 		}).(*database)
 
-		records := []dal.Record{
-			dal.NewRecordWithData(dal.NewKeyWithID("users", "id1"), &user{Name: "u1"}),
+		records := []dalrecord.Record{
+			dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "id1"), &user{Name: "u1"}),
 		}
 
 		mock.ExpectBegin()
@@ -104,7 +105,7 @@ func TestSetter(t *testing.T) {
 		}).(*database)
 
 		u := user{Name: "u1"}
-		record := dal.NewRecordWithData(dal.NewKeyWithID("users", "id1"), &u)
+		record := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "id1"), &u)
 
 		mock.ExpectQuery("SELECT ID FROM users WHERE ID = ?").WithArgs("id1").WillReturnError(errors.New("exists error"))
 

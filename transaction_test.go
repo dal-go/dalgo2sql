@@ -6,7 +6,8 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/dal-go/dalgo/dal"
-	"github.com/dal-go/dalgo/update"
+	dalrecord "github.com/dal-go/record"
+	"github.com/dal-go/record/update"
 )
 
 type user2 struct {
@@ -28,7 +29,7 @@ func TestTransaction(t *testing.T) {
 		mock.ExpectExec("INSERT INTO users").WillReturnResult(sqlmock.NewResult(1, 1))
 		mock.ExpectCommit()
 		_ = db.RunReadwriteTransaction(ctx, func(ctx context.Context, tx dal.ReadwriteTransaction) error {
-			record := dal.NewRecordWithData(dal.NewKeyWithID("users", "u1"), &user2{Name: "John"})
+			record := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "u1"), &user2{Name: "John"})
 			return tx.Insert(ctx, record)
 		})
 	})
@@ -46,9 +47,9 @@ func TestTransaction(t *testing.T) {
 		mock.ExpectExec("INSERT INTO users").WillReturnResult(sqlmock.NewResult(2, 1))
 		mock.ExpectCommit()
 		_ = db.RunReadwriteTransaction(ctx, func(ctx context.Context, tx dal.ReadwriteTransaction) error {
-			records := []dal.Record{
-				dal.NewRecordWithData(dal.NewKeyWithID("users", "u1"), &user2{Name: "John"}),
-				dal.NewRecordWithData(dal.NewKeyWithID("users", "u2"), &user2{Name: "Jane"}),
+			records := []dalrecord.Record{
+				dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "u1"), &user2{Name: "John"}),
+				dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "u2"), &user2{Name: "Jane"}),
 			}
 			return tx.InsertMulti(ctx, records)
 		})
@@ -66,7 +67,7 @@ func TestTransaction(t *testing.T) {
 		mock.ExpectExec("UPDATE users SET").WillReturnResult(sqlmock.NewResult(1, 1))
 		mock.ExpectCommit()
 		_ = db.RunReadwriteTransaction(ctx, func(ctx context.Context, tx dal.ReadwriteTransaction) error {
-			return tx.Update(ctx, dal.NewKeyWithID("users", "u1"), []update.Update{
+			return tx.Update(ctx, dalrecord.NewKeyWithID("users", "u1"), []update.Update{
 				update.ByFieldName("Name", "John"),
 			})
 		})
@@ -85,9 +86,9 @@ func TestTransaction(t *testing.T) {
 		mock.ExpectExec("UPDATE users SET").WillReturnResult(sqlmock.NewResult(1, 1))
 		mock.ExpectCommit()
 		_ = db.RunReadwriteTransaction(ctx, func(ctx context.Context, tx dal.ReadwriteTransaction) error {
-			return tx.UpdateMulti(ctx, []*dal.Key{
-				dal.NewKeyWithID("users", "u1"),
-				dal.NewKeyWithID("users", "u2"),
+			return tx.UpdateMulti(ctx, []*dalrecord.Key{
+				dalrecord.NewKeyWithID("users", "u1"),
+				dalrecord.NewKeyWithID("users", "u2"),
 			}, []update.Update{
 				update.ByFieldName("Name", "John"),
 			})
@@ -106,7 +107,7 @@ func TestTransaction(t *testing.T) {
 		mock.ExpectExec("UPDATE users SET").WillReturnResult(sqlmock.NewResult(1, 1))
 		mock.ExpectCommit()
 		_ = db.RunReadwriteTransaction(ctx, func(ctx context.Context, tx dal.ReadwriteTransaction) error {
-			record := dal.NewRecordWithData(dal.NewKeyWithID("users", "u1"), &user2{Name: "John"})
+			record := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "u1"), &user2{Name: "John"})
 			return tx.UpdateRecord(ctx, record, []update.Update{
 				update.ByFieldName("Name", "John"),
 			})
@@ -125,7 +126,7 @@ func TestTransaction(t *testing.T) {
 		mock.ExpectExec("DELETE FROM users").WillReturnResult(sqlmock.NewResult(1, 1))
 		mock.ExpectCommit()
 		_ = db.RunReadwriteTransaction(ctx, func(ctx context.Context, tx dal.ReadwriteTransaction) error {
-			return tx.DeleteMulti(ctx, []*dal.Key{dal.NewKeyWithID("users", "u1")})
+			return tx.DeleteMulti(ctx, []*dalrecord.Key{dalrecord.NewKeyWithID("users", "u1")})
 		})
 	})
 
@@ -142,7 +143,7 @@ func TestTransaction(t *testing.T) {
 		mock.ExpectExec("INSERT INTO users").WillReturnResult(sqlmock.NewResult(1, 1))
 		mock.ExpectCommit()
 		_ = db.RunReadwriteTransaction(ctx, func(ctx context.Context, tx dal.ReadwriteTransaction) error {
-			record := dal.NewRecordWithData(dal.NewKeyWithID("users", "u1"), &user2{Name: "John"})
+			record := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "u1"), &user2{Name: "John"})
 			return tx.Set(ctx, record)
 		})
 	})
@@ -160,8 +161,8 @@ func TestTransaction(t *testing.T) {
 		mock.ExpectExec("INSERT INTO users").WillReturnResult(sqlmock.NewResult(1, 1))
 		mock.ExpectCommit()
 		_ = db.RunReadwriteTransaction(ctx, func(ctx context.Context, tx dal.ReadwriteTransaction) error {
-			records := []dal.Record{
-				dal.NewRecordWithData(dal.NewKeyWithID("users", "u1"), &user2{Name: "John"}),
+			records := []dalrecord.Record{
+				dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "u1"), &user2{Name: "John"}),
 			}
 			return tx.SetMulti(ctx, records)
 		})
@@ -180,9 +181,9 @@ func TestTransaction(t *testing.T) {
 		mock.ExpectExec("INSERT INTO users").WillReturnResult(sqlmock.NewResult(1, 1))
 		mock.ExpectCommit()
 		_ = db.RunReadwriteTransaction(ctx, func(ctx context.Context, tx dal.ReadwriteTransaction) error {
-			record := dal.NewRecordWithData(dal.NewKeyWithID("users", "u1"), &user2{Name: "John"})
+			record := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "u1"), &user2{Name: "John"})
 			return tx.(interface {
-				Upsert(ctx context.Context, record dal.Record) error
+				Upsert(ctx context.Context, record dalrecord.Record) error
 			}).Upsert(ctx, record)
 		})
 	})
@@ -266,7 +267,7 @@ func TestTransaction(t *testing.T) {
 
 		err = db.RunReadonlyTransaction(ctx, func(ctx context.Context, tx dal.ReadTransaction) error {
 			u := user{}
-			record := dal.NewRecordWithData(dal.NewKeyWithID("users", "id1"), &u)
+			record := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "id1"), &u)
 			return tx.Get(ctx, record)
 		})
 		if err != nil {

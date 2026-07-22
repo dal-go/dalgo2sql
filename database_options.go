@@ -1,6 +1,8 @@
 package dalgo2sql
 
-import "github.com/dal-go/dalgo/dal"
+import (
+	"github.com/dal-go/record"
+)
 
 // DbOptions provides database sqlOptions for DALgo - // TODO: document why & how to use
 type DbOptions struct {
@@ -14,12 +16,12 @@ type DbOptions struct {
 	Placeholder PlaceholderDialect
 }
 
-func (o DbOptions) GetRecordsetByKey(key *dal.Key) *Recordset {
+func (o DbOptions) GetRecordsetByKey(key *record.Key) *Recordset {
 	rsName := getRecordsetName(key)
 	return o.Recordsets[rsName]
 }
 
-func (o DbOptions) PrimaryKeyFieldNames(key *dal.Key) (primaryKey []string) {
+func (o DbOptions) PrimaryKeyFieldNames(key *record.Key) (primaryKey []string) {
 	rs := o.GetRecordsetByKey(key)
 	if pk := rs.PrimaryKey(); len(pk) > 0 {
 		primaryKey = make([]string, len(pk))

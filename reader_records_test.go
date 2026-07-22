@@ -8,6 +8,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/dal-go/dalgo/dal"
+	dalrecord "github.com/dal-go/record"
 )
 
 func TestRecordsReader(t *testing.T) {
@@ -76,8 +77,8 @@ func TestRecordsReader(t *testing.T) {
 		mock.ExpectQuery("SELECT id FROM users").WillReturnRows(rows)
 
 		rr, _ := getRecordsReader(ctx, dal.NewTextQuery("SELECT id FROM users", nil), db.QueryContext)
-		rr.newRecord = func() dal.Record {
-			return dal.NewRecordWithData(dal.NewKeyWithID("Unknown", ""), 123) // int is not supported
+		rr.newRecord = func() dalrecord.Record {
+			return dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("Unknown", ""), 123) // int is not supported
 		}
 
 		_, err := rr.Next()

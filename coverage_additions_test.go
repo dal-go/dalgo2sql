@@ -10,6 +10,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/dal-go/dalgo/dal"
+	"github.com/dal-go/record"
 )
 
 // --- transaction.Exists / transaction.GetMulti ---------------------------
@@ -32,8 +33,8 @@ func TestTransaction_Exists(t *testing.T) {
 		mock.ExpectCommit()
 		err := db.RunReadonlyTransaction(ctx, func(ctx context.Context, tx dal.ReadTransaction) error {
 			exists, err := tx.(interface {
-				Exists(ctx context.Context, key *dal.Key) (bool, error)
-			}).Exists(ctx, dal.NewKeyWithID("users", "u1"))
+				Exists(ctx context.Context, key *record.Key) (bool, error)
+			}).Exists(ctx, record.NewKeyWithID("users", "u1"))
 			if err != nil {
 				return err
 			}
@@ -62,8 +63,8 @@ func TestTransaction_Exists(t *testing.T) {
 		mock.ExpectCommit()
 		err := db.RunReadonlyTransaction(ctx, func(ctx context.Context, tx dal.ReadTransaction) error {
 			exists, err := tx.(interface {
-				Exists(ctx context.Context, key *dal.Key) (bool, error)
-			}).Exists(ctx, dal.NewKeyWithID("users", "ghost"))
+				Exists(ctx context.Context, key *record.Key) (bool, error)
+			}).Exists(ctx, record.NewKeyWithID("users", "ghost"))
 			if err != nil {
 				return err
 			}
@@ -101,9 +102,9 @@ func TestTransaction_GetMulti(t *testing.T) {
 		mock.ExpectCommit()
 		err := db.RunReadonlyTransaction(ctx, func(ctx context.Context, tx dal.ReadTransaction) error {
 			u1, u2 := U{}, U{}
-			recs := []dal.Record{
-				dal.NewRecordWithData(dal.NewKeyWithID("users", "u1"), &u1),
-				dal.NewRecordWithData(dal.NewKeyWithID("users", "u2"), &u2),
+			recs := []record.Record{
+				record.NewRecordWithData(record.NewKeyWithID("users", "u1"), &u1),
+				record.NewRecordWithData(record.NewKeyWithID("users", "u2"), &u2),
 			}
 			if err := tx.GetMulti(ctx, recs); err != nil {
 				return err
@@ -596,14 +597,14 @@ func TestGetMulti_NoPrimaryKey(t *testing.T) {
 	type U struct {
 		Name string
 	}
-	recs := []dal.Record{
-		dal.NewRecordWithData(dal.NewKeyWithID("users", "u1"), &U{}),
-		dal.NewRecordWithData(dal.NewKeyWithID("users", "u2"), &U{}),
+	recs := []record.Record{
+		record.NewRecordWithData(record.NewKeyWithID("users", "u1"), &U{}),
+		record.NewRecordWithData(record.NewKeyWithID("users", "u2"), &U{}),
 	}
 	if err := db.GetMulti(ctx, recs); err != nil {
 		t.Errorf("expected nil (records get errors set), got %v", err)
 	}
-	// dal.Record.Error() returns nil for not-found errors; just verify
+	// record.Record.Error() returns nil for not-found errors; just verify
 	// the call did not propagate a top-level error and the records exist.
 	for _, r := range recs {
 		_ = r
@@ -629,9 +630,9 @@ func TestGetMulti_PartialHit(t *testing.T) {
 		Name string `db:"Name"`
 	}
 	u1, u2 := U{}, U{}
-	recs := []dal.Record{
-		dal.NewRecordWithData(dal.NewKeyWithID("users", "u1"), &u1),
-		dal.NewRecordWithData(dal.NewKeyWithID("users", "u2"), &u2),
+	recs := []record.Record{
+		record.NewRecordWithData(record.NewKeyWithID("users", "u1"), &u1),
+		record.NewRecordWithData(record.NewKeyWithID("users", "u2"), &u2),
 	}
 
 	mock.ExpectQuery(`SELECT id, Name FROM users WHERE id IN \(\?, \?\)`).
@@ -644,7 +645,7 @@ func TestGetMulti_PartialHit(t *testing.T) {
 	if u1.Name != "John" {
 		t.Errorf("u1.Name: want John, got %q", u1.Name)
 	}
-	// dal.Record.Error() returns nil for not-found errors, so just verify
+	// record.Record.Error() returns nil for not-found errors, so just verify
 	// that the present row was populated and the missing one was not.
 	if u2.Name != "" {
 		t.Errorf("u2.Name expected empty, got %q", u2.Name)
@@ -660,8 +661,8 @@ func TestRowIntoRecord_NilDataPanics(t *testing.T) {
 		}
 	}()
 	// Build a record with explicit nil data and force rowIntoRecord directly.
-	key := dal.NewKeyWithID("users", "x")
-	rec := dal.NewRecordWithData(key, nil)
+	key := record.NewKeyWithID("users", "x")
+	rec := record.NewRecordWithData(key, nil)
 	_ = rowIntoRecord(nil, rec, false)
 }
 
@@ -691,7 +692,7 @@ func Test_simpleFieldsToKey_ConvertBranches(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			schema := NewSimpleSchema("ID")
-			incomplete := dal.NewIncompleteKey("things", tc.kind, nil)
+			incomplete := record.NewIncompleteKey("things", tc.kind, nil)
 			key, err := schema.DataToKey(incomplete, tc.input)
 			if err != nil {
 				t.Fatalf("DataToKey: %v", err)
@@ -726,7 +727,7 @@ func Test_simpleFieldsToKey_KindBranches(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			schema := NewSimpleSchema("ID")
-			incomplete := dal.NewIncompleteKey("things", tc.kind, nil)
+			incomplete := record.NewIncompleteKey("things", tc.kind, nil)
 			key, err := schema.DataToKey(incomplete, tc.input)
 			if err != nil {
 				t.Fatalf("DataToKey: %v", err)
@@ -751,7 +752,7 @@ func TestUpdater_Errors(t *testing.T) {
 		defer closeDatabase(t, sqlDB)
 		db := NewDatabase(sqlDB, newSchema(), DbOptions{}).(*database)
 		// no recordsets and no top-level PrimaryKey -> PrimaryKeyFieldNames returns nil
-		key := dal.NewKeyWithID("users", "u1")
+		key := record.NewKeyWithID("users", "u1")
 		// update without primary key -> error
 		err = db.Update(ctx, key, nil)
 		if err == nil {
@@ -770,7 +771,7 @@ func TestUpdater_Errors(t *testing.T) {
 				"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("a"), dal.Field("b")}),
 			},
 		}).(*database)
-		key := dal.NewKeyWithID("users", "u1")
+		key := record.NewKeyWithID("users", "u1")
 		err = db.Update(ctx, key, nil)
 		if !errors.Is(err, dal.ErrNotImplementedYet) {
 			t.Errorf("expected ErrNotImplementedYet, got %v", err)
@@ -789,7 +790,7 @@ func TestUpdater_Errors(t *testing.T) {
 			},
 		}).(*database)
 		mock.ExpectExec("UPDATE users SET").WillReturnError(errors.New("exec fail"))
-		err = db.Update(ctx, dal.NewKeyWithID("users", "u1"), nil)
+		err = db.Update(ctx, record.NewKeyWithID("users", "u1"), nil)
 		if err == nil {
 			t.Errorf("expected error, got nil")
 		}
@@ -807,7 +808,7 @@ func TestUpdater_Errors(t *testing.T) {
 			},
 		}).(*database)
 		mock.ExpectExec("UPDATE users SET").WillReturnError(errors.New("nope"))
-		err = db.UpdateMulti(ctx, []*dal.Key{dal.NewKeyWithID("users", "u1")}, nil)
+		err = db.UpdateMulti(ctx, []*record.Key{record.NewKeyWithID("users", "u1")}, nil)
 		if err == nil {
 			t.Errorf("expected error, got nil")
 		}
@@ -831,7 +832,7 @@ func TestInserter_Errors(t *testing.T) {
 			},
 		}).(*database)
 		mock.ExpectExec("INSERT INTO users").WillReturnError(errors.New("insert fail"))
-		rec := dal.NewRecordWithData(dal.NewKeyWithID("users", "u1"), &user{Name: "J"})
+		rec := record.NewRecordWithData(record.NewKeyWithID("users", "u1"), &user{Name: "J"})
 		err = db.Insert(ctx, rec)
 		if err == nil {
 			t.Errorf("expected error, got nil")
@@ -853,8 +854,8 @@ func TestInserter_Errors(t *testing.T) {
 		mock.ExpectExec("INSERT INTO users").WillReturnError(errors.New("boom"))
 		mock.ExpectRollback()
 		err = db.RunReadwriteTransaction(ctx, func(ctx context.Context, tx dal.ReadwriteTransaction) error {
-			return tx.InsertMulti(ctx, []dal.Record{
-				dal.NewRecordWithData(dal.NewKeyWithID("users", "u1"), &user{Name: "J"}),
+			return tx.InsertMulti(ctx, []record.Record{
+				record.NewRecordWithData(record.NewKeyWithID("users", "u1"), &user{Name: "J"}),
 			})
 		})
 		if err == nil {
@@ -877,9 +878,9 @@ func TestDeleter_MultiInSingleTable_CustomPK(t *testing.T) {
 			"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("uid")}),
 		},
 	}).(*database)
-	keys := []*dal.Key{
-		dal.NewKeyWithID("users", "u1"),
-		dal.NewKeyWithID("users", "u2"),
+	keys := []*record.Key{
+		record.NewKeyWithID("users", "u1"),
+		record.NewKeyWithID("users", "u2"),
 	}
 	mock.ExpectExec("DELETE FROM users WHERE uid = ?").WithArgs("u1").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("DELETE FROM users WHERE uid = ?").WithArgs("u2").WillReturnResult(sqlmock.NewResult(0, 1))
@@ -897,9 +898,9 @@ func TestDeleter_MultiInSingleTable_ExecError(t *testing.T) {
 	defer closeDatabase(t, sqlDB)
 	ctx := context.Background()
 	db := NewDatabase(sqlDB, newSchema(), DbOptions{}).(*database)
-	keys := []*dal.Key{
-		dal.NewKeyWithID("users", "u1"),
-		dal.NewKeyWithID("users", "u2"),
+	keys := []*record.Key{
+		record.NewKeyWithID("users", "u1"),
+		record.NewKeyWithID("users", "u2"),
 	}
 	mock.ExpectExec("DELETE FROM users WHERE ID = ?").WithArgs("u1").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("DELETE FROM users WHERE ID = ?").WithArgs("u2").WillReturnResult(sqlmock.NewResult(0, 1))
@@ -928,8 +929,8 @@ func TestSetter_SetMulti_Error(t *testing.T) {
 		WithArgs("u1").
 		WillReturnError(errors.New("oops"))
 	mock.ExpectRollback()
-	err = db.SetMulti(ctx, []dal.Record{
-		dal.NewRecordWithData(dal.NewKeyWithID("users", "u1"), &user{Name: "n"}),
+	err = db.SetMulti(ctx, []record.Record{
+		record.NewRecordWithData(record.NewKeyWithID("users", "u1"), &user{Name: "n"}),
 	})
 	if err == nil {
 		t.Errorf("expected error, got nil")

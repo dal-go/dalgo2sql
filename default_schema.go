@@ -5,6 +5,7 @@ import (
 	"reflect"
 
 	"github.com/dal-go/dalgo/dal"
+	"github.com/dal-go/record"
 )
 
 func NewSimpleSchema(idFieldName string) dal.Schema {
@@ -19,7 +20,7 @@ func NewSimpleSchema(idFieldName string) dal.Schema {
 // If `idFieldName` is an empty string, it is set to `idFieldName = fmt.Sprintf("%s_%v", key.Collection(), "_", key.ID)
 // If `key` has parents, each parent is mapped to a field with name like `{parent.Collection()}_{parent.ID}`
 func simpleKeyToFields(idFieldName string) dal.KeyToFieldsFunc {
-	keyToField := func(key *dal.Key, data any) (fields []dal.ExtraField, err error) {
+	keyToField := func(key *record.Key, data any) (fields []dal.ExtraField, err error) {
 
 		if idFieldName == "" {
 			idFieldName = fmt.Sprintf("%s_%v", key.Collection(), key.ID)
@@ -104,7 +105,7 @@ func simpleKeyToFields(idFieldName string) dal.KeyToFieldsFunc {
 // either returned by `data.GetID() any` if has such a function on `data` struct
 // or from the data field name defined in `idFieldName` argument.
 func simpleFieldsToKey(idFieldName string) dal.DataToKeyFunc {
-	dataToKey := func(incompleteKey *dal.Key, data any) (key *dal.Key, err error) {
+	dataToKey := func(incompleteKey *record.Key, data any) (key *record.Key, err error) {
 		if data == nil {
 			return nil, fmt.Errorf("data is nil: cannot derive ID for key in collection %s", incompleteKey.Collection())
 		}
@@ -252,36 +253,36 @@ func simpleFieldsToKey(idFieldName string) dal.DataToKeyFunc {
 
 		switch incompleteKey.IDKind {
 		case reflect.String:
-			return dal.NewKeyWithParentAndID(parent, collection, idVal.(string)), nil
+			return record.NewKeyWithParentAndID(parent, collection, idVal.(string)), nil
 		case reflect.Int:
-			return dal.NewKeyWithParentAndID(parent, collection, idVal.(int)), nil
+			return record.NewKeyWithParentAndID(parent, collection, idVal.(int)), nil
 		case reflect.Int8:
-			return dal.NewKeyWithParentAndID(parent, collection, idVal.(int8)), nil
+			return record.NewKeyWithParentAndID(parent, collection, idVal.(int8)), nil
 		case reflect.Int16:
-			return dal.NewKeyWithParentAndID(parent, collection, idVal.(int16)), nil
+			return record.NewKeyWithParentAndID(parent, collection, idVal.(int16)), nil
 		case reflect.Int32:
-			return dal.NewKeyWithParentAndID(parent, collection, idVal.(int32)), nil
+			return record.NewKeyWithParentAndID(parent, collection, idVal.(int32)), nil
 		case reflect.Int64:
-			return dal.NewKeyWithParentAndID(parent, collection, idVal.(int64)), nil
+			return record.NewKeyWithParentAndID(parent, collection, idVal.(int64)), nil
 		case reflect.Uint:
-			return dal.NewKeyWithParentAndID(parent, collection, idVal.(uint)), nil
+			return record.NewKeyWithParentAndID(parent, collection, idVal.(uint)), nil
 		case reflect.Uint8:
-			return dal.NewKeyWithParentAndID(parent, collection, idVal.(uint8)), nil
+			return record.NewKeyWithParentAndID(parent, collection, idVal.(uint8)), nil
 		case reflect.Uint16:
-			return dal.NewKeyWithParentAndID(parent, collection, idVal.(uint16)), nil
+			return record.NewKeyWithParentAndID(parent, collection, idVal.(uint16)), nil
 		case reflect.Uint32:
-			return dal.NewKeyWithParentAndID(parent, collection, idVal.(uint32)), nil
+			return record.NewKeyWithParentAndID(parent, collection, idVal.(uint32)), nil
 		case reflect.Uint64:
-			return dal.NewKeyWithParentAndID(parent, collection, idVal.(uint64)), nil
+			return record.NewKeyWithParentAndID(parent, collection, idVal.(uint64)), nil
 		case reflect.Bool:
-			return dal.NewKeyWithParentAndID(parent, collection, idVal.(bool)), nil
+			return record.NewKeyWithParentAndID(parent, collection, idVal.(bool)), nil
 		case reflect.Float32:
-			return dal.NewKeyWithParentAndID(parent, collection, idVal.(float32)), nil
+			return record.NewKeyWithParentAndID(parent, collection, idVal.(float32)), nil
 		case reflect.Float64:
-			return dal.NewKeyWithParentAndID(parent, collection, idVal.(float64)), nil
+			return record.NewKeyWithParentAndID(parent, collection, idVal.(float64)), nil
 		default:
 			// As a fallback, try string representation
-			return dal.NewKeyWithParentAndID(parent, collection, fmt.Sprintf("%v", idVal)), nil
+			return record.NewKeyWithParentAndID(parent, collection, fmt.Sprintf("%v", idVal)), nil
 		}
 	}
 	return dataToKey

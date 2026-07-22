@@ -6,14 +6,15 @@ import (
 	"fmt"
 
 	"github.com/dal-go/dalgo/dal"
+	dalrecord "github.com/dal-go/record"
 )
 
 var _ dal.RecordsReader = (*recordsReader)(nil)
 
 func getRecordsReader(ctx context.Context, query dal.Query, execute executeQueryFunc) (rr *recordsReader, err error) {
 	rr = &recordsReader{
-		newRecord: func() dal.Record {
-			return dal.NewRecordWithData(dal.NewKeyWithID("Unknown", ""), make(map[string]any))
+		newRecord: func() dalrecord.Record {
+			return dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("Unknown", ""), make(map[string]any))
 		},
 	}
 
@@ -27,10 +28,10 @@ func getRecordsReader(ctx context.Context, query dal.Query, execute executeQuery
 
 type recordsReader struct {
 	readerBase
-	newRecord func() dal.Record
+	newRecord func() dalrecord.Record
 }
 
-func (r recordsReader) Next() (record dal.Record, err error) {
+func (r recordsReader) Next() (record dalrecord.Record, err error) {
 	if !r.rows.Next() {
 		if err := r.rows.Err(); err != nil {
 			return nil, err
@@ -42,7 +43,7 @@ func (r recordsReader) Next() (record dal.Record, err error) {
 	data := record.Data()
 	if data == nil {
 		data = make(map[string]any)
-		record = dal.NewRecordWithData(record.Key(), data)
+		record = dalrecord.NewRecordWithData(record.Key(), data)
 	}
 	switch d := data.(type) {
 	case map[string]any:
@@ -87,7 +88,7 @@ func (rrp recordsReaderProvider) ExecuteQueryToRecordsReader(ctx context.Context
 	return getRecordsReader(ctx, query, rrp.executeQuery)
 }
 
-//func (rrp recordsReaderProvider) ReadAllRecords(ctx context.Context, query dal.Query, options ...dal.ReaderOption) ([]dal.Record, error) {
+//func (rrp recordsReaderProvider) ReadAllRecords(ctx context.Context, query dal.Query, options ...dal.ReaderOption) ([]record.Record, error) {
 //	r, err := rrp.ExecuteQueryToRecordsReader(ctx, query)
 //	if err != nil {
 //		return nil, err

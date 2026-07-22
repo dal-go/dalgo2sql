@@ -9,42 +9,43 @@ import (
 	"strings"
 
 	"github.com/dal-go/dalgo/dal"
+	dalrecord "github.com/dal-go/record"
 	"github.com/georgysavva/scany/v2/sqlscan"
 )
 
 type queryExecutor = func(query string, args ...interface{}) (*sql.Rows, error)
 
-func (dtb *database) Exists(ctx context.Context, key *dal.Key) (exists bool, err error) {
+func (dtb *database) Exists(ctx context.Context, key *dalrecord.Key) (exists bool, err error) {
 	return executeExists(ctx, dtb.options, key, dtb.db.Query)
 }
 
-func (t transaction) Exists(ctx context.Context, key *dal.Key) (exists bool, err error) {
+func (t transaction) Exists(ctx context.Context, key *dalrecord.Key) (exists bool, err error) {
 	return executeExists(ctx, t.sqlOptions, key, t.tx.Query)
 }
 
-func (dtb *database) Get(ctx context.Context, record dal.Record) error {
+func (dtb *database) Get(ctx context.Context, record dalrecord.Record) error {
 	return getSingle(ctx, dtb.options, record, dtb.db.Query)
 }
 
-func (t transaction) Get(ctx context.Context, record dal.Record) error {
+func (t transaction) Get(ctx context.Context, record dalrecord.Record) error {
 	return getSingle(ctx, t.sqlOptions, record, t.tx.Query)
 }
 
-func (dtb *database) GetMulti(ctx context.Context, records []dal.Record) error {
+func (dtb *database) GetMulti(ctx context.Context, records []dalrecord.Record) error {
 	return getMulti(ctx, dtb.options, records, dtb.db.Query)
 }
 
-func (t transaction) GetMulti(ctx context.Context, records []dal.Record) error {
+func (t transaction) GetMulti(ctx context.Context, records []dalrecord.Record) error {
 	return getMulti(ctx, t.sqlOptions, records, t.tx.Query)
 }
 
-func executeExists(_ context.Context, options DbOptions, key *dal.Key, exec queryExecutor) (exists bool, err error) {
+func executeExists(_ context.Context, options DbOptions, key *dalrecord.Key, exec queryExecutor) (exists bool, err error) {
 	rsName := getRecordsetName(key)
 	queryText := fmt.Sprintf("SELECT 1 FROM %s WHERE ", rsName)
 
 	pk := options.PrimaryKeyFieldNames(key)
 	if len(pk) == 0 {
-		err = fmt.Errorf("%w: primary key is not defined for recorset %s", dal.ErrRecordNotFound, rsName)
+		err = fmt.Errorf("%w: primary key is not defined for recorset %s", dalrecord.ErrRecordNotFound, rsName)
 		return
 	} else if len(pk) > 1 {
 		err = fmt.Errorf("%w: select by composite primary key is not supported yet", dal.ErrNotImplementedYet)
@@ -65,7 +66,7 @@ func executeExists(_ context.Context, options DbOptions, key *dal.Key, exec quer
 	return true, nil
 }
 
-func getSingle(_ context.Context, options DbOptions, record dal.Record, exec queryExecutor) error {
+func getSingle(_ context.Context, options DbOptions, record dalrecord.Record, exec queryExecutor) error {
 	key := record.Key()
 	rsName := getRecordsetName(key)
 	fields := getSelectFields(false, options, record)
@@ -77,7 +78,7 @@ func getSingle(_ context.Context, options DbOptions, record dal.Record, exec que
 
 	pk := options.PrimaryKeyFieldNames(key)
 	if len(pk) == 0 {
-		return fmt.Errorf("%w: primary key is not defined for recorset %s", dal.ErrRecordNotFound, rsName)
+		return fmt.Errorf("%w: primary key is not defined for recorset %s", dalrecord.ErrRecordNotFound, rsName)
 	} else if len(pk) > 1 {
 		return fmt.Errorf("%w: select by composite primary key is not supported yet", dal.ErrNotImplementedYet)
 	}
@@ -106,8 +107,8 @@ func getSingle(_ context.Context, options DbOptions, record dal.Record, exec que
 	return nil
 }
 
-func getMulti(ctx context.Context, options DbOptions, records []dal.Record, exec queryExecutor) error {
-	byCollection := make(map[string][]dal.Record)
+func getMulti(ctx context.Context, options DbOptions, records []dalrecord.Record, exec queryExecutor) error {
+	byCollection := make(map[string][]dalrecord.Record)
 	for _, r := range records {
 		id := r.Key().Collection()
 		recs := byCollection[id]
@@ -125,11 +126,11 @@ func getMulti(ctx context.Context, options DbOptions, records []dal.Record, exec
 	return nil
 }
 
-func getMultiFromSingleTable(_ context.Context, options DbOptions, records []dal.Record, exec queryExecutor) error {
+func getMultiFromSingleTable(_ context.Context, options DbOptions, records []dalrecord.Record, exec queryExecutor) error {
 	if len(records) == 0 {
 		return nil
 	}
-	records = append(make([]dal.Record, 0, len(records)), records...)
+	records = append(make([]dalrecord.Record, 0, len(records)), records...)
 	collection := records[0].Key().Collection()
 
 	rs, hasRecordsetDefinition := options.Recordsets[collection]
@@ -141,7 +142,7 @@ func getMultiFromSingleTable(_ context.Context, options DbOptions, records []dal
 	} else if len(options.PrimaryKey) > 0 {
 		primaryKey = options.PrimaryKey
 	} else {
-		err := fmt.Errorf("%w: no primary key defined for: '%s'", dal.ErrRecordNotFound, collection)
+		err := fmt.Errorf("%w: no primary key defined for: '%s'", dalrecord.ErrRecordNotFound, collection)
 		for _, record := range records {
 			record.SetError(err)
 		}
@@ -244,7 +245,7 @@ func getMultiFromSingleTable(_ context.Context, options DbOptions, records []dal
 						}
 						mv.SetMapIndex(reflect.ValueOf(col), reflect.ValueOf(val))
 					}
-					record.SetError(dal.ErrNoError)
+					record.SetError(dalrecord.ErrNoError)
 					break
 				}
 			}
@@ -294,7 +295,7 @@ func getMultiFromSingleTable(_ context.Context, options DbOptions, records []dal
 	return err
 }
 
-func rowIntoRecord(rows *sql.Rows, record dal.Record, pkIncluded bool) error {
+func rowIntoRecord(rows *sql.Rows, record dalrecord.Record, pkIncluded bool) error {
 	record.SetError(nil)
 	data := record.Data()
 	if data == nil {
@@ -304,12 +305,12 @@ func rowIntoRecord(rows *sql.Rows, record dal.Record, pkIncluded bool) error {
 		record.SetError(err)
 		return err
 	}
-	record.SetError(dal.ErrNoError)
+	record.SetError(dalrecord.ErrNoError)
 	return nil
 	//return delayedScanWithDataTo(rows, record)
 }
 
-//func delayedScanWithDataTo(rows *sql.Rows, record dal.Record) error {
+//func delayedScanWithDataTo(rows *sql.Rows, record record.Record) error {
 //	row, err := scanIntoMap(rows)
 //	if err != nil {
 //		record.SetError(err)
@@ -438,7 +439,7 @@ func scanIntoDataWithPrimaryKeyIncluded(rows *sql.Rows, data interface{}) error 
 //	return m, nil
 //}
 
-func getSelectFields(includePK bool, options DbOptions, records ...dal.Record) (fields []string) {
+func getSelectFields(includePK bool, options DbOptions, records ...dalrecord.Record) (fields []string) {
 	record := records[0] // TODO: support union of fields from multiple records?
 	record.SetError(nil)
 	data := record.Data()

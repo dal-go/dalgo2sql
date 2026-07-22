@@ -5,26 +5,27 @@ import (
 	"fmt"
 
 	"github.com/dal-go/dalgo/dal"
-	"github.com/dal-go/dalgo/update"
+	"github.com/dal-go/record"
+	"github.com/dal-go/record/update"
 )
 
-func (dtb *database) Update(ctx context.Context, key *dal.Key, updates []update.Update, preconditions ...dal.Precondition) error {
+func (dtb *database) Update(ctx context.Context, key *record.Key, updates []update.Update, preconditions ...dal.Precondition) error {
 	return updateSingle(ctx, dtb.options, dtb.db.ExecContext, key, updates, preconditions...)
 }
 
-func (t transaction) Update(ctx context.Context, key *dal.Key, updates []update.Update, preconditions ...dal.Precondition) error {
+func (t transaction) Update(ctx context.Context, key *record.Key, updates []update.Update, preconditions ...dal.Precondition) error {
 	return updateSingle(ctx, t.sqlOptions, t.tx.ExecContext, key, updates, preconditions...)
 }
 
-func (dtb *database) UpdateMulti(ctx context.Context, keys []*dal.Key, updates []update.Update, preconditions ...dal.Precondition) error {
+func (dtb *database) UpdateMulti(ctx context.Context, keys []*record.Key, updates []update.Update, preconditions ...dal.Precondition) error {
 	return updateMulti(ctx, dtb.options, dtb.db.ExecContext, keys, updates, preconditions...)
 }
 
-func (t transaction) UpdateMulti(ctx context.Context, keys []*dal.Key, updates []update.Update, preconditions ...dal.Precondition) error {
+func (t transaction) UpdateMulti(ctx context.Context, keys []*record.Key, updates []update.Update, preconditions ...dal.Precondition) error {
 	return updateMulti(ctx, t.sqlOptions, t.tx.ExecContext, keys, updates, preconditions...)
 }
 
-func updateSingle(ctx context.Context, options DbOptions, execStatement statementExecutor, key *dal.Key, updates []update.Update, _ ...dal.Precondition) error {
+func updateSingle(ctx context.Context, options DbOptions, execStatement statementExecutor, key *record.Key, updates []update.Update, _ ...dal.Precondition) error {
 	qry := query{
 		text: fmt.Sprintf("UPDATE %v SET", key.Collection()),
 	}
@@ -54,7 +55,7 @@ func updateSingle(ctx context.Context, options DbOptions, execStatement statemen
 	return nil
 }
 
-func updateMulti(ctx context.Context, options DbOptions, execStatement statementExecutor, keys []*dal.Key, updates []update.Update, preconditions ...dal.Precondition) error {
+func updateMulti(ctx context.Context, options DbOptions, execStatement statementExecutor, keys []*record.Key, updates []update.Update, preconditions ...dal.Precondition) error {
 	for i, key := range keys {
 		if err := updateSingle(ctx, options, execStatement, key, updates, preconditions...); err != nil {
 			return fmt.Errorf("failed to updateOperation record #%d of %d: %w", i+1, len(keys), err)

@@ -6,7 +6,8 @@ import (
 
 	"github.com/dal-go/dalgo/dal"
 	"github.com/dal-go/dalgo/recordset"
-	"github.com/dal-go/dalgo/update"
+	dalrecord "github.com/dal-go/record"
+	"github.com/dal-go/record/update"
 )
 
 var _ dal.Transaction = (*transaction)(nil)
@@ -55,6 +56,6 @@ func newReadwriteTransaction(tx *sql.Tx, sqlOptions DbOptions, txOptions dal.Tra
 	return newTransaction(tx, sqlOptions, txOptions)
 }
 
-func (t transaction) UpdateRecord(ctx context.Context, record dal.Record, updates []update.Update, preconditions ...dal.Precondition) error {
+func (t transaction) UpdateRecord(ctx context.Context, record dalrecord.Record, updates []update.Update, preconditions ...dal.Precondition) error {
 	return t.Update(ctx, record.Key(), updates, preconditions...)
 }
