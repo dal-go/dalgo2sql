@@ -20,11 +20,11 @@ func TestSetter(t *testing.T) {
 		}
 		defer closeDatabase(t, sqlDB)
 
-		db := NewDatabase(sqlDB, newSchema(), DbOptions{
+		db := dal.BackendOf(NewDatabase(sqlDB, newSchema(), DbOptions{
 			Recordsets: map[string]*Recordset{
 				"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID")}),
 			},
-		}).(*database)
+		})).(*database)
 
 		u := user{Name: "u1"}
 		record := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "id1"), &u)
@@ -45,11 +45,11 @@ func TestSetter(t *testing.T) {
 		}
 		defer closeDatabase(t, sqlDB)
 
-		db := NewDatabase(sqlDB, newSchema(), DbOptions{
+		db := dal.BackendOf(NewDatabase(sqlDB, newSchema(), DbOptions{
 			Recordsets: map[string]*Recordset{
 				"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID")}),
 			},
-		}).(*database)
+		})).(*database)
 
 		u := user{Name: "u1"}
 		record := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "id1"), &u)
@@ -70,11 +70,11 @@ func TestSetter(t *testing.T) {
 		}
 		defer closeDatabase(t, sqlDB)
 
-		db := NewDatabase(sqlDB, newSchema(), DbOptions{
+		db := dal.BackendOf(NewDatabase(sqlDB, newSchema(), DbOptions{
 			Recordsets: map[string]*Recordset{
 				"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID")}),
 			},
-		}).(*database)
+		})).(*database)
 
 		records := []dalrecord.Record{
 			dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "id1"), &user{Name: "u1"}),
@@ -98,11 +98,11 @@ func TestSetter(t *testing.T) {
 		}
 		defer closeDatabase(t, sqlDB)
 
-		db := NewDatabase(sqlDB, newSchema(), DbOptions{
+		db := dal.BackendOf(NewDatabase(sqlDB, newSchema(), DbOptions{
 			Recordsets: map[string]*Recordset{
 				"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID")}),
 			},
-		}).(*database)
+		})).(*database)
 
 		u := user{Name: "u1"}
 		record := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "id1"), &u)

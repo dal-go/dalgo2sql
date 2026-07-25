@@ -9,7 +9,7 @@ import (
 	"github.com/dal-go/dalgo/recordset"
 )
 
-var _ dal.DB = (*database)(nil)
+var _ dal.Backend = (*database)(nil)
 
 type database struct {
 	dal.ConcurrencyAvailable // SupportsConcurrentConnections() = true (standard SQL pool)
@@ -103,9 +103,11 @@ func (dtb *database) ExecuteQueryToRecordsReader(ctx context.Context, query dal.
 	return getRecordsReader(ctx, query, dtb.db.QueryContext)
 }
 
-var _ dal.DB = (*database)(nil)
-
-// NewDatabase creates a new instance of DALgo adapter to SQL database
+// NewDatabase creates a new instance of DALgo adapter to SQL database.
+//
+// The returned dal.DB is sealed by dal.NewDB: every read-write transaction it
+// starts hands the worker a transaction whose writes run the framework's
+// BeforeSave validation and hooks before reaching this adapter's code.
 func NewDatabase(db *sql.DB, schema dal.Schema, options DbOptions) dal.DB {
 	if db == nil {
 		panic("db is a required parameter, got nil")
@@ -113,7 +115,7 @@ func NewDatabase(db *sql.DB, schema dal.Schema, options DbOptions) dal.DB {
 	if schema == nil {
 		panic("schema is a required parameter, got nil")
 	}
-	return &database{
+	return dal.NewDB(&database{
 		recordsReaderProvider: recordsReaderProvider{
 			executeQuery: db.QueryContext,
 		},
@@ -121,5 +123,5 @@ func NewDatabase(db *sql.DB, schema dal.Schema, options DbOptions) dal.DB {
 		db:      db,
 		schema:  schema,
 		options: options,
-	}
+	})
 }

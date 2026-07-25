@@ -99,7 +99,7 @@ func TestOptions_PrimaryKeyFieldNames(t *testing.T) {
 
 func newDatabase(t *testing.T) (sqlDB *sql.DB, mock sqlmock.Sqlmock, db *database, closer func(), err error) {
 	sqlDB, mock, err = sqlmock.New()
-	db = NewDatabase(sqlDB, newSchema(), DbOptions{}).(*database)
+	db = dal.BackendOf(NewDatabase(sqlDB, newSchema(), DbOptions{})).(*database)
 	closer = func() {
 		closeDatabase(t, sqlDB)
 	}

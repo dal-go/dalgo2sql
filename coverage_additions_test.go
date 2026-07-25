@@ -750,7 +750,7 @@ func TestUpdater_Errors(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer closeDatabase(t, sqlDB)
-		db := NewDatabase(sqlDB, newSchema(), DbOptions{}).(*database)
+		db := dal.BackendOf(NewDatabase(sqlDB, newSchema(), DbOptions{})).(*database)
 		// no recordsets and no top-level PrimaryKey -> PrimaryKeyFieldNames returns nil
 		key := record.NewKeyWithID("users", "u1")
 		// update without primary key -> error
@@ -766,11 +766,11 @@ func TestUpdater_Errors(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer closeDatabase(t, sqlDB)
-		db := NewDatabase(sqlDB, newSchema(), DbOptions{
+		db := dal.BackendOf(NewDatabase(sqlDB, newSchema(), DbOptions{
 			Recordsets: map[string]*Recordset{
 				"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("a"), dal.Field("b")}),
 			},
-		}).(*database)
+		})).(*database)
 		key := record.NewKeyWithID("users", "u1")
 		err = db.Update(ctx, key, nil)
 		if !errors.Is(err, dal.ErrNotImplementedYet) {
@@ -784,11 +784,11 @@ func TestUpdater_Errors(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer closeDatabase(t, sqlDB)
-		db := NewDatabase(sqlDB, newSchema(), DbOptions{
+		db := dal.BackendOf(NewDatabase(sqlDB, newSchema(), DbOptions{
 			Recordsets: map[string]*Recordset{
 				"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID")}),
 			},
-		}).(*database)
+		})).(*database)
 		mock.ExpectExec("UPDATE users SET").WillReturnError(errors.New("exec fail"))
 		err = db.Update(ctx, record.NewKeyWithID("users", "u1"), nil)
 		if err == nil {
@@ -802,11 +802,11 @@ func TestUpdater_Errors(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer closeDatabase(t, sqlDB)
-		db := NewDatabase(sqlDB, newSchema(), DbOptions{
+		db := dal.BackendOf(NewDatabase(sqlDB, newSchema(), DbOptions{
 			Recordsets: map[string]*Recordset{
 				"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID")}),
 			},
-		}).(*database)
+		})).(*database)
 		mock.ExpectExec("UPDATE users SET").WillReturnError(errors.New("nope"))
 		err = db.UpdateMulti(ctx, []*record.Key{record.NewKeyWithID("users", "u1")}, nil)
 		if err == nil {
@@ -826,11 +826,11 @@ func TestInserter_Errors(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer closeDatabase(t, sqlDB)
-		db := NewDatabase(sqlDB, newSchema(), DbOptions{
+		db := dal.BackendOf(NewDatabase(sqlDB, newSchema(), DbOptions{
 			Recordsets: map[string]*Recordset{
 				"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID")}),
 			},
-		}).(*database)
+		})).(*database)
 		mock.ExpectExec("INSERT INTO users").WillReturnError(errors.New("insert fail"))
 		rec := record.NewRecordWithData(record.NewKeyWithID("users", "u1"), &user{Name: "J"})
 		err = db.Insert(ctx, rec)
@@ -873,11 +873,11 @@ func TestDeleter_MultiInSingleTable_CustomPK(t *testing.T) {
 	}
 	defer closeDatabase(t, sqlDB)
 	ctx := context.Background()
-	db := NewDatabase(sqlDB, newSchema(), DbOptions{
+	db := dal.BackendOf(NewDatabase(sqlDB, newSchema(), DbOptions{
 		Recordsets: map[string]*Recordset{
 			"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("uid")}),
 		},
-	}).(*database)
+	})).(*database)
 	keys := []*record.Key{
 		record.NewKeyWithID("users", "u1"),
 		record.NewKeyWithID("users", "u2"),
@@ -897,7 +897,7 @@ func TestDeleter_MultiInSingleTable_ExecError(t *testing.T) {
 	}
 	defer closeDatabase(t, sqlDB)
 	ctx := context.Background()
-	db := NewDatabase(sqlDB, newSchema(), DbOptions{}).(*database)
+	db := dal.BackendOf(NewDatabase(sqlDB, newSchema(), DbOptions{})).(*database)
 	keys := []*record.Key{
 		record.NewKeyWithID("users", "u1"),
 		record.NewKeyWithID("users", "u2"),
@@ -919,11 +919,11 @@ func TestSetter_SetMulti_Error(t *testing.T) {
 	}
 	defer closeDatabase(t, sqlDB)
 	ctx := context.Background()
-	db := NewDatabase(sqlDB, newSchema(), DbOptions{
+	db := dal.BackendOf(NewDatabase(sqlDB, newSchema(), DbOptions{
 		Recordsets: map[string]*Recordset{
 			"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID")}),
 		},
-	}).(*database)
+	})).(*database)
 	mock.ExpectBegin()
 	mock.ExpectQuery("SELECT ID FROM users WHERE ID = ?").
 		WithArgs("u1").
