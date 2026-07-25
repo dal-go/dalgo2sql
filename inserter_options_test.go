@@ -17,11 +17,11 @@ func newUsersDatabaseWithMock(t *testing.T) (*database, sqlmock.Sqlmock, func())
 	if err != nil {
 		t.Fatal(err)
 	}
-	db := NewDatabase(sqlDB, newSchema(), DbOptions{
+	db := dal.BackendOf(NewDatabase(sqlDB, newSchema(), DbOptions{
 		Recordsets: map[string]*Recordset{
 			"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID")}),
 		},
-	}).(*database)
+	})).(*database)
 	return db, mock, func() { closeDatabase(t, sqlDB) }
 }
 

@@ -120,11 +120,11 @@ func TestInserter_MapData(t *testing.T) {
 		}
 		defer closeDatabase(t, sqlDB)
 
-		db := NewDatabase(sqlDB, newSchema(), DbOptions{
+		db := dal.BackendOf(NewDatabase(sqlDB, newSchema(), DbOptions{
 			Recordsets: map[string]*Recordset{
 				"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID")}),
 			},
-		}).(*database)
+		})).(*database)
 
 		data := map[string]any{"col_b": 42, "col_a": "x"}
 		record := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "id1"), data)

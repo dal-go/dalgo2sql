@@ -46,7 +46,7 @@ func TestMapDataGetIntoNilMapPointer(t *testing.T) {
 		name TEXT NOT NULL
 	)`
 	sqlDB := openTestSQLiteDB(t, createSQL)
-	db := NewDatabase(sqlDB, newSchema(), opts).(*database)
+	db := dal.BackendOf(NewDatabase(sqlDB, newSchema(), opts)).(*database)
 
 	rec := record.NewRecordWithData(
 		record.NewKeyWithID("widgets", "w1"),
@@ -85,7 +85,7 @@ func TestMapDataGetBlobAsString(t *testing.T) {
 		payload BLOB NOT NULL
 	)`
 	sqlDB := openTestSQLiteDB(t, createSQL)
-	db := NewDatabase(sqlDB, newSchema(), opts).(*database)
+	db := dal.BackendOf(NewDatabase(sqlDB, newSchema(), opts)).(*database)
 
 	// Insert a genuine BLOB value directly so the driver returns []byte on read.
 	if _, err := sqlDB.Exec(`INSERT INTO blobs (id, payload) VALUES (?, ?)`, "b1", []byte("hello-blob")); err != nil {

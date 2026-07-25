@@ -47,7 +47,7 @@ func TestMapDataGetRoundTrip(t *testing.T) {
 	newDB := func(t *testing.T) *database {
 		t.Helper()
 		sqlDB := openTestSQLiteDB(t, createSQL)
-		return NewDatabase(sqlDB, newSchema(), opts).(*database)
+		return dal.BackendOf(NewDatabase(sqlDB, newSchema(), opts)).(*database)
 	}
 
 	t.Run("Insert_then_Get_map", func(t *testing.T) {

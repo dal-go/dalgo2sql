@@ -20,11 +20,11 @@ func TestUpdater(t *testing.T) {
 		}
 		defer closeDatabase(t, sqlDB)
 
-		db := NewDatabase(sqlDB, newSchema(), DbOptions{
+		db := dal.BackendOf(NewDatabase(sqlDB, newSchema(), DbOptions{
 			Recordsets: map[string]*Recordset{
 				"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID")}),
 			},
-		}).(*database)
+		})).(*database)
 
 		key := dalrecord.NewKeyWithID("users", "id1")
 		updates := []update.Update{
@@ -48,11 +48,11 @@ func TestUpdater(t *testing.T) {
 		}
 		defer closeDatabase(t, sqlDB)
 
-		db := NewDatabase(sqlDB, newSchema(), DbOptions{
+		db := dal.BackendOf(NewDatabase(sqlDB, newSchema(), DbOptions{
 			Recordsets: map[string]*Recordset{
 				"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID")}),
 			},
-		}).(*database)
+		})).(*database)
 
 		keys := []*dalrecord.Key{
 			dalrecord.NewKeyWithID("users", "id1"),
@@ -82,11 +82,11 @@ func TestUpserter(t *testing.T) {
 		}
 		defer closeDatabase(t, sqlDB)
 
-		db := NewDatabase(sqlDB, newSchema(), DbOptions{
+		db := dal.BackendOf(NewDatabase(sqlDB, newSchema(), DbOptions{
 			Recordsets: map[string]*Recordset{
 				"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID")}),
 			},
-		}).(*database)
+		})).(*database)
 
 		u := user{Name: "u1"}
 		record := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "id1"), &u)

@@ -171,11 +171,17 @@ func TestTransaction(t *testing.T) {
 	t.Run("Upsert", func(t *testing.T) {
 		sqlDB, mock, _ := sqlmock.New()
 		defer closeDatabase(t, sqlDB)
-		db := NewDatabase(sqlDB, newSchema(), DbOptions{
+		// Upsert is an adapter-specific convenience method, not part of any
+		// dal package interface, so the framework's validated transaction
+		// wrapper (dal.validatedTx) does not promote it. dal.BackendOf
+		// recovers the adapter's own Backend so RunReadwriteTransaction
+		// hands the worker the concrete *transaction the type assertion
+		// below expects, exactly as it did before dal.DB was sealed.
+		db := dal.BackendOf(NewDatabase(sqlDB, newSchema(), DbOptions{
 			Recordsets: map[string]*Recordset{
 				"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID")}),
 			},
-		})
+		}))
 		mock.ExpectBegin()
 		mock.ExpectQuery("SELECT ID FROM users WHERE ID = ?").WillReturnRows(sqlmock.NewRows([]string{"ID"})) // not exists
 		mock.ExpectExec("INSERT INTO users").WillReturnResult(sqlmock.NewResult(1, 1))

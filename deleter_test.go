@@ -20,7 +20,7 @@ func TestDeleter(t *testing.T) {
 		}
 		defer closeDatabase(t, sqlDB)
 
-		db := NewDatabase(sqlDB, newSchema(), DbOptions{}).(*database)
+		db := dal.BackendOf(NewDatabase(sqlDB, newSchema(), DbOptions{})).(*database)
 		key := record.NewKeyWithID("users", "u1")
 
 		mock.ExpectExec("DELETE FROM users WHERE ID = ?").
@@ -41,11 +41,11 @@ func TestDeleter(t *testing.T) {
 		defer closeDatabase(t, sqlDB)
 
 		rs := NewRecordset("users", Table, []dal.FieldRef{dal.Field("uid")})
-		db := NewDatabase(sqlDB, newSchema(), DbOptions{
+		db := dal.BackendOf(NewDatabase(sqlDB, newSchema(), DbOptions{
 			Recordsets: map[string]*Recordset{
 				"users": rs,
 			},
-		}).(*database)
+		})).(*database)
 		key := record.NewKeyWithID("users", "u1")
 
 		mock.ExpectExec("DELETE FROM users WHERE uid = ?").
@@ -65,7 +65,7 @@ func TestDeleter(t *testing.T) {
 		}
 		defer closeDatabase(t, sqlDB)
 
-		db := NewDatabase(sqlDB, newSchema(), DbOptions{}).(*database)
+		db := dal.BackendOf(NewDatabase(sqlDB, newSchema(), DbOptions{})).(*database)
 		keys := []*record.Key{
 			record.NewKeyWithID("users", "u1"),
 			record.NewKeyWithID("users", "u2"),
@@ -90,7 +90,7 @@ func TestDeleter(t *testing.T) {
 		}
 		defer closeDatabase(t, sqlDB)
 
-		db := NewDatabase(sqlDB, newSchema(), DbOptions{}).(*database)
+		db := dal.BackendOf(NewDatabase(sqlDB, newSchema(), DbOptions{})).(*database)
 		keys := []*record.Key{
 			record.NewKeyWithID("users", "u1"),
 			record.NewKeyWithID("posts", "p1"),
@@ -112,7 +112,7 @@ func TestDeleter(t *testing.T) {
 		}
 		defer closeDatabase(t, sqlDB)
 
-		db := NewDatabase(sqlDB, newSchema(), DbOptions{}).(*database)
+		db := dal.BackendOf(NewDatabase(sqlDB, newSchema(), DbOptions{})).(*database)
 		key := record.NewKeyWithID("users", "u1")
 
 		mock.ExpectExec("DELETE FROM users WHERE ID = ?").
@@ -132,7 +132,7 @@ func TestDeleter(t *testing.T) {
 		}
 		defer closeDatabase(t, sqlDB)
 
-		db := NewDatabase(sqlDB, newSchema(), DbOptions{}).(*database)
+		db := dal.BackendOf(NewDatabase(sqlDB, newSchema(), DbOptions{})).(*database)
 		keys := []*record.Key{
 			record.NewKeyWithID("users", "u1"),
 			record.NewKeyWithID("users", "u2"),
