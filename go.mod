@@ -8,10 +8,10 @@ toolchain go1.26.5
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
-	github.com/dal-go/dalgo v0.64.3
-	github.com/dal-go/record v0.1.1
+	github.com/dal-go/dalgo v0.64.4
+	github.com/dal-go/record v0.1.2
 	github.com/georgysavva/scany/v2 v2.1.4
-	modernc.org/sqlite v1.54.0
+	modernc.org/sqlite v1.55.0
 )
 
 require (
