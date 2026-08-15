@@ -2,7 +2,7 @@ module github.com/dal-go/dalgo2sql
 
 go 1.25.0
 
-toolchain go1.26.5
+toolchain go1.26.6
 
 //replace github.com/dal-go/dalgo => ../dalgo
 
