@@ -2,20 +2,20 @@ module github.com/dal-go/dalgo2sql
 
 go 1.25.0
 
-toolchain go1.26.6
+toolchain go1.27.0
 
 //replace github.com/dal-go/dalgo => ../dalgo
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
-	github.com/dal-go/dalgo v0.64.6
+	github.com/dal-go/dalgo v0.64.8
 	github.com/dal-go/record v0.1.2
 	github.com/georgysavva/scany/v2 v2.1.4
-	modernc.org/sqlite v1.56.0
+	modernc.org/sqlite v1.57.0
 )
 
 require (
-	github.com/RoaringBitmap/roaring/v2 v2.24.0 // indirect
+	github.com/RoaringBitmap/roaring/v2 v2.25.0 // indirect
 	github.com/bits-and-blooms/bitset v1.24.6 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
