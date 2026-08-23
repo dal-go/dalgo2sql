@@ -28,6 +28,11 @@ func TestConformance(t *testing.T) {
 				dalgotest.DefaultCollection, Table, []dal.FieldRef{dal.Field("ID")},
 			),
 		},
+		// Without this, "rejects an Insert over an existing key with
+		// record.IsAlreadyExists" fails: dalgo2sql cannot recognize a
+		// modernc.org/sqlite constraint violation on its own — see
+		// sqlite_classifier_test.go and DbOptions.IsAlreadyExists.
+		IsAlreadyExists: sqliteIsAlreadyExists,
 	}
 
 	dalgotest.RunConformance(t, func(t *testing.T) (dal.DB, func()) {

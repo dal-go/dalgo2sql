@@ -2,6 +2,7 @@ package dalgo2sql
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/dal-go/dalgo/dal"
 	dalrecord "github.com/dal-go/record"
@@ -52,9 +53,21 @@ func insertSingle(ctx context.Context, options DbOptions, record dalrecord.Recor
 	return execInsert(ctx, options, record, exec)
 }
 
+// execInsert issues the INSERT statement and is the single choke point every
+// insert path in this package funnels through: (*database).Insert and
+// (transaction).Insert call it directly via insertSingle; InsertMulti calls
+// it once per record, also via insertSingle; and the dal.InsertWithIdGenerator
+// retry loop (used when an ID generator or dal.WithAdapterGeneratedID is
+// requested) calls it as its final "write" step. Classifying the driver error
+// here therefore covers all of them without needing to duplicate the check at
+// each call site — verified by reading every caller of insertSingle and
+// execInsert in this file.
 func execInsert(ctx context.Context, options DbOptions, record dalrecord.Record, exec statementExecutor) error {
 	q := buildSingleRecordQuery(insertOperation, options, record)
 	if _, err := exec(ctx, q.text, q.args...); err != nil {
+		if options.IsAlreadyExists != nil && options.IsAlreadyExists(err) {
+			return fmt.Errorf("%w: %w", dalrecord.ErrRecordExists, err)
+		}
 		return err
 	}
 	return nil
