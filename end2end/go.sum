@@ -8,6 +8,8 @@ github.com/cockroachdb/cockroach-go/v2 v2.2.0 h1:/5znzg5n373N/3ESjHF5SMLxiW4RKB0
 github.com/cockroachdb/cockroach-go/v2 v2.2.0/go.mod h1:u3MiKYGupPPjkn3ozknpMUpxPaNLTFWAya419/zv6eI=
 github.com/dal-go/dalgo v0.66.1 h1:RB28VZNI38ff4xaJussah9nxQgxYAsLShKFztBjLej8=
 github.com/dal-go/dalgo v0.66.1/go.mod h1:M+sW6oz0Uut7kv/GjmKh90UwAEmjD7rsOZcVJ/8o43w=
+github.com/dal-go/dalgo v0.74.1 h1:ec5dK6CK7Rf+3kOehjmLGsAwk3UHoSsV9k5ZtPXylgA=
+github.com/dal-go/dalgo v0.74.1/go.mod h1:O8cUbJZY4d44TJdZF169QZtQdwtIT6H3g70fCKrV7jM=
 github.com/dal-go/record v0.1.3 h1:K85k/kSX08lTefMiMmPpC12nmCY2TVJk7+ZyC5PD9XU=
 github.com/dal-go/record v0.1.3/go.mod h1:quwsVJTT0f6y3Mhx+yHpTobY7luX1M6kyO6fdJ/AFYE=
 github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=
