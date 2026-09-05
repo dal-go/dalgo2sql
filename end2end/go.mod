@@ -2,12 +2,12 @@ module github.com/dal-go/dalgo2sql/end2end
 
 go 1.26.0
 
-toolchain go1.27.0
+toolchain go1.27.1
 
 require (
-	github.com/dal-go/dalgo v0.74.2
+	github.com/dal-go/dalgo v0.79.3
 	github.com/dal-go/dalgo2sql v0.9.6 // No version as we alway replace it with local version
-	github.com/mattn/go-sqlite3 v1.14.50
+	github.com/mattn/go-sqlite3 v1.14.52
 )
 
 replace github.com/dal-go/dalgo2sql => ./../
@@ -26,5 +26,6 @@ require (
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/crypto v0.46.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.32.0 // indirect
+	golang.org/x/text v0.39.0 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
