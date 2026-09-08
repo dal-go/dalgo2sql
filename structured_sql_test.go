@@ -82,6 +82,14 @@ func TestCompileStructuredSQLRejectsUnsupportedShapes(t *testing.T) {
 	if _, _, err := compileStructuredSQL(q); err == nil {
 		t.Fatal("expected operator rejection")
 	}
+	group := dal.From(dal.NewCollectionGroupRef("users", "")).NewQuery().SelectKeysOnly(reflect.String)
+	if _, _, err := compileStructuredSQL(group); err == nil {
+		t.Fatal("expected collection-group rejection")
+	}
+	badValue := dal.From(dal.NewRootCollectionRef("users", "")).NewQuery().Where(dal.NewComparison(dal.Field("x"), dal.Equal, dal.Constant{Value: map[string]any{"x": 1}})).SelectKeysOnly(reflect.String)
+	if _, _, err := compileStructuredSQL(badValue); err == nil {
+		t.Fatal("expected SQL value rejection")
+	}
 }
 
 func TestSQLiteUnknownPolicyFieldFails(t *testing.T) {
@@ -100,5 +108,29 @@ func TestSQLiteUnknownPolicyFieldFails(t *testing.T) {
 	}
 	if _, err := db.QueryContext(context.Background(), text, args...); err == nil {
 		t.Fatal("unknown quoted field must fail instead of comparing two string literals")
+	}
+}
+
+func TestSQLiteOptInRecordsetAndCancellation(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	q := dal.From(dal.NewRootCollectionRef("users", "")).NewQuery().WhereField("tenant", dal.Equal, "t1").SelectColumns(dal.Column{Expression: dal.Field("name")})
+	mock.ExpectQuery("SELECT `name` FROM `users` WHERE `tenant` = \\?").WithArgs("t1").WillReturnRows(sqlmock.NewRows([]string{"name"}).AddRow("Ann"))
+	r, err := getRecordsetReaderWithDialect(context.Background(), q, db.QueryContext, "sqlite")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := getReaderBaseWithDialect(canceled, q, db.QueryContext, "sqlite"); err == nil {
+		t.Fatal("expected canceled query to fail")
+	}
+	if _, err := getReaderBaseWithDialect(context.Background(), q, db.QueryContext, "sqlite-unknown"); err == nil {
+		t.Fatal("expected unknown dialect rejection")
 	}
 }
