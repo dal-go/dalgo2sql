@@ -1,6 +1,7 @@
 package dalgo2sql
 
 import (
+	"github.com/dal-go/dalgo/dal"
 	"github.com/dal-go/record"
 )
 
@@ -14,6 +15,9 @@ type DbOptions struct {
 	// SQLite, MySQL, and most other drivers.  Set to PlaceholderDollar
 	// for PostgreSQL, which requires "$1", "$2", … positional markers.
 	Placeholder PlaceholderDialect
+	// StructuredQueryDialect opts structured reads into safe dialect-specific
+	// compilation. Empty preserves legacy emission; "sqlite" is supported.
+	StructuredQueryDialect string
 
 	// IsAlreadyExists reports whether err — the raw error returned by the
 	// underlying database/sql driver for a failed INSERT — represents a
@@ -32,6 +36,22 @@ type DbOptions struct {
 	// preserved in the chain, never replaced, so existing callers matching
 	// on error text or type keep working.
 	IsAlreadyExists func(err error) bool
+}
+
+func primaryKeyForQuery(options DbOptions, query dal.Query) string {
+	q, ok := query.(dal.StructuredQuery)
+	if !ok || q.From() == nil || q.From().Base() == nil {
+		return ""
+	}
+	if rs := options.Recordsets[q.From().Base().Name()]; rs != nil {
+		if fields := rs.PrimaryKey(); len(fields) == 1 {
+			return fields[0].Name()
+		}
+	}
+	if len(options.PrimaryKey) == 1 {
+		return options.PrimaryKey[0]
+	}
+	return ""
 }
 
 func (o DbOptions) GetRecordsetByKey(key *record.Key) *Recordset {

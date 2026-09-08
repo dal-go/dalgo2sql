@@ -17,6 +17,10 @@ type readerBase struct {
 }
 
 func getReaderBase(ctx context.Context, query dal.Query, execute executeQueryFunc) (readerBase, error) {
+	return getReaderBaseWithDialect(ctx, query, execute, "")
+}
+
+func getReaderBaseWithDialect(ctx context.Context, query dal.Query, execute executeQueryFunc, dialect string) (readerBase, error) {
 	var a []any
 	var text string
 	switch q := query.(type) {
@@ -28,11 +32,18 @@ func getReaderBase(ctx context.Context, query dal.Query, execute executeQueryFun
 			a[i] = arg
 		}
 	case dal.StructuredQuery:
-		// emitSQL rewrites dalgo's `SELECT TOP N` into ANSI `LIMIT N`
-		// so SQLite (and Postgres/MySQL) accept the SQL. Stopgap until
-		// upstream dalgo gains dialect-aware emission — see the
-		// `dalgo-dialect-aware-sql-emission` Idea.
-		text = emitSQL(q)
+		switch dialect {
+		case "":
+			text = emitSQL(q)
+		case "sqlite":
+			var err error
+			text, a, err = compileStructuredSQL(q)
+			if err != nil {
+				return readerBase{}, err
+			}
+		default:
+			return readerBase{}, fmt.Errorf("unsupported structured query dialect %q", dialect)
+		}
 	}
 
 	rows, err := execute(ctx, text, a...)

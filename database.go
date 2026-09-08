@@ -24,7 +24,7 @@ type database struct {
 }
 
 func (dtb *database) ExecuteQueryToRecordsetReader(ctx context.Context, query dal.Query, options ...recordset.Option) (dal.RecordsetReader, error) {
-	return getRecordsetReader(ctx, query, dtb.executeQuery, options...)
+	return getRecordsetReaderWithDialect(ctx, query, dtb.executeQuery, dtb.options.StructuredQueryDialect, options...)
 }
 
 //func (dtb *database) Connect(ctx context.Context) (dal.Connection, error) {
@@ -100,7 +100,7 @@ func (dtb *database) RunReadwriteTransaction(ctx context.Context, f dal.RWTxWork
 }
 
 func (dtb *database) ExecuteQueryToRecordsReader(ctx context.Context, query dal.Query) (dal.RecordsReader, error) {
-	return getRecordsReader(ctx, query, dtb.db.QueryContext)
+	return getRecordsReaderWithOptions(ctx, query, dtb.db.QueryContext, dtb.options)
 }
 
 // NewDatabase creates a new instance of DALgo adapter to SQL database.
