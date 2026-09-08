@@ -1,9 +1,11 @@
 package dalgo2sql
 
 import (
+	"database/sql/driver"
 	"fmt"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/dal-go/dalgo/dal"
 )
@@ -19,6 +21,18 @@ func compileStructuredSQL(q dal.StructuredQuery) (string, []any, error) {
 		return "", nil, fmt.Errorf("structured SQL query uses an unsupported join, grouping, having, or cursor")
 	}
 	source := q.From().Base()
+	switch source := source.(type) {
+	case dal.CollectionRef:
+		if source.Parent() != nil {
+			return "", nil, fmt.Errorf("parented collection sources are not supported")
+		}
+	case *dal.CollectionRef:
+		if source == nil || source.Parent() != nil {
+			return "", nil, fmt.Errorf("parented collection sources are not supported")
+		}
+	default:
+		return "", nil, fmt.Errorf("unsupported structured SQL source %T", source)
+	}
 	if source.Alias() != "" {
 		return "", nil, fmt.Errorf("structured SQL query source aliases are not supported")
 	}
@@ -162,6 +176,9 @@ func compileSQLExpression(expression dal.Expression) (string, []any, error) {
 		}
 		return quoteSQLIdentifier(e.Name()), nil, nil
 	case dal.Constant:
+		if err := validateSQLValue(e.Value); err != nil {
+			return "", nil, err
+		}
 		return "?", []any{e.Value}, nil
 	default:
 		return "", nil, fmt.Errorf("unsupported expression %T", expression)
@@ -176,8 +193,35 @@ func arrayValues(value any) ([]any, error) {
 	values := make([]any, rv.Len())
 	for i := range values {
 		values[i] = rv.Index(i).Interface()
+		if err := validateSQLValue(values[i]); err != nil {
+			return nil, fmt.Errorf("IN value %d: %w", i, err)
+		}
 	}
 	return values, nil
+}
+
+func validateSQLValue(value any) error {
+	if value == nil {
+		return nil
+	}
+	if _, ok := value.(driver.Valuer); ok {
+		return nil
+	}
+	if _, ok := value.(time.Time); ok {
+		return nil
+	}
+	switch reflect.TypeOf(value).Kind() {
+	case reflect.Bool, reflect.String,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
+		return nil
+	case reflect.Slice:
+		if reflect.TypeOf(value).Elem().Kind() == reflect.Uint8 {
+			return nil
+		}
+	}
+	return fmt.Errorf("unsupported SQL value type %T", value)
 }
 
 // emitSQL preserves the historical string-rewrite helper for compatibility.
