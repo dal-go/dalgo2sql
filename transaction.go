@@ -37,7 +37,11 @@ func (t transaction) ID() string {
 }
 
 func (t transaction) Select(ctx context.Context, query dal.Query) (dal.Reader, error) {
-	return getRecordsReader(ctx, query, t.tx.QueryContext)
+	return getRecordsReaderWithOptions(ctx, query, t.tx.QueryContext, t.sqlOptions)
+}
+
+func (t transaction) ExecuteQueryToRecordsReader(ctx context.Context, query dal.Query) (dal.RecordsReader, error) {
+	return getRecordsReaderWithOptions(ctx, query, t.tx.QueryContext, t.sqlOptions)
 }
 
 var _ dal.ReadTransaction = (*readTransaction)(nil)
@@ -45,7 +49,7 @@ var _ dal.ReadTransaction = (*readTransaction)(nil)
 type readTransaction = transaction
 
 func (t readTransaction) ExecuteQueryToRecordsetReader(ctx context.Context, query dal.Query, options ...recordset.Option) (dal.RecordsetReader, error) {
-	return getRecordsetReader(ctx, query, t.tx.QueryContext, options...)
+	return getRecordsetReaderWithDialect(ctx, query, t.tx.QueryContext, t.sqlOptions.StructuredQueryDialect, options...)
 }
 
 var _ dal.ReadwriteTransaction = (*readwriteTransaction)(nil)

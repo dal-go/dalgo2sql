@@ -13,8 +13,12 @@ import (
 var _ dal.RecordsetReader = (*recordsetReader)(nil)
 
 func getRecordsetReader(ctx context.Context, query dal.Query, execute executeQueryFunc, options ...recordset.Option) (rr *recordsetReader, err error) {
+	return getRecordsetReaderWithDialect(ctx, query, execute, "", options...)
+}
+
+func getRecordsetReaderWithDialect(ctx context.Context, query dal.Query, execute executeQueryFunc, dialect string, options ...recordset.Option) (rr *recordsetReader, err error) {
 	rr = &recordsetReader{}
-	if rr.readerBase, err = getReaderBase(ctx, query, execute); err != nil {
+	if rr.readerBase, err = getReaderBaseWithDialect(ctx, query, execute, dialect); err != nil {
 		return nil, err
 	}
 
