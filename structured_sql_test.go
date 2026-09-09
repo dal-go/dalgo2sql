@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"github.com/dal-go/dalgo/access"
+	"github.com/dal-go/dalgo/condeval"
 	"io"
 	"reflect"
 	"regexp"
@@ -385,5 +387,72 @@ func TestSQLitePolicyPredicatesIgnoreDeclaredCollationAndAffinity(t *testing.T) 
 				t.Fatal("private predicate field leaked")
 			}
 		})
+	}
+}
+
+// The real query must agree with DALgo's JSON/binary64 predicate semantics,
+// including when SQLite stores an INTEGER that binary64 cannot represent.
+func TestSQLiteNumericPolicyConformanceBeforeLimit(t *testing.T) {
+	raw, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	if _, err = raw.Exec("CREATE TABLE customers (id TEXT PRIMARY KEY, score, name TEXT)"); err != nil {
+		t.Fatal(err)
+	}
+	values := []any{int64(9007199254740993), int64(9007199254740992), int64(9007199254740994), int64(-9007199254740993), int64(-9007199254740992), float64(0.1), "1", int64(1)}
+	for i, v := range values {
+		if _, err = raw.Exec("INSERT INTO customers VALUES (?, ?, 'Customer')", fmt.Sprintf("%02d", i), v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db := NewDatabase(raw, dal.NewSchema(nil, nil), DbOptions{StructuredQueryDialect: "sqlite", Recordsets: map[string]*Recordset{"customers": NewRecordset("customers", Table, []dal.FieldRef{dal.Field("id")})}})
+	for _, operator := range []dal.Operator{dal.Equal, dal.In, dal.GreaterThen, dal.GreaterOrEqual, dal.LessThen, dal.LessOrEqual} {
+		for _, bound := range []any{int64(9007199254740992), int64(9007199254740993), float64(9007199254740992), int64(-9007199254740992), float32(0.1), 1} {
+			t.Run(fmt.Sprintf("%s/%v/%T", operator, bound, bound), func(t *testing.T) {
+				right := bound
+				if operator == dal.In {
+					right = []any{bound}
+				}
+				var expression dal.Expression = dal.Constant{Value: right}
+				if operator == dal.In {
+					expression = dal.Array{Value: right}
+				}
+				condition := dal.NewComparison(dal.Field("score"), operator, expression)
+				expected := ""
+				for i, v := range values {
+					match, e := condeval.Match(map[string]any{"score": v}, condition)
+					if e != nil {
+						t.Fatal(e)
+					}
+					if match {
+						expected = fmt.Sprintf("%02d", i)
+						break
+					}
+				}
+				policy := access.MustPolicy("owner", access.Collection("customers", access.Allow(access.Query, "read").Where(condition).Fields("id", "name")))
+				secured, e := access.SecureDB(db, access.WithDatabasePolicies(policy))
+				if e != nil {
+					t.Fatal(e)
+				}
+				q := dal.From(dal.NewRootCollectionRef("customers", "")).NewQuery().OrderBy(dal.AscendingField("id")).Limit(1).SelectColumns(dal.Column{Expression: dal.Field("name")})
+				reader, e := secured.ExecuteQueryToRecordsReader(context.Background(), q)
+				if e != nil {
+					t.Fatal(e)
+				}
+				defer reader.Close()
+				row, e := reader.Next()
+				if expected == "" {
+					if !errors.Is(e, io.EOF) {
+						t.Fatalf("unexpected authorized row %v: %v", row, e)
+					}
+					return
+				}
+				if e != nil || row.Key().ID != expected {
+					t.Fatalf("query disagrees with DALgo before limit: row=%v err=%v expected=%s", row, e, expected)
+				}
+			})
+		}
 	}
 }
