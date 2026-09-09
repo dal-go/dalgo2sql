@@ -3,7 +3,11 @@ package dalgo2sql
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"github.com/dal-go/dalgo/access"
+	"io"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -24,7 +28,7 @@ func TestCompileStructuredSQLParameterizedAndQuoted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "SELECT `name` AS `display\"name` FROM `users\" WHERE 1=1 --` WHERE (`status\"] OR 1=1 --` = ? AND `tenantID` = ? AND `role` IN (?, ?)) ORDER BY `createdAt` DESC LIMIT ? OFFSET ?"
+	want := "SELECT `name` AS `display\"name` FROM `users\" WHERE 1=1 --` WHERE ((+`status\"] OR 1=1 --` COLLATE BINARY) = ? AND (+`tenantID` COLLATE BINARY) = ? AND ((+`role` COLLATE BINARY) = ? OR (+`role` COLLATE BINARY) = ?)) ORDER BY (`createdAt` COLLATE BINARY) DESC LIMIT ? OFFSET ?"
 	if text != want {
 		t.Fatalf("SQL:\n got %s\nwant %s", text, want)
 	}
@@ -118,7 +122,7 @@ func TestSQLiteOptInRecordsetAndCancellation(t *testing.T) {
 	}
 	defer db.Close()
 	q := dal.From(dal.NewRootCollectionRef("users", "")).NewQuery().WhereField("tenant", dal.Equal, "t1").SelectColumns(dal.Column{Expression: dal.Field("name")})
-	mock.ExpectQuery("SELECT `name` FROM `users` WHERE `tenant` = \\?").WithArgs("t1").WillReturnRows(sqlmock.NewRows([]string{"name"}).AddRow("Ann"))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT `name` FROM `users` WHERE (+`tenant` COLLATE BINARY) = ?")).WithArgs("t1").WillReturnRows(sqlmock.NewRows([]string{"name"}).AddRow("Ann"))
 	r, err := getRecordsetReaderWithDialect(context.Background(), q, db.QueryContext, "sqlite")
 	if err != nil {
 		t.Fatal(err)
@@ -132,5 +136,54 @@ func TestSQLiteOptInRecordsetAndCancellation(t *testing.T) {
 	}
 	if _, err := getReaderBaseWithDialect(context.Background(), q, db.QueryContext, "sqlite-unknown"); err == nil {
 		t.Fatal("expected unknown dialect rejection")
+	}
+}
+
+func TestSQLitePolicyPredicatesIgnoreDeclaredCollationAndAffinity(t *testing.T) {
+	raw, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	if _, err = raw.Exec("CREATE TABLE customers (id TEXT PRIMARY KEY, name TEXT, tenant TEXT COLLATE NOCASE); INSERT INTO customers VALUES ('a','Hidden','a'),('b','Visible','A'),('c','TextNumber','1')"); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name      string
+		condition dal.Condition
+		want      string
+	}{
+		{"equal", dal.WhereField("tenant", dal.Equal, "A"), "b"},
+		{"in", dal.WhereField("tenant", dal.In, []string{"A"}), "b"},
+		{"numeric-equality", dal.WhereField("tenant", dal.Equal, 1), ""},
+		{"numeric-range", dal.WhereField("tenant", dal.LessThen, 2), ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := NewDatabase(raw, dal.NewSchema(nil, nil), DbOptions{StructuredQueryDialect: "sqlite", Recordsets: map[string]*Recordset{"customers": NewRecordset("customers", Table, []dal.FieldRef{dal.Field("id")})}})
+			policy := access.MustPolicy("owner", access.Collection("customers", access.Allow(access.Query, "read").Where(tc.condition).Fields("id", "name")))
+			secured, err := access.SecureDB(db, access.WithDatabasePolicies(policy))
+			if err != nil {
+				t.Fatal(err)
+			}
+			query := dal.From(dal.NewRootCollectionRef("customers", "")).NewQuery().OrderBy(dal.AscendingField("id")).Limit(1).SelectColumns(dal.Column{Expression: dal.Field("name")})
+			reader, err := secured.ExecuteQueryToRecordsReader(context.Background(), query)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer reader.Close()
+			row, err := reader.Next()
+			if tc.want == "" {
+				if !errors.Is(err, io.EOF) {
+					t.Fatalf("affinity widened policy: row=%v err=%v", row, err)
+				}
+				return
+			}
+			if err != nil || row.Key().ID != tc.want {
+				t.Fatalf("collation widened policy before paging: row=%v err=%v", row, err)
+			}
+			if _, exists := row.Data().(map[string]any)["tenant"]; exists {
+				t.Fatal("private predicate field leaked")
+			}
+		})
 	}
 }

@@ -115,7 +115,7 @@ func NewDatabase(db *sql.DB, schema dal.Schema, options DbOptions) dal.DB {
 	if schema == nil {
 		panic("schema is a required parameter, got nil")
 	}
-	return dal.NewDB(&database{
+	wrapped := dal.NewDB(&database{
 		recordsReaderProvider: recordsReaderProvider{
 			executeQuery: db.QueryContext,
 		},
@@ -124,4 +124,8 @@ func NewDatabase(db *sql.DB, schema dal.Schema, options DbOptions) dal.DB {
 		schema:  schema,
 		options: options,
 	})
+	if options.StructuredQueryDialect == "sqlite" {
+		return newSQLiteProtectedFactory(wrapped, db, options)
+	}
+	return wrapped
 }
