@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 
+	"github.com/dal-go/dalgo/access"
 	"github.com/dal-go/dalgo/dal"
 )
 
@@ -39,7 +40,7 @@ func getReaderBaseWithDialect(ctx context.Context, query dal.Query, execute exec
 			var err error
 			text, a, err = compileStructuredSQL(q)
 			if err != nil {
-				return readerBase{}, err
+				return readerBase{}, &access.DeniedError{Decision: access.Decision{Operation: access.Query, Code: access.CodeEnforcementUnsupported, Scope: access.DecisionScopeOperation, Explanation: "structured SQLite query is unsupported"}}
 			}
 		default:
 			return readerBase{}, fmt.Errorf("unsupported structured query dialect %q", dialect)
