@@ -25,7 +25,19 @@ func getReaderBase(ctx context.Context, query dal.Query, execute executeQueryFun
 		args := q.Args()
 		a = make([]any, len(args))
 		for i, arg := range args {
-			a[i] = arg
+			// dal.QueryArg{Name, Value} is dalgo's own bind-value shape, not
+			// something database/sql understands directly — passing the
+			// struct itself as a[i] fails every call with a non-empty Args()
+			// ("unsupported type dal.QueryArg, a struct"). A named arg
+			// (Name != "") becomes a sql.NamedArg via sql.Named, so an
+			// @name/:name/$name placeholder in the query text binds by
+			// name; a positional arg (Name == "") passes its Value straight
+			// through for ordinary ?/$N placeholders.
+			if arg.Name != "" {
+				a[i] = sql.Named(arg.Name, arg.Value)
+			} else {
+				a[i] = arg.Value
+			}
 		}
 	case dal.StructuredQuery:
 		// emitSQL rewrites dalgo's `SELECT TOP N` into ANSI `LIMIT N`
