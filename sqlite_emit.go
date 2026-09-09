@@ -2,6 +2,7 @@ package dalgo2sql
 
 import (
 	"database/sql/driver"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -140,7 +141,17 @@ func compileSQLCondition(condition dal.Condition) (string, []any, error) {
 				if value == nil {
 					op = "IS"
 				}
-				parts[i] = left + " " + op + " ?"
+				operand := left
+				right := "?"
+				if isSQLNumber(value) {
+					values[i], err = normalizedNumber(value)
+					if err != nil {
+						return "", nil, err
+					}
+					operand = normalizeSQLNumber(left)
+					right = "(+CAST(? AS REAL))"
+				}
+				parts[i] = operand + " " + op + " " + right
 			}
 			return "(" + strings.Join(parts, " OR ") + ")", values, nil
 		}
@@ -159,6 +170,7 @@ func compileSQLCondition(condition dal.Condition) (string, []any, error) {
 		}
 		if len(rightArgs) == 0 {
 			right = "(+" + right + " COLLATE BINARY)"
+			left, right = normalizeSQLNumber(left), normalizeSQLNumber(right)
 		}
 		if len(rightArgs) == 1 {
 			if _, ok := rightArgs[0].(bool); ok {
@@ -169,6 +181,14 @@ func compileSQLCondition(condition dal.Condition) (string, []any, error) {
 					return left + " IS NULL", nil, nil
 				}
 				return "0 = 1", nil, nil
+			}
+			if isSQLNumber(rightArgs[0]) {
+				rightArgs[0], err = normalizedNumber(rightArgs[0])
+				if err != nil {
+					return "", nil, err
+				}
+				left = normalizeSQLNumber(left)
+				right = "(+CAST(? AS REAL))"
 			}
 		}
 		comparison := left + " " + op + " " + right
@@ -208,6 +228,41 @@ func compileSQLCondition(condition dal.Condition) (string, []any, error) {
 	default:
 		return "", nil, fmt.Errorf("unsupported condition %T", condition)
 	}
+}
+
+// DALgo compares JSON-normalized numbers as float64, including INTEGER values
+// outside the exact binary64 range. Normalize stored numeric values as well as
+// parameters before filtering; casting only the parameter still permits SQLite
+// to compare its original integer exactly. Preserve text/null types so numeric
+// normalization cannot turn a text value into an authorized number.
+func normalizeSQLNumber(expression string) string {
+	return "(CASE WHEN typeof(" + expression + ") IN ('integer','real') THEN CAST(" + expression + " AS REAL) ELSE " + expression + " END)"
+}
+
+func isSQLNumber(value any) bool {
+	if value == nil {
+		return false
+	}
+	switch reflect.TypeOf(value).Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizedNumber(value any) (float64, error) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return 0, fmt.Errorf("unsupported portable number: %w", err)
+	}
+	var number float64
+	if err := json.Unmarshal(encoded, &number); err != nil {
+		return 0, fmt.Errorf("unsupported portable number: %w", err)
+	}
+	return number, nil
 }
 
 func compileSQLExpression(expression dal.Expression) (string, []any, error) {
