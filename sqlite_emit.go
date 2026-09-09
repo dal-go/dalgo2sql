@@ -88,7 +88,7 @@ func compileStructuredSQL(q dal.StructuredQuery) (string, []any, error) {
 			if len(values) != 0 {
 				return "", nil, fmt.Errorf("orderBy %d: values are not supported", i)
 			}
-			b.WriteString(expr)
+			b.WriteString("(" + expr + " COLLATE BINARY)")
 			if order.Descending() {
 				b.WriteString(" DESC")
 			}
@@ -131,6 +131,9 @@ func compileSQLCondition(condition dal.Condition, alias string) (string, []any, 
 		if len(leftArgs) != 0 {
 			return "", nil, fmt.Errorf("comparison left operand must be a field")
 		}
+		// Unary plus removes declared affinity without coercing the stored
+		// value; explicit BINARY prevents schema collations widening ACLs.
+		left = "(+" + left + " COLLATE BINARY)"
 		if c.Operator == dal.In {
 			array, ok := c.Right.(dal.Array)
 			if !ok {
@@ -143,7 +146,18 @@ func compileSQLCondition(condition dal.Condition, alias string) (string, []any, 
 			if len(values) == 0 {
 				return "0 = 1", nil, nil
 			}
-			return left + " IN (" + strings.TrimSuffix(strings.Repeat("?, ", len(values)), ", ") + ")", values, nil
+			parts := make([]string, len(values))
+			for i, value := range values {
+				if _, ok := value.(bool); ok {
+					return "", nil, fmt.Errorf("portable SQLite boolean predicates require schema typing")
+				}
+				op := "="
+				if value == nil {
+					op = "IS"
+				}
+				parts[i] = left + " " + op + " ?"
+			}
+			return "(" + strings.Join(parts, " OR ") + ")", values, nil
 		}
 		op := string(c.Operator)
 		if c.Operator == dal.Equal {
@@ -158,7 +172,35 @@ func compileSQLCondition(condition dal.Condition, alias string) (string, []any, 
 		if err != nil {
 			return "", nil, err
 		}
-		return left + " " + op + " " + right, rightArgs, nil
+		if len(rightArgs) == 0 {
+			right = "(+" + right + " COLLATE BINARY)"
+		}
+		if len(rightArgs) == 1 {
+			if _, ok := rightArgs[0].(bool); ok {
+				return "", nil, fmt.Errorf("portable SQLite boolean predicates require schema typing")
+			}
+			if rightArgs[0] == nil {
+				if c.Operator == dal.Equal {
+					return left + " IS NULL", nil, nil
+				}
+				return "0 = 1", nil, nil
+			}
+		}
+		comparison := left + " " + op + " " + right
+		if c.Operator != dal.Equal {
+			guard := ""
+			if len(rightArgs) == 1 {
+				if _, ok := rightArgs[0].(string); ok {
+					guard = "typeof(" + left + ") = 'text'"
+				} else {
+					guard = "typeof(" + left + ") IN ('integer','real')"
+				}
+			} else {
+				guard = "(typeof(" + left + ") = typeof(" + right + ") OR (typeof(" + left + ") IN ('integer','real') AND typeof(" + right + ") IN ('integer','real')))"
+			}
+			comparison = "(" + guard + " AND " + comparison + ")"
+		}
+		return comparison, rightArgs, nil
 	case dal.GroupCondition:
 		if c.Operator() != dal.And && c.Operator() != dal.Or {
 			return "", nil, fmt.Errorf("unsupported group operator %q", c.Operator())
