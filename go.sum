@@ -32,6 +32,8 @@ github.com/dal-go/dalgo v0.74.2 h1:i80DdaEG617Ki93hTrT6WSpmP/Pb3Siosxkkrtymi78=
 github.com/dal-go/dalgo v0.74.2/go.mod h1:ffWy4OC32BDoseIh+9KF/W9VUGk3FfkAtIvUzUf1zAY=
 github.com/dal-go/dalgo v0.79.4 h1:gP+s77B8OWKhLN733O9g0QK2XB1tgePfnQYo3qtYGPQ=
 github.com/dal-go/dalgo v0.79.4/go.mod h1:t7F7LJGIHd4DOtQ0pJiGdGdznaqM70lfS9PVG9iSZOU=
+github.com/dal-go/dalgo v0.79.5 h1:mvWbKgtj3HyILrQgK8qwDvuHNPPDKQFulKU5IMNpHkM=
+github.com/dal-go/dalgo v0.79.5/go.mod h1:u7sD8jlXshi2qHrlPUm9GzR2uyPRaBI4Ro9ef5+WFzY=
 github.com/dal-go/record v0.1.1 h1:N2WVDBnm2tOb83h5DJqFyINB5kH0vLjKlYFAgCJWv2g=
 github.com/dal-go/record v0.1.1/go.mod h1:quwsVJTT0f6y3Mhx+yHpTobY7luX1M6kyO6fdJ/AFYE=
 github.com/dal-go/record v0.1.2 h1:cDy296wwG3r2T+vy0yVJBouJ936oISiqiNB7G3ef5Og=
@@ -89,6 +91,8 @@ github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
 github.com/strongo/random v0.0.1 h1:OZHJBb/3uEa7OX8L2Dv2pLnSeewRmXMyTACoeto6O8I=
 github.com/strongo/random v0.0.1/go.mod h1:/pSI+SjBNLBkjljNtVdYr6ERddA+LqSa87o0/s+9iuU=
+github.com/strongo/random v0.0.2 h1:lnISBL6GM6xkWCJDRZRoOXaOUoytg76IyWkx6CLUHKg=
+github.com/strongo/random v0.0.2/go.mod h1:V/TldevwaA3XYhJApc5kQUmpAVUZhoEcsdl5m1+emx4=
 go.uber.org/mock v0.6.0 h1:hyF9dfmbgIX5EfOdasqLsWD6xqpNZlXblLB/Dbnwv3Y=
 go.uber.org/mock v0.6.0/go.mod h1:KiVJ4BqZJaMj4svdfmHM0AUx4NJYO8ZNpPnZn1Z+BBU=
 golang.org/x/crypto v0.17.0 h1:r8bRNjWL3GshPW3gkd+RpvzWrZAwPS49OmTGZ/uhM4k=

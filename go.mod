@@ -8,7 +8,7 @@ toolchain go1.27.1
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
-	github.com/dal-go/dalgo v0.79.4
+	github.com/dal-go/dalgo v0.79.5
 	github.com/dal-go/record v0.1.3
 	github.com/georgysavva/scany/v2 v2.1.4
 	modernc.org/sqlite v1.58.0
@@ -24,7 +24,7 @@ require (
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/stretchr/objx v0.5.3 // indirect
-	github.com/strongo/random v0.0.1 // indirect
+	github.com/strongo/random v0.0.2 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	modernc.org/libc v1.75.6 // indirect
 	modernc.org/mathutil v1.7.1 // indirect

@@ -5,7 +5,7 @@ go 1.26.0
 toolchain go1.27.1
 
 require (
-	github.com/dal-go/dalgo v0.79.4
+	github.com/dal-go/dalgo v0.79.5
 	github.com/dal-go/dalgo2sql v0.9.6 // No version as we alway replace it with local version
 	github.com/mattn/go-sqlite3 v1.14.52
 )
@@ -21,7 +21,7 @@ require (
 	github.com/lib/pq v1.10.9 // indirect
 	github.com/mschoch/smat v0.2.0 // indirect
 	github.com/stretchr/testify v1.12.1 // indirect
-	github.com/strongo/random v0.0.1 // indirect
+	github.com/strongo/random v0.0.2 // indirect
 	github.com/strongo/validation v0.0.13 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/crypto v0.46.0 // indirect
