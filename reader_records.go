@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"reflect"
 
 	"github.com/dal-go/dalgo/dal"
 	dalrecord "github.com/dal-go/record"
@@ -12,13 +13,40 @@ import (
 var _ dal.RecordsReader = (*recordsReader)(nil)
 
 func getRecordsReader(ctx context.Context, query dal.Query, execute executeQueryFunc) (rr *recordsReader, err error) {
+	return getRecordsReaderWithOptions(ctx, query, execute, DbOptions{})
+}
+
+const recordIDHelperColumn = "__dalgo_record_id"
+
+func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute executeQueryFunc, options DbOptions) (rr *recordsReader, err error) {
 	rr = &recordsReader{
 		newRecord: func() dalrecord.Record {
 			return dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("Unknown", ""), make(map[string]any))
 		},
 	}
+	if q, ok := query.(dal.StructuredQuery); ok {
+		if rec := q.IntoRecord(); rec != nil {
+			rr.newRecord = func() dalrecord.Record { return q.IntoRecord() }
+		} else if from := q.From(); from != nil && from.Base() != nil {
+			collection := from.Base().Name()
+			rr.newRecord = func() dalrecord.Record {
+				return dalrecord.NewRecordWithData(dalrecord.NewKeyWithID(collection, recordIDHelperColumn), make(map[string]any))
+			}
+		}
+		if primaryKey := primaryKeyForQuery(options, query); primaryKey != "" {
+			rr.identityColumn = primaryKey
+			if selected := q.Columns(); len(selected) > 0 && !selectsIdentityField(selected, primaryKey) {
+				columns := append([]dal.Column(nil), selected...)
+				helper := unusedHelperColumn(selected)
+				columns = append(columns, dal.Column{Expression: dal.Field(primaryKey), Alias: helper})
+				query = dal.WithColumns(q, columns)
+				rr.identityColumn = helper
+				rr.hideIdentityColumn = true
+			}
+		}
+	}
 
-	if rr.readerBase, err = getReaderBase(ctx, query, execute); err != nil {
+	if rr.readerBase, err = getReaderBaseWithDialect(ctx, query, execute, options.StructuredQueryDialect); err != nil {
 		err = fmt.Errorf("failed to get SQL reader: %w", err)
 		return
 	}
@@ -28,7 +56,43 @@ func getRecordsReader(ctx context.Context, query dal.Query, execute executeQuery
 
 type recordsReader struct {
 	readerBase
-	newRecord func() dalrecord.Record
+	newRecord          func() dalrecord.Record
+	identityColumn     string
+	hideIdentityColumn bool
+}
+
+func selectsIdentityField(columns []dal.Column, name string) bool {
+	for _, column := range columns {
+		if field, ok := column.Expression.(dal.FieldRef); ok && field.Name() == name && (column.Alias == "" || column.Alias == name) {
+			return true
+		}
+	}
+	return false
+}
+
+func unusedHelperColumn(columns []dal.Column) string {
+	for suffix := 0; ; suffix++ {
+		name := recordIDHelperColumn
+		if suffix > 0 {
+			name = fmt.Sprintf("%s_%d", name, suffix)
+		}
+		used := false
+		for _, column := range columns {
+			resultName := column.Alias
+			if resultName == "" {
+				if field, ok := column.Expression.(dal.FieldRef); ok {
+					resultName = field.Name()
+				}
+			}
+			if resultName == name {
+				used = true
+				break
+			}
+		}
+		if !used {
+			return name
+		}
+	}
 }
 
 func (r recordsReader) Next() (record dalrecord.Record, err error) {
@@ -60,7 +124,15 @@ func (r recordsReader) Next() (record dalrecord.Record, err error) {
 			if b, ok := v.([]byte); ok {
 				v = string(b)
 			}
-			d[n] = v
+			if n == r.identityColumn {
+				record.Key().ID = v
+				if v != nil {
+					record.Key().IDKind = reflect.TypeOf(v).Kind()
+				}
+			}
+			if !r.hideIdentityColumn || n != r.identityColumn {
+				d[n] = v
+			}
 		}
 	default:
 		// TODO: implement Scan into `*struct` and into `[]any`
