@@ -38,6 +38,68 @@ func TestCompileStructuredSQLParameterizedAndQuoted(t *testing.T) {
 	}
 }
 
+// TestCompileStructuredSQLSourceAlias covers the DTQL shape datatug's
+// customer-invoices demo query actually ships (`from: {name: Invoice,
+// alias: i}` with unqualified column/where/orderBy field references):
+// the alias must appear in the FROM clause and unqualified fields must
+// still compile even though a source alias is declared.
+func TestCompileStructuredSQLSourceAlias(t *testing.T) {
+	q := dal.From(dal.NewRootCollectionRef("Invoice", "i")).NewQuery().
+		WhereField("CustomerId", dal.Equal, 3).
+		OrderBy(dal.DescendingField("InvoiceDate")).
+		SelectColumns(
+			dal.Column{Expression: dal.Field("InvoiceId")},
+			dal.Column{Expression: dal.Field("Total")},
+		)
+	text, args, err := compileStructuredSQL(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "SELECT `InvoiceId`, `Total` FROM `Invoice` AS `i` WHERE `CustomerId` = ? ORDER BY `InvoiceDate` DESC"
+	if text != want {
+		t.Fatalf("SQL:\n got %s\nwant %s", text, want)
+	}
+	if !reflect.DeepEqual(args, []any{3}) {
+		t.Fatalf("args = %#v", args)
+	}
+}
+
+// TestCompileStructuredSQLQualifiedFieldReferences proves a FieldRef whose
+// Source() matches the declared alias compiles to an alias-qualified
+// column and that Source() must match exactly — a field claiming a
+// different, unrelated source is rejected rather than silently resolved
+// against the single table this dialect supports (joins are unsupported,
+// so any other qualifier is definitionally unresolvable).
+func TestCompileStructuredSQLQualifiedFieldReferences(t *testing.T) {
+	q := dal.From(dal.NewRootCollectionRef("Invoice", "i")).NewQuery().
+		Where(dal.NewComparison(dal.NewFieldRef("i", "CustomerId"), dal.Equal, dal.Constant{Value: 3})).
+		OrderBy(dal.Descending(dal.NewFieldRef("i", "InvoiceDate"))).
+		SelectColumns(dal.Column{Expression: dal.NewFieldRef("i", "InvoiceId")})
+	text, args, err := compileStructuredSQL(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "SELECT `i`.`InvoiceId` FROM `Invoice` AS `i` WHERE `i`.`CustomerId` = ? ORDER BY `i`.`InvoiceDate` DESC"
+	if text != want {
+		t.Fatalf("SQL:\n got %s\nwant %s", text, want)
+	}
+	if !reflect.DeepEqual(args, []any{3}) {
+		t.Fatalf("args = %#v", args)
+	}
+}
+
+// TestCompileStructuredSQLRejectsAliasContainingQuoteChar proves alias
+// validation, not identifier-quoting, is what stops an alias from
+// breaking out of the backtick-quoted identifier this dialect emits: a
+// backtick in the alias is rejected outright rather than accepted and
+// escaped.
+func TestCompileStructuredSQLRejectsAliasContainingQuoteChar(t *testing.T) {
+	q := dal.From(dal.NewRootCollectionRef("users", "u`x")).NewQuery().SelectKeysOnly(reflect.String)
+	if _, _, err := compileStructuredSQL(q); err == nil {
+		t.Fatal("expected alias containing a backtick to be rejected")
+	}
+}
+
 func TestRecordsReaderKeepsProjectedRowIdentityPrivate(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -76,9 +138,15 @@ func TestCompileStructuredSQLOffsetWithoutLimit(t *testing.T) {
 }
 
 func TestCompileStructuredSQLRejectsUnsupportedShapes(t *testing.T) {
-	aliased := dal.From(dal.NewRootCollectionRef("users", "u")).NewQuery().SelectKeysOnly(reflect.String)
-	if _, _, err := compileStructuredSQL(aliased); err == nil {
-		t.Fatal("expected alias rejection")
+	invalidAlias := dal.From(dal.NewRootCollectionRef("users", `u"; DROP TABLE users --`)).NewQuery().SelectKeysOnly(reflect.String)
+	if _, _, err := compileStructuredSQL(invalidAlias); err == nil {
+		t.Fatal("expected non-identifier alias rejection")
+	}
+	unknownQualifier := dal.From(dal.NewRootCollectionRef("users", "")).NewQuery().
+		Where(dal.NewComparison(dal.NewFieldRef("other", "x"), dal.Equal, dal.Constant{Value: 1})).
+		SelectKeysOnly(reflect.String)
+	if _, _, err := compileStructuredSQL(unknownQualifier); err == nil {
+		t.Fatal("expected unknown source qualifier rejection")
 	}
 	q := dal.From(dal.NewRootCollectionRef("users", "")).NewQuery().Where(dal.NewComparison(dal.Field("x"), "!=", dal.Constant{Value: 1})).SelectKeysOnly(reflect.String)
 	if _, _, err := compileStructuredSQL(q); err == nil {
