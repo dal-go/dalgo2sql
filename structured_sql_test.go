@@ -3,9 +3,11 @@ package dalgo2sql
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/dal-go/dalgo/dal"
@@ -41,7 +43,7 @@ func TestRecordsReaderKeepsProjectedRowIdentityPrivate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	q := dal.From(dal.NewRootCollectionRef("users", "")).NewQuery().SelectColumns(dal.Column{Expression: dal.Field("name")})
 	mock.ExpectQuery("SELECT `name`, `id` AS `__dalgo_record_id` FROM `users`").
 		WillReturnRows(sqlmock.NewRows([]string{"name", recordIDHelperColumn}).AddRow("Ann", "u1"))
@@ -97,7 +99,7 @@ func TestSQLiteUnknownPolicyFieldFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	if _, err := db.Exec(`CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT); INSERT INTO users VALUES ('u1', 'Ann')`); err != nil {
 		t.Fatal(err)
 	}
@@ -116,14 +118,14 @@ func TestSQLiteOptInRecordsetAndCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	q := dal.From(dal.NewRootCollectionRef("users", "")).NewQuery().WhereField("tenant", dal.Equal, "t1").SelectColumns(dal.Column{Expression: dal.Field("name")})
 	mock.ExpectQuery("SELECT `name` FROM `users` WHERE `tenant` = \\?").WithArgs("t1").WillReturnRows(sqlmock.NewRows([]string{"name"}).AddRow("Ann"))
 	r, err := getRecordsetReaderWithDialect(context.Background(), q, db.QueryContext, "sqlite")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 
 	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -132,5 +134,135 @@ func TestSQLiteOptInRecordsetAndCancellation(t *testing.T) {
 	}
 	if _, err := getReaderBaseWithDialect(context.Background(), q, db.QueryContext, "sqlite-unknown"); err == nil {
 		t.Fatal("expected unknown dialect rejection")
+	}
+}
+
+// stubValuer is a minimal driver.Valuer, proving validateSQLValue accepts
+// any type that knows how to represent itself as a driver value, not just
+// the specific Go kinds it special-cases.
+type stubValuer struct{ v any }
+
+func (s stubValuer) Value() (driver.Value, error) { return s.v, nil }
+
+func TestValidateSQLValueAcceptedAndRejectedKinds(t *testing.T) {
+	accepted := []any{
+		nil,
+		stubValuer{v: "x"},
+		time.Now(),
+		true,
+		42,
+		int64(42),
+		3.14,
+		[]byte("blob"),
+	}
+	for _, value := range accepted {
+		if err := validateSQLValue(value); err != nil {
+			t.Errorf("validateSQLValue(%#v) = %v, want nil", value, err)
+		}
+	}
+
+	rejected := []any{
+		[]int{1, 2},
+		map[string]any{"x": 1},
+		struct{ X int }{X: 1},
+	}
+	for _, value := range rejected {
+		if err := validateSQLValue(value); err == nil {
+			t.Errorf("validateSQLValue(%#v) = nil, want an error", value)
+		}
+	}
+}
+
+func TestPrimaryKeyForQueryFallbacks(t *testing.T) {
+	q := dal.From(dal.NewRootCollectionRef("users", "")).NewQuery().SelectKeysOnly(reflect.String)
+
+	if pk := primaryKeyForQuery(DbOptions{}, dal.NewTextQuery("SELECT 1", nil)); pk != "" {
+		t.Errorf("non-structured query: primaryKeyForQuery = %q, want empty", pk)
+	}
+
+	multiField := NewRecordset("users", Table, []dal.FieldRef{dal.Field("id"), dal.Field("tenant")})
+	if pk := primaryKeyForQuery(DbOptions{Recordsets: map[string]*Recordset{"users": multiField}}, q); pk != "" {
+		t.Errorf("multi-field recordset key: primaryKeyForQuery = %q, want empty (falls through)", pk)
+	}
+
+	if pk := primaryKeyForQuery(DbOptions{PrimaryKey: []string{"id"}}, q); pk != "id" {
+		t.Errorf("DbOptions.PrimaryKey fallback: primaryKeyForQuery = %q, want id", pk)
+	}
+
+	if pk := primaryKeyForQuery(DbOptions{}, q); pk != "" {
+		t.Errorf("nothing configured: primaryKeyForQuery = %q, want empty", pk)
+	}
+}
+
+// TestTransaction_ExecuteQueryToRecordsReader proves the dal.QueryExecutor
+// entrypoint a policy wrapper calls (e.g. dal-go/dalgo's
+// access.SecureReadSession.ExecuteQueryToRecordsReader) resolves through a
+// transaction the same way tx.Select already does — structured_sql_test.go's
+// other tests exercise the standalone reader constructors directly, but this
+// is the one the layered-ACL chain actually calls in production.
+func TestTransaction_ExecuteQueryToRecordsReader(t *testing.T) {
+	_, mock, db, closer, err := newDatabase(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closer()
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT \\* FROM users").
+		WillReturnRows(sqlmock.NewRows([]string{"name"}).AddRow("Ann"))
+	mock.ExpectCommit()
+
+	q := dal.From(dal.NewRootCollectionRef("users", "")).NewQuery().SelectKeysOnly(reflect.String)
+	err = db.RunReadonlyTransaction(context.Background(), func(ctx context.Context, tx dal.ReadTransaction) error {
+		reader, err := tx.ExecuteQueryToRecordsReader(ctx, q)
+		if err != nil {
+			return err
+		}
+		rec, err := reader.Next()
+		if err != nil {
+			return err
+		}
+		data, ok := rec.Data().(map[string]any)
+		if !ok || data["name"] != "Ann" {
+			t.Errorf("record data = %#v, want name=Ann", rec.Data())
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("RunReadonlyTransaction: %v", err)
+	}
+}
+
+func TestSelectsIdentityField(t *testing.T) {
+	cases := []struct {
+		name    string
+		columns []dal.Column
+		field   string
+		want    bool
+	}{
+		{"matches bare field", []dal.Column{{Expression: dal.Field("id")}}, "id", true},
+		{"matches field aliased to itself", []dal.Column{{Expression: dal.Field("id"), Alias: "id"}}, "id", true},
+		{"field present but aliased away", []dal.Column{{Expression: dal.Field("id"), Alias: "other"}}, "id", false},
+		{"different field name", []dal.Column{{Expression: dal.Field("name")}}, "id", false},
+		{"non-field expression", []dal.Column{{Expression: dal.Constant{Value: 1}}}, "id", false},
+	}
+	for _, tc := range cases {
+		if got := selectsIdentityField(tc.columns, tc.field); got != tc.want {
+			t.Errorf("%s: selectsIdentityField() = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestUnusedHelperColumn(t *testing.T) {
+	if got := unusedHelperColumn(nil); got != recordIDHelperColumn {
+		t.Errorf("no columns: unusedHelperColumn = %q, want %q", got, recordIDHelperColumn)
+	}
+
+	// A query that already (however unusually) selects the helper column
+	// name itself must fall back to a suffixed alternative rather than
+	// silently colliding with real projected data.
+	collision := []dal.Column{{Expression: dal.Field(recordIDHelperColumn)}}
+	if got := unusedHelperColumn(collision); got == recordIDHelperColumn {
+		t.Errorf("collision: unusedHelperColumn = %q, want a suffixed alternative", got)
 	}
 }
