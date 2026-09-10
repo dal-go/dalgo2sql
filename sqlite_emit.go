@@ -4,6 +4,7 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"reflect"
+	"regexp"
 	"strings"
 	"time"
 
@@ -33,8 +34,9 @@ func compileStructuredSQL(q dal.StructuredQuery) (string, []any, error) {
 	default:
 		return "", nil, fmt.Errorf("unsupported structured SQL source %T", source)
 	}
-	if source.Alias() != "" {
-		return "", nil, fmt.Errorf("structured SQL query source aliases are not supported")
+	sourceAlias := source.Alias()
+	if sourceAlias != "" && !isPlainSQLIdentifier(sourceAlias) {
+		return "", nil, fmt.Errorf("structured SQL query source alias %q is not a plain identifier", sourceAlias)
 	}
 	var b strings.Builder
 	b.WriteString("SELECT ")
@@ -46,7 +48,7 @@ func compileStructuredSQL(q dal.StructuredQuery) (string, []any, error) {
 			if i > 0 {
 				b.WriteString(", ")
 			}
-			expr, values, err := compileSQLExpression(column.Expression)
+			expr, values, err := compileSQLExpression(column.Expression, sourceAlias)
 			if err != nil {
 				return "", nil, fmt.Errorf("column %d: %w", i, err)
 			}
@@ -60,8 +62,12 @@ func compileStructuredSQL(q dal.StructuredQuery) (string, []any, error) {
 	}
 	b.WriteString(" FROM ")
 	b.WriteString(quoteSQLIdentifier(source.Name()))
+	if sourceAlias != "" {
+		b.WriteString(" AS ")
+		b.WriteString(quoteSQLIdentifier(sourceAlias))
+	}
 	if q.Where() != nil {
-		condition, values, err := compileSQLCondition(q.Where())
+		condition, values, err := compileSQLCondition(q.Where(), sourceAlias)
 		if err != nil {
 			return "", nil, fmt.Errorf("where: %w", err)
 		}
@@ -75,7 +81,7 @@ func compileStructuredSQL(q dal.StructuredQuery) (string, []any, error) {
 			if i > 0 {
 				b.WriteString(", ")
 			}
-			expr, values, err := compileSQLExpression(order.Expression())
+			expr, values, err := compileSQLExpression(order.Expression(), sourceAlias)
 			if err != nil {
 				return "", nil, fmt.Errorf("orderBy %d: %w", i, err)
 			}
@@ -106,10 +112,19 @@ func compileStructuredSQL(q dal.StructuredQuery) (string, []any, error) {
 
 func quoteSQLIdentifier(name string) string { return "`" + strings.ReplaceAll(name, "`", "``") + "`" }
 
-func compileSQLCondition(condition dal.Condition) (string, []any, error) {
+// rePlainSQLIdentifier matches a bare identifier: a letter or underscore
+// followed by letters, digits or underscores. A source alias must satisfy
+// this before it is trusted to appear (quoted) in emitted SQL, and a
+// qualified field reference (FieldRef.Source()) is only honoured when it
+// equals the query's declared alias exactly.
+var rePlainSQLIdentifier = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+func isPlainSQLIdentifier(name string) bool { return rePlainSQLIdentifier.MatchString(name) }
+
+func compileSQLCondition(condition dal.Condition, alias string) (string, []any, error) {
 	switch c := condition.(type) {
 	case dal.Comparison:
-		left, leftArgs, err := compileSQLExpression(c.Left)
+		left, leftArgs, err := compileSQLExpression(c.Left, alias)
 		if err != nil {
 			return "", nil, err
 		}
@@ -139,7 +154,7 @@ func compileSQLCondition(condition dal.Condition) (string, []any, error) {
 		default:
 			return "", nil, fmt.Errorf("unsupported comparison operator %q", c.Operator)
 		}
-		right, rightArgs, err := compileSQLExpression(c.Right)
+		right, rightArgs, err := compileSQLExpression(c.Right, alias)
 		if err != nil {
 			return "", nil, err
 		}
@@ -155,7 +170,7 @@ func compileSQLCondition(condition dal.Condition) (string, []any, error) {
 		parts := make([]string, len(children))
 		var args []any
 		for i, child := range children {
-			part, values, err := compileSQLCondition(child)
+			part, values, err := compileSQLCondition(child, alias)
 			if err != nil {
 				return "", nil, err
 			}
@@ -168,13 +183,22 @@ func compileSQLCondition(condition dal.Condition) (string, []any, error) {
 	}
 }
 
-func compileSQLExpression(expression dal.Expression) (string, []any, error) {
+// compileSQLExpression renders expression as SQL text plus bound args.
+// alias is the query's declared FROM-source alias (empty when the source
+// has none); a FieldRef.Source() must be empty (unqualified, the common
+// case) or exactly equal to alias to compile — anything else names a
+// source this single-table dialect cannot resolve and is rejected.
+func compileSQLExpression(expression dal.Expression, alias string) (string, []any, error) {
 	switch e := expression.(type) {
 	case dal.FieldRef:
-		if e.Source() != "" {
-			return "", nil, fmt.Errorf("qualified fields are not supported")
+		switch {
+		case e.Source() == "":
+			return quoteSQLIdentifier(e.Name()), nil, nil
+		case alias != "" && e.Source() == alias:
+			return quoteSQLIdentifier(alias) + "." + quoteSQLIdentifier(e.Name()), nil, nil
+		default:
+			return "", nil, fmt.Errorf("field %q references unknown source %q", e.Name(), e.Source())
 		}
-		return quoteSQLIdentifier(e.Name()), nil, nil
 	case dal.Constant:
 		if err := validateSQLValue(e.Value); err != nil {
 			return "", nil, err
