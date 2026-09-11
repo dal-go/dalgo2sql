@@ -4,7 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"errors"
+	"fmt"
+	"github.com/dal-go/dalgo/access"
+	"github.com/dal-go/dalgo/condeval"
+	"io"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -26,7 +32,7 @@ func TestCompileStructuredSQLParameterizedAndQuoted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "SELECT `name` AS `display\"name` FROM `users\" WHERE 1=1 --` WHERE (`status\"] OR 1=1 --` = ? AND `tenantID` = ? AND `role` IN (?, ?)) ORDER BY `createdAt` DESC LIMIT ? OFFSET ?"
+	want := "SELECT `name` AS `display\"name` FROM `users\" WHERE 1=1 --` WHERE ((+`status\"] OR 1=1 --` COLLATE BINARY) = ? AND (+`tenantID` COLLATE BINARY) = ? AND ((+`role` COLLATE BINARY) = ? OR (+`role` COLLATE BINARY) = ?)) ORDER BY (`createdAt` COLLATE BINARY) DESC LIMIT ? OFFSET ?"
 	if text != want {
 		t.Fatalf("SQL:\n got %s\nwant %s", text, want)
 	}
@@ -55,11 +61,11 @@ func TestCompileStructuredSQLSourceAlias(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "SELECT `InvoiceId`, `Total` FROM `Invoice` AS `i` WHERE `CustomerId` = ? ORDER BY `InvoiceDate` DESC"
+	want := "SELECT `InvoiceId`, `Total` FROM `Invoice` AS `i` WHERE (CASE WHEN typeof((+`CustomerId` COLLATE BINARY)) IN ('integer','real') THEN CAST((+`CustomerId` COLLATE BINARY) AS REAL) ELSE (+`CustomerId` COLLATE BINARY) END) = (+CAST(? AS REAL)) ORDER BY (`InvoiceDate` COLLATE BINARY) DESC"
 	if text != want {
 		t.Fatalf("SQL:\n got %s\nwant %s", text, want)
 	}
-	if !reflect.DeepEqual(args, []any{3}) {
+	if !reflect.DeepEqual(args, []any{float64(3)}) {
 		t.Fatalf("args = %#v", args)
 	}
 }
@@ -79,11 +85,11 @@ func TestCompileStructuredSQLQualifiedFieldReferences(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "SELECT `i`.`InvoiceId` FROM `Invoice` AS `i` WHERE `i`.`CustomerId` = ? ORDER BY `i`.`InvoiceDate` DESC"
+	want := "SELECT `i`.`InvoiceId` FROM `Invoice` AS `i` WHERE (CASE WHEN typeof((+`i`.`CustomerId` COLLATE BINARY)) IN ('integer','real') THEN CAST((+`i`.`CustomerId` COLLATE BINARY) AS REAL) ELSE (+`i`.`CustomerId` COLLATE BINARY) END) = (+CAST(? AS REAL)) ORDER BY (`i`.`InvoiceDate` COLLATE BINARY) DESC"
 	if text != want {
 		t.Fatalf("SQL:\n got %s\nwant %s", text, want)
 	}
-	if !reflect.DeepEqual(args, []any{3}) {
+	if !reflect.DeepEqual(args, []any{float64(3)}) {
 		t.Fatalf("args = %#v", args)
 	}
 }
@@ -188,7 +194,7 @@ func TestSQLiteOptInRecordsetAndCancellation(t *testing.T) {
 	}
 	defer func() { _ = db.Close() }()
 	q := dal.From(dal.NewRootCollectionRef("users", "")).NewQuery().WhereField("tenant", dal.Equal, "t1").SelectColumns(dal.Column{Expression: dal.Field("name")})
-	mock.ExpectQuery("SELECT `name` FROM `users` WHERE `tenant` = \\?").WithArgs("t1").WillReturnRows(sqlmock.NewRows([]string{"name"}).AddRow("Ann"))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT `name` FROM `users` WHERE (+`tenant` COLLATE BINARY) = ?")).WithArgs("t1").WillReturnRows(sqlmock.NewRows([]string{"name"}).AddRow("Ann"))
 	r, err := getRecordsetReaderWithDialect(context.Background(), q, db.QueryContext, "sqlite")
 	if err != nil {
 		t.Fatal(err)
@@ -332,5 +338,121 @@ func TestUnusedHelperColumn(t *testing.T) {
 	collision := []dal.Column{{Expression: dal.Field(recordIDHelperColumn)}}
 	if got := unusedHelperColumn(collision); got == recordIDHelperColumn {
 		t.Errorf("collision: unusedHelperColumn = %q, want a suffixed alternative", got)
+	}
+}
+
+func TestSQLitePolicyPredicatesIgnoreDeclaredCollationAndAffinity(t *testing.T) {
+	raw, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = raw.Close() }()
+	if _, err = raw.Exec("CREATE TABLE customers (id TEXT PRIMARY KEY, name TEXT, tenant TEXT COLLATE NOCASE); INSERT INTO customers VALUES ('a','Hidden','a'),('b','Visible','A'),('c','TextNumber','1')"); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name      string
+		condition dal.Condition
+		want      string
+	}{
+		{"equal", dal.WhereField("tenant", dal.Equal, "A"), "b"},
+		{"in", dal.WhereField("tenant", dal.In, []string{"A"}), "b"},
+		{"numeric-equality", dal.WhereField("tenant", dal.Equal, 1), ""},
+		{"numeric-range", dal.WhereField("tenant", dal.LessThen, 2), ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := NewDatabase(raw, dal.NewSchema(nil, nil), DbOptions{StructuredQueryDialect: "sqlite", Recordsets: map[string]*Recordset{"customers": NewRecordset("customers", Table, []dal.FieldRef{dal.Field("id")})}})
+			policy := access.MustPolicy("owner", access.Collection("customers", access.Allow(access.Query, "read").Where(tc.condition).Fields("id", "name")))
+			secured, err := access.SecureDB(db, access.WithDatabasePolicies(policy))
+			if err != nil {
+				t.Fatal(err)
+			}
+			query := dal.From(dal.NewRootCollectionRef("customers", "")).NewQuery().OrderBy(dal.AscendingField("id")).Limit(1).SelectColumns(dal.Column{Expression: dal.Field("name")})
+			reader, err := secured.ExecuteQueryToRecordsReader(context.Background(), query)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = reader.Close() }()
+			row, err := reader.Next()
+			if tc.want == "" {
+				if !errors.Is(err, io.EOF) {
+					t.Fatalf("affinity widened policy: row=%v err=%v", row, err)
+				}
+				return
+			}
+			if err != nil || row.Key().ID != tc.want {
+				t.Fatalf("collation widened policy before paging: row=%v err=%v", row, err)
+			}
+			if _, exists := row.Data().(map[string]any)["tenant"]; exists {
+				t.Fatal("private predicate field leaked")
+			}
+		})
+	}
+}
+
+// The real query must agree with DALgo's JSON/binary64 predicate semantics,
+// including when SQLite stores an INTEGER that binary64 cannot represent.
+func TestSQLiteNumericPolicyConformanceBeforeLimit(t *testing.T) {
+	raw, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = raw.Close() }()
+	if _, err = raw.Exec("CREATE TABLE customers (id TEXT PRIMARY KEY, score, name TEXT)"); err != nil {
+		t.Fatal(err)
+	}
+	values := []any{int64(9007199254740993), int64(9007199254740992), int64(9007199254740994), int64(-9007199254740993), int64(-9007199254740992), float64(0.1), "1", int64(1)}
+	for i, v := range values {
+		if _, err = raw.Exec("INSERT INTO customers VALUES (?, ?, 'Customer')", fmt.Sprintf("%02d", i), v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db := NewDatabase(raw, dal.NewSchema(nil, nil), DbOptions{StructuredQueryDialect: "sqlite", Recordsets: map[string]*Recordset{"customers": NewRecordset("customers", Table, []dal.FieldRef{dal.Field("id")})}})
+	for _, operator := range []dal.Operator{dal.Equal, dal.In, dal.GreaterThen, dal.GreaterOrEqual, dal.LessThen, dal.LessOrEqual} {
+		for _, bound := range []any{int64(9007199254740992), int64(9007199254740993), float64(9007199254740992), int64(-9007199254740992), float32(0.1), 1} {
+			t.Run(fmt.Sprintf("%s/%v/%T", operator, bound, bound), func(t *testing.T) {
+				right := bound
+				if operator == dal.In {
+					right = []any{bound}
+				}
+				var expression dal.Expression = dal.Constant{Value: right}
+				if operator == dal.In {
+					expression = dal.Array{Value: right}
+				}
+				condition := dal.NewComparison(dal.Field("score"), operator, expression)
+				expected := ""
+				for i, v := range values {
+					match, e := condeval.Match(map[string]any{"score": v}, condition)
+					if e != nil {
+						t.Fatal(e)
+					}
+					if match {
+						expected = fmt.Sprintf("%02d", i)
+						break
+					}
+				}
+				policy := access.MustPolicy("owner", access.Collection("customers", access.Allow(access.Query, "read").Where(condition).Fields("id", "name")))
+				secured, e := access.SecureDB(db, access.WithDatabasePolicies(policy))
+				if e != nil {
+					t.Fatal(e)
+				}
+				q := dal.From(dal.NewRootCollectionRef("customers", "")).NewQuery().OrderBy(dal.AscendingField("id")).Limit(1).SelectColumns(dal.Column{Expression: dal.Field("name")})
+				reader, e := secured.ExecuteQueryToRecordsReader(context.Background(), q)
+				if e != nil {
+					t.Fatal(e)
+				}
+				defer func() { _ = reader.Close() }()
+				row, e := reader.Next()
+				if expected == "" {
+					if !errors.Is(e, io.EOF) {
+						t.Fatalf("unexpected authorized row %v: %v", row, e)
+					}
+					return
+				}
+				if e != nil || row.Key().ID != expected {
+					t.Fatalf("query disagrees with DALgo before limit: row=%v err=%v expected=%s", row, e, expected)
+				}
+			})
+		}
 	}
 }

@@ -2,6 +2,7 @@ package dalgo2sql
 
 import (
 	"database/sql/driver"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"regexp"
@@ -88,7 +89,7 @@ func compileStructuredSQL(q dal.StructuredQuery) (string, []any, error) {
 			if len(values) != 0 {
 				return "", nil, fmt.Errorf("orderBy %d: values are not supported", i)
 			}
-			b.WriteString(expr)
+			b.WriteString("(" + expr + " COLLATE BINARY)")
 			if order.Descending() {
 				b.WriteString(" DESC")
 			}
@@ -131,6 +132,9 @@ func compileSQLCondition(condition dal.Condition, alias string) (string, []any, 
 		if len(leftArgs) != 0 {
 			return "", nil, fmt.Errorf("comparison left operand must be a field")
 		}
+		// Unary plus removes declared affinity without coercing the stored
+		// value; explicit BINARY prevents schema collations widening ACLs.
+		left = "(+" + left + " COLLATE BINARY)"
 		if c.Operator == dal.In {
 			array, ok := c.Right.(dal.Array)
 			if !ok {
@@ -143,7 +147,28 @@ func compileSQLCondition(condition dal.Condition, alias string) (string, []any, 
 			if len(values) == 0 {
 				return "0 = 1", nil, nil
 			}
-			return left + " IN (" + strings.TrimSuffix(strings.Repeat("?, ", len(values)), ", ") + ")", values, nil
+			parts := make([]string, len(values))
+			for i, value := range values {
+				if _, ok := value.(bool); ok {
+					return "", nil, fmt.Errorf("portable SQLite boolean predicates require schema typing")
+				}
+				op := "="
+				if value == nil {
+					op = "IS"
+				}
+				operand := left
+				right := "?"
+				if isSQLNumber(value) {
+					values[i], err = normalizedNumber(value)
+					if err != nil {
+						return "", nil, err
+					}
+					operand = normalizeSQLNumber(left)
+					right = "(+CAST(? AS REAL))"
+				}
+				parts[i] = operand + " " + op + " " + right
+			}
+			return "(" + strings.Join(parts, " OR ") + ")", values, nil
 		}
 		op := string(c.Operator)
 		if c.Operator == dal.Equal {
@@ -158,7 +183,44 @@ func compileSQLCondition(condition dal.Condition, alias string) (string, []any, 
 		if err != nil {
 			return "", nil, err
 		}
-		return left + " " + op + " " + right, rightArgs, nil
+		if len(rightArgs) == 0 {
+			right = "(+" + right + " COLLATE BINARY)"
+			left, right = normalizeSQLNumber(left), normalizeSQLNumber(right)
+		}
+		if len(rightArgs) == 1 {
+			if _, ok := rightArgs[0].(bool); ok {
+				return "", nil, fmt.Errorf("portable SQLite boolean predicates require schema typing")
+			}
+			if rightArgs[0] == nil {
+				if c.Operator == dal.Equal {
+					return left + " IS NULL", nil, nil
+				}
+				return "0 = 1", nil, nil
+			}
+			if isSQLNumber(rightArgs[0]) {
+				rightArgs[0], err = normalizedNumber(rightArgs[0])
+				if err != nil {
+					return "", nil, err
+				}
+				left = normalizeSQLNumber(left)
+				right = "(+CAST(? AS REAL))"
+			}
+		}
+		comparison := left + " " + op + " " + right
+		if c.Operator != dal.Equal {
+			guard := ""
+			if len(rightArgs) == 1 {
+				if _, ok := rightArgs[0].(string); ok {
+					guard = "typeof(" + left + ") = 'text'"
+				} else {
+					guard = "typeof(" + left + ") IN ('integer','real')"
+				}
+			} else {
+				guard = "(typeof(" + left + ") = typeof(" + right + ") OR (typeof(" + left + ") IN ('integer','real') AND typeof(" + right + ") IN ('integer','real')))"
+			}
+			comparison = "(" + guard + " AND " + comparison + ")"
+		}
+		return comparison, rightArgs, nil
 	case dal.GroupCondition:
 		if c.Operator() != dal.And && c.Operator() != dal.Or {
 			return "", nil, fmt.Errorf("unsupported group operator %q", c.Operator())
@@ -181,6 +243,41 @@ func compileSQLCondition(condition dal.Condition, alias string) (string, []any, 
 	default:
 		return "", nil, fmt.Errorf("unsupported condition %T", condition)
 	}
+}
+
+// DALgo compares JSON-normalized numbers as float64, including INTEGER values
+// outside the exact binary64 range. Normalize stored numeric values as well as
+// parameters before filtering; casting only the parameter still permits SQLite
+// to compare its original integer exactly. Preserve text/null types so numeric
+// normalization cannot turn a text value into an authorized number.
+func normalizeSQLNumber(expression string) string {
+	return "(CASE WHEN typeof(" + expression + ") IN ('integer','real') THEN CAST(" + expression + " AS REAL) ELSE " + expression + " END)"
+}
+
+func isSQLNumber(value any) bool {
+	if value == nil {
+		return false
+	}
+	switch reflect.TypeOf(value).Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizedNumber(value any) (float64, error) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return 0, fmt.Errorf("unsupported portable number: %w", err)
+	}
+	var number float64
+	if err := json.Unmarshal(encoded, &number); err != nil {
+		return 0, fmt.Errorf("unsupported portable number: %w", err)
+	}
+	return number, nil
 }
 
 // compileSQLExpression renders expression as SQL text plus bound args.
