@@ -100,7 +100,7 @@ func (s *sqliteProtectedStorage) within(ctx context.Context, ops []access.Protec
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	begin := "BEGIN"
 	if write {
 		begin = "BEGIN IMMEDIATE"

@@ -40,10 +40,10 @@ func TestSQLiteCompilerRejectsNonPortablePredicateValues(t *testing.T) {
 	if err := validateSQLValue([]string{"not", "a", "scalar"}); err == nil {
 		t.Fatal("non-byte slice accepted as a SQL scalar")
 	}
-	if _, _, err := compileSQLExpression(dal.NewFieldRef("other", "tenant")); err == nil {
+	if _, _, err := compileSQLExpression(dal.NewFieldRef("other", "tenant"), ""); err == nil {
 		t.Fatal("qualified field accepted by single-source compiler")
 	}
-	if _, _, err := compileSQLExpression(unsupportedSQLExpression{}); err == nil {
+	if _, _, err := compileSQLExpression(unsupportedSQLExpression{}, ""); err == nil {
 		t.Fatal("unknown expression accepted")
 	}
 	if _, err := arrayValues("not-an-array"); err == nil {
@@ -77,7 +77,7 @@ func TestSQLiteCompilerRejectsNonPortablePredicateValues(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			_, _, err := compileSQLCondition(tc.condition)
+			_, _, err := compileSQLCondition(tc.condition, "")
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("error = %v, wantErr %v", err, tc.wantErr)
 			}
@@ -93,7 +93,7 @@ func TestTransactionStructuredReaderUsesSafeCompilerAndIdentityFallback(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer sqlDB.Close()
+	defer func() { _ = sqlDB.Close() }()
 	mock.ExpectBegin()
 	mock.ExpectQuery("SELECT `name`, `id` AS `__dalgo_record_id` FROM `users`").
 		WillReturnRows(sqlmock.NewRows([]string{"name", recordIDHelperColumn}).AddRow("Ada", "u1"))
@@ -105,7 +105,7 @@ func TestTransactionStructuredReaderUsesSafeCompilerAndIdentityFallback(t *testi
 		if err != nil {
 			return err
 		}
-		defer reader.Close()
+		defer func() { _ = reader.Close() }()
 		row, err := reader.Next()
 		if err != nil {
 			return err
@@ -186,7 +186,7 @@ func TestSQLiteProtectedPreparationRejectsAmbiguousSchemas(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer raw.Close()
+			defer func() { _ = raw.Close() }()
 			if _, err = raw.Exec(tc.create); err != nil {
 				t.Fatal(err)
 			}
@@ -194,7 +194,7 @@ func TestSQLiteProtectedPreparationRejectsAmbiguousSchemas(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer conn.Close()
+			defer func() { _ = conn.Close() }()
 			storage := &sqliteProtectedStorage{db: raw, options: DbOptions{Recordsets: map[string]*Recordset{"items": NewRecordset("items", Table, tc.pk)}}}
 			session := &sqliteProtectedSession{conn: conn, storage: storage, alive: true}
 			op, err := access.NewProtectedInsert("insert", record.NewKeyWithID("items", "1"), map[string]any{"name": "value"})
@@ -213,7 +213,7 @@ func TestSQLiteProtectedPreparationRejectsNonCanonicalMutations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer raw.Close()
+	defer func() { _ = raw.Close() }()
 	if _, err = raw.Exec("CREATE TABLE items (id TEXT PRIMARY KEY, name TEXT NOT NULL); INSERT INTO items VALUES ('1','before')"); err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +221,7 @@ func TestSQLiteProtectedPreparationRejectsNonCanonicalMutations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	storage := &sqliteProtectedStorage{db: raw, options: DbOptions{Recordsets: map[string]*Recordset{"items": NewRecordset("items", Table, []dal.FieldRef{dal.Field("id")})}}}
 	session := &sqliteProtectedSession{conn: conn, storage: storage, alive: true}
 	key := record.NewKeyWithID("items", "1")
@@ -252,7 +252,7 @@ func TestSQLiteProtectedExecuteRequiresPreparedWritableSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer raw.Close()
+	defer func() { _ = raw.Close() }()
 	if _, err = raw.Exec("CREATE TABLE items (id TEXT PRIMARY KEY, name TEXT)"); err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +260,7 @@ func TestSQLiteProtectedExecuteRequiresPreparedWritableSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	op, _ := access.NewProtectedInsert("insert", record.NewKeyWithID("items", "1"), map[string]any{"name": "value"})
 	storage := &sqliteProtectedStorage{db: raw, options: DbOptions{Recordsets: map[string]*Recordset{"items": NewRecordset("items", Table, []dal.FieldRef{dal.Field("id")})}}}
 	for _, session := range []*sqliteProtectedSession{

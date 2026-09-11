@@ -129,11 +129,11 @@ func TestSQLiteProtectedRejectsTriggersAndWaitCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer lock.Close()
+	defer func() { _ = lock.Close() }()
 	if _, err = lock.ExecContext(context.Background(), "BEGIN IMMEDIATE"); err != nil {
 		t.Fatal(err)
 	}
-	defer lock.ExecContext(context.Background(), "ROLLBACK")
+	defer func() { _, _ = lock.ExecContext(context.Background(), "ROLLBACK") }()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
 	err = db.Update(ctx, record.NewKeyWithID("customers", "a"), []update.Update{update.ByFieldName("name", "Late")})

@@ -32,7 +32,7 @@ func TestCompileStructuredSQLParameterizedAndQuoted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "SELECT `name` AS `display\"name` FROM `users\" WHERE 1=1 --` WHERE (`status\"] OR 1=1 --` = ? AND `tenantID` = ? AND `role` IN (?, ?)) ORDER BY `createdAt` DESC LIMIT ? OFFSET ?"
+	want := "SELECT `name` AS `display\"name` FROM `users\" WHERE 1=1 --` WHERE ((+`status\"] OR 1=1 --` COLLATE BINARY) = ? AND (+`tenantID` COLLATE BINARY) = ? AND ((+`role` COLLATE BINARY) = ? OR (+`role` COLLATE BINARY) = ?)) ORDER BY (`createdAt` COLLATE BINARY) DESC LIMIT ? OFFSET ?"
 	if text != want {
 		t.Fatalf("SQL:\n got %s\nwant %s", text, want)
 	}
@@ -61,11 +61,11 @@ func TestCompileStructuredSQLSourceAlias(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "SELECT `InvoiceId`, `Total` FROM `Invoice` AS `i` WHERE `CustomerId` = ? ORDER BY `InvoiceDate` DESC"
+	want := "SELECT `InvoiceId`, `Total` FROM `Invoice` AS `i` WHERE (CASE WHEN typeof((+`CustomerId` COLLATE BINARY)) IN ('integer','real') THEN CAST((+`CustomerId` COLLATE BINARY) AS REAL) ELSE (+`CustomerId` COLLATE BINARY) END) = (+CAST(? AS REAL)) ORDER BY (`InvoiceDate` COLLATE BINARY) DESC"
 	if text != want {
 		t.Fatalf("SQL:\n got %s\nwant %s", text, want)
 	}
-	if !reflect.DeepEqual(args, []any{3}) {
+	if !reflect.DeepEqual(args, []any{float64(3)}) {
 		t.Fatalf("args = %#v", args)
 	}
 }
@@ -85,11 +85,11 @@ func TestCompileStructuredSQLQualifiedFieldReferences(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "SELECT `i`.`InvoiceId` FROM `Invoice` AS `i` WHERE `i`.`CustomerId` = ? ORDER BY `i`.`InvoiceDate` DESC"
+	want := "SELECT `i`.`InvoiceId` FROM `Invoice` AS `i` WHERE (CASE WHEN typeof((+`i`.`CustomerId` COLLATE BINARY)) IN ('integer','real') THEN CAST((+`i`.`CustomerId` COLLATE BINARY) AS REAL) ELSE (+`i`.`CustomerId` COLLATE BINARY) END) = (+CAST(? AS REAL)) ORDER BY (`i`.`InvoiceDate` COLLATE BINARY) DESC"
 	if text != want {
 		t.Fatalf("SQL:\n got %s\nwant %s", text, want)
 	}
-	if !reflect.DeepEqual(args, []any{3}) {
+	if !reflect.DeepEqual(args, []any{float64(3)}) {
 		t.Fatalf("args = %#v", args)
 	}
 }
@@ -346,7 +346,7 @@ func TestSQLitePolicyPredicatesIgnoreDeclaredCollationAndAffinity(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer raw.Close()
+	defer func() { _ = raw.Close() }()
 	if _, err = raw.Exec("CREATE TABLE customers (id TEXT PRIMARY KEY, name TEXT, tenant TEXT COLLATE NOCASE); INSERT INTO customers VALUES ('a','Hidden','a'),('b','Visible','A'),('c','TextNumber','1')"); err != nil {
 		t.Fatal(err)
 	}
@@ -372,7 +372,7 @@ func TestSQLitePolicyPredicatesIgnoreDeclaredCollationAndAffinity(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer reader.Close()
+			defer func() { _ = reader.Close() }()
 			row, err := reader.Next()
 			if tc.want == "" {
 				if !errors.Is(err, io.EOF) {
@@ -397,7 +397,7 @@ func TestSQLiteNumericPolicyConformanceBeforeLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer raw.Close()
+	defer func() { _ = raw.Close() }()
 	if _, err = raw.Exec("CREATE TABLE customers (id TEXT PRIMARY KEY, score, name TEXT)"); err != nil {
 		t.Fatal(err)
 	}
@@ -441,7 +441,7 @@ func TestSQLiteNumericPolicyConformanceBeforeLimit(t *testing.T) {
 				if e != nil {
 					t.Fatal(e)
 				}
-				defer reader.Close()
+				defer func() { _ = reader.Close() }()
 				row, e := reader.Next()
 				if expected == "" {
 					if !errors.Is(e, io.EOF) {
