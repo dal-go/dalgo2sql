@@ -257,6 +257,18 @@ func (s *sqliteProtectedSession) prepare(ctx context.Context, op access.Protecte
 	if hasFK {
 		return sqlitePrepared{}, unsupportedSQLite()
 	}
+	// The MVP does not authorize implicit effects in other tables. Reject
+	// incoming references too: inspecting only this table's FK list misses
+	// foreign-key actions declared on a referencing table.
+	var incoming int
+	if err := s.conn.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_schema AS schema
+		JOIN pragma_foreign_key_list(schema.name) AS fk
+		WHERE schema.type = 'table' AND fk."table" = ? COLLATE NOCASE`, table).Scan(&incoming); err != nil {
+		return sqlitePrepared{}, err
+	}
+	if incoming > 0 {
+		return sqlitePrepared{}, unsupportedSQLite()
+	}
 	rows, err := s.conn.QueryContext(ctx, "PRAGMA table_xinfo("+quoteSQLIdentifier(table)+")")
 	if err != nil {
 		return sqlitePrepared{}, err

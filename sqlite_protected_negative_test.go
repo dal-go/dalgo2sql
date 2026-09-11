@@ -177,6 +177,9 @@ func TestSQLiteProtectedPreparationRejectsAmbiguousSchemas(t *testing.T) {
 		{name: "composite primary key", create: "CREATE TABLE items (id TEXT, part TEXT, PRIMARY KEY(id, part))", pk: []dal.FieldRef{dal.Field("id")}},
 		{name: "generated column", create: "CREATE TABLE items (id TEXT PRIMARY KEY, name TEXT, folded TEXT GENERATED ALWAYS AS (lower(name)))", pk: []dal.FieldRef{dal.Field("id")}},
 		{name: "foreign key", create: "CREATE TABLE parents (id TEXT PRIMARY KEY); CREATE TABLE items (id TEXT PRIMARY KEY, parent_id TEXT REFERENCES parents(id))", pk: []dal.FieldRef{dal.Field("id")}},
+		{name: "incoming foreign key", create: "CREATE TABLE items (id TEXT PRIMARY KEY, name TEXT); CREATE TABLE children (id TEXT PRIMARY KEY, item_id TEXT REFERENCES items(id) ON DELETE CASCADE)", pk: []dal.FieldRef{dal.Field("id")}},
+		{name: "incoming foreign key case insensitive", create: "CREATE TABLE items (id TEXT PRIMARY KEY, name TEXT); CREATE TABLE children (id TEXT PRIMARY KEY, item_id TEXT REFERENCES ITEMS(id) ON UPDATE CASCADE)", pk: []dal.FieldRef{dal.Field("id")}},
+		{name: "incoming foreign key set null", create: "CREATE TABLE items (id TEXT PRIMARY KEY, name TEXT); CREATE TABLE children (id TEXT PRIMARY KEY, item_id TEXT REFERENCES items(id) ON DELETE SET NULL)", pk: []dal.FieldRef{dal.Field("id")}},
 		{name: "missing database primary key", create: "CREATE TABLE items (id TEXT, name TEXT)", pk: []dal.FieldRef{dal.Field("id")}},
 		{name: "configured composite key", create: "CREATE TABLE items (id TEXT PRIMARY KEY, name TEXT)", pk: []dal.FieldRef{dal.Field("id"), dal.Field("name")}},
 	}
