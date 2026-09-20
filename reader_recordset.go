@@ -3,6 +3,7 @@ package dalgo2sql
 import (
 	"context"
 	"fmt"
+	"math"
 	"reflect"
 	"time"
 
@@ -18,6 +19,9 @@ func getRecordsetReader(ctx context.Context, query dal.Query, execute executeQue
 
 func getRecordsetReaderWithDialect(ctx context.Context, query dal.Query, execute executeQueryFunc, dialect string, options ...recordset.Option) (rr *recordsetReader, err error) {
 	rr = &recordsetReader{}
+	if q, ok := query.(dal.StructuredQuery); ok {
+		rr.validateFinite = dal.HasAggregation(q)
+	}
 	if rr.readerBase, err = getReaderBaseWithDialect(ctx, query, execute, dialect); err != nil {
 		return nil, err
 	}
@@ -110,7 +114,8 @@ func getRecordsetReaderWithDialect(ctx context.Context, query dal.Query, execute
 
 type recordsetReader struct {
 	readerBase
-	rs recordset.Recordset
+	rs             recordset.Recordset
+	validateFinite bool
 }
 
 func (r *recordsetReader) Recordset() recordset.Recordset {
@@ -142,6 +147,12 @@ func (r *recordsetReader) Next() (row recordset.Row, rs recordset.Recordset, err
 	row = r.rs.NewRow()
 	for i := range r.colNames {
 		value := values[i]
+		if r.validateFinite {
+			if number, ok := value.(float64); ok && (math.IsNaN(number) || math.IsInf(number, 0)) {
+				err = fmt.Errorf("non-finite aggregate result in column %q", r.colNames[i])
+				return
+			}
+		}
 		col := r.rs.GetColumnByIndex(i)
 		vt := col.ValueType()
 		if value == nil {

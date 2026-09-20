@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"reflect"
 
 	"github.com/dal-go/dalgo/dal"
@@ -26,6 +27,7 @@ func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute e
 		},
 	}
 	if q, ok := query.(dal.StructuredQuery); ok {
+		rr.validateFinite = dal.HasAggregation(q)
 		if rec := q.IntoRecord(); rec != nil {
 			rr.newRecord = func() dalrecord.Record { return q.IntoRecord() }
 		} else if from := q.From(); from != nil && from.Base() != nil {
@@ -34,7 +36,7 @@ func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute e
 				return dalrecord.NewRecordWithData(dalrecord.NewKeyWithID(collection, recordIDHelperColumn), make(map[string]any))
 			}
 		}
-		if primaryKey := primaryKeyForQuery(options, query); primaryKey != "" {
+		if primaryKey := primaryKeyForQuery(options, query); primaryKey != "" && !dal.HasAggregation(q) {
 			rr.identityColumn = primaryKey
 			if selected := q.Columns(); len(selected) > 0 && !selectsIdentityField(selected, primaryKey) {
 				columns := append([]dal.Column(nil), selected...)
@@ -64,6 +66,7 @@ type recordsReader struct {
 	identityColumn      string
 	identityColumnIndex int
 	hideIdentityColumn  bool
+	validateFinite      bool
 }
 
 func selectsIdentityField(columns []dal.Column, name string) bool {
@@ -134,6 +137,11 @@ func (r recordsReader) Next() (record dalrecord.Record, err error) {
 		}
 		for i, n := range r.colNames {
 			v := values[i]
+			if r.validateFinite {
+				if number, ok := v.(float64); ok && (math.IsNaN(number) || math.IsInf(number, 0)) {
+					return nil, fmt.Errorf("non-finite aggregate result in column %q", n)
+				}
+			}
 			// database/sql returns []byte for TEXT/VARCHAR columns with some
 			// drivers (notably go-sql-driver/mysql); store as string so the
 			// map is usable and JSON-serializes as text, not base64. Matches

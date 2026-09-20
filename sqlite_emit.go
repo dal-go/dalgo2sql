@@ -19,8 +19,11 @@ func compileStructuredSQL(q dal.StructuredQuery) (string, []any, error) {
 	if q == nil || q.From() == nil || q.From().Base() == nil {
 		return "", nil, fmt.Errorf("structured SQL query requires a source")
 	}
-	if len(q.From().Joins()) != 0 || len(q.GroupBy()) != 0 || q.Having() != nil || q.StartFrom() != "" || q.StartAfter() != "" {
-		return "", nil, fmt.Errorf("structured SQL query uses an unsupported join, grouping, having, or cursor")
+	if len(q.From().Joins()) != 0 || q.StartFrom() != "" || q.StartAfter() != "" {
+		return "", nil, fmt.Errorf("structured SQL query uses an unsupported join or cursor")
+	}
+	if err := dal.ValidateAggregation(q); err != nil {
+		return "", nil, fmt.Errorf("invalid aggregation: %w", err)
 	}
 	source := q.From().Base()
 	switch source := source.(type) {
@@ -46,7 +49,21 @@ func compileStructuredSQL(q dal.StructuredQuery) (string, []any, error) {
 	if err != nil {
 		return "", nil, err
 	}
-	if columns := q.Columns(); len(columns) == 0 {
+	columns := q.Columns()
+	if dal.HasAggregation(q) {
+		columns = dal.EffectiveAggregationColumns(q)
+	}
+	aliases := make(map[string]dal.Expression, len(columns))
+	groupExpressions := make(map[string]bool, len(q.GroupBy()))
+	for _, group := range q.GroupBy() {
+		groupExpressions[group.String()] = true
+	}
+	for _, column := range columns {
+		if column.Alias != "" {
+			aliases[column.Alias] = column.Expression
+		}
+	}
+	if len(columns) == 0 {
 		b.WriteByte('*')
 	} else {
 		for i, column := range columns {
@@ -61,11 +78,23 @@ func compileStructuredSQL(q dal.StructuredQuery) (string, []any, error) {
 			if err != nil {
 				return "", nil, fmt.Errorf("column %d: %w", i, err)
 			}
+			normalizedGroupOutput := dal.HasAggregation(q) && groupExpressions[column.Expression.String()]
+			if normalizedGroupOutput {
+				expr = normalizeSQLNumber(expr)
+				values = repeatSQLArgs(values, 3)
+			}
 			b.WriteString(expr)
 			args = append(args, values...)
 			if column.Alias != "" {
 				b.WriteString(" AS ")
 				b.WriteString(quoteSQLIdentifier(column.Alias))
+			} else if normalizedGroupOutput {
+				name := column.Expression.String()
+				if field, ok := column.Expression.(dal.FieldRef); ok {
+					name = field.Name()
+				}
+				b.WriteString(" AS ")
+				b.WriteString(quoteSQLIdentifier(name))
 			}
 		}
 	}
@@ -84,20 +113,52 @@ func compileStructuredSQL(q dal.StructuredQuery) (string, []any, error) {
 		b.WriteString(condition)
 		args = append(args, values...)
 	}
+	if groups := q.GroupBy(); len(groups) > 0 {
+		b.WriteString(" GROUP BY ")
+		for i, group := range groups {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			expr, values, err := compileSQLExpression(group, sourceAlias)
+			if err != nil {
+				return "", nil, fmt.Errorf("groupBy %d: %w", i, err)
+			}
+			if dal.HasAggregation(q) {
+				expr = normalizeSQLNumber(expr)
+				values = repeatSQLArgs(values, 3)
+			}
+			b.WriteString("(" + expr + " COLLATE BINARY)")
+			args = append(args, values...)
+		}
+	}
+	if q.Having() != nil {
+		condition, values, err := compileSQLCondition(rewriteSQLConditionAliases(q.Having(), aliases), sourceAlias)
+		if err != nil {
+			return "", nil, fmt.Errorf("having: %w", err)
+		}
+		b.WriteString(" HAVING ")
+		b.WriteString(condition)
+		args = append(args, values...)
+	}
 	if orders := q.OrderBy(); len(orders) > 0 {
 		b.WriteString(" ORDER BY ")
 		for i, order := range orders {
 			if i > 0 {
 				b.WriteString(", ")
 			}
-			expr, values, err := compileSQLExpression(order.Expression(), sourceAlias)
+			expr, values, err := compileSQLExpression(rewriteSQLExpressionAlias(order.Expression(), aliases), sourceAlias)
 			if err != nil {
 				return "", nil, fmt.Errorf("orderBy %d: %w", i, err)
 			}
-			if len(values) != 0 {
+			if len(values) != 0 && !dal.HasAggregation(q) {
 				return "", nil, fmt.Errorf("orderBy %d: values are not supported", i)
 			}
+			if dal.HasAggregation(q) {
+				expr = normalizeSQLNumber(expr)
+				values = repeatSQLArgs(values, 3)
+			}
 			b.WriteString("(" + expr + " COLLATE BINARY)")
+			args = append(args, values...)
 			if order.Descending() {
 				b.WriteString(" DESC")
 			}
@@ -137,13 +198,16 @@ func compileSQLCondition(condition dal.Condition, alias string) (string, []any, 
 		if err != nil {
 			return "", nil, err
 		}
-		if len(leftArgs) != 0 {
-			return "", nil, fmt.Errorf("comparison left operand must be a field")
+		if len(leftArgs) != 0 && !sqlExpressionContainsAggregate(c.Left) {
+			return "", nil, fmt.Errorf("comparison left operand must be a field or aggregate")
 		}
 		// Unary plus removes declared affinity without coercing the stored
 		// value; explicit BINARY prevents schema collations widening ACLs.
 		left = "(+" + left + " COLLATE BINARY)"
 		if c.Operator == dal.In {
+			if len(leftArgs) != 0 {
+				return "", nil, fmt.Errorf("IN left operand must not contain parameters")
+			}
 			array, ok := c.Right.(dal.Array)
 			if !ok {
 				return "", nil, fmt.Errorf("IN requires an array right operand")
@@ -191,17 +255,20 @@ func compileSQLCondition(condition dal.Condition, alias string) (string, []any, 
 		if err != nil {
 			return "", nil, err
 		}
-		if len(rightArgs) == 0 {
+		_, rightIsConstant := c.Right.(dal.Constant)
+		if !rightIsConstant {
 			right = "(+" + right + " COLLATE BINARY)"
 			left, right = normalizeSQLNumber(left), normalizeSQLNumber(right)
+			leftArgs = repeatSQLArgs(leftArgs, 3)
+			rightArgs = repeatSQLArgs(rightArgs, 3)
 		}
-		if len(rightArgs) == 1 {
+		if rightIsConstant && len(rightArgs) == 1 {
 			if _, ok := rightArgs[0].(bool); ok {
 				return "", nil, fmt.Errorf("portable SQLite boolean predicates require schema typing")
 			}
 			if rightArgs[0] == nil {
 				if c.Operator == dal.Equal {
-					return left + " IS NULL", nil, nil
+					return left + " IS NULL", leftArgs, nil
 				}
 				return "0 = 1", nil, nil
 			}
@@ -211,13 +278,17 @@ func compileSQLCondition(condition dal.Condition, alias string) (string, []any, 
 					return "", nil, err
 				}
 				left = normalizeSQLNumber(left)
+				leftArgs = repeatSQLArgs(leftArgs, 3)
 				right = "(+CAST(? AS REAL))"
 			}
 		}
 		comparison := left + " " + op + " " + right
-		if c.Operator != dal.Equal {
+		if c.Operator == dal.Equal {
+			return comparison, append(append([]any(nil), leftArgs...), rightArgs...), nil
+		}
+		{
 			guard := ""
-			if len(rightArgs) == 1 {
+			if rightIsConstant {
 				if _, ok := rightArgs[0].(string); ok {
 					guard = "typeof(" + left + ") = 'text'"
 				} else {
@@ -228,7 +299,22 @@ func compileSQLCondition(condition dal.Condition, alias string) (string, []any, 
 			}
 			comparison = "(" + guard + " AND " + comparison + ")"
 		}
-		return comparison, rightArgs, nil
+		if !rightIsConstant {
+			// The type guard contains each operand twice and the comparison
+			// contains each once more. Preserve placeholder order as L,R,L,R,L,R.
+			values := make([]any, 0, 3*(len(leftArgs)+len(rightArgs)))
+			for range 3 {
+				values = append(values, leftArgs...)
+				values = append(values, rightArgs...)
+			}
+			return comparison, values, nil
+		}
+		// A constant comparison guard references only the left expression;
+		// the comparison then references left followed by right.
+		values := append([]any(nil), leftArgs...)
+		values = append(values, leftArgs...)
+		values = append(values, rightArgs...)
+		return comparison, values, nil
 	case dal.GroupCondition:
 		if c.Operator() != dal.And && c.Operator() != dal.Or {
 			return "", nil, fmt.Errorf("unsupported group operator %q", c.Operator())
@@ -253,6 +339,17 @@ func compileSQLCondition(condition dal.Condition, alias string) (string, []any, 
 	}
 }
 
+func sqlExpressionContainsAggregate(expression dal.Expression) bool {
+	switch expression := expression.(type) {
+	case dal.AggregateFunc:
+		return true
+	case dal.BinaryExpression:
+		return sqlExpressionContainsAggregate(expression.Left) || sqlExpressionContainsAggregate(expression.Right)
+	default:
+		return false
+	}
+}
+
 // DALgo compares JSON-normalized numbers as float64, including INTEGER values
 // outside the exact binary64 range. Normalize stored numeric values as well as
 // parameters before filtering; casting only the parameter still permits SQLite
@@ -260,6 +357,17 @@ func compileSQLCondition(condition dal.Condition, alias string) (string, []any, 
 // normalization cannot turn a text value into an authorized number.
 func normalizeSQLNumber(expression string) string {
 	return "(CASE WHEN typeof(" + expression + ") IN ('integer','real') THEN CAST(" + expression + " AS REAL) ELSE " + expression + " END)"
+}
+
+func repeatSQLArgs(values []any, count int) []any {
+	if len(values) == 0 || count <= 0 {
+		return nil
+	}
+	result := make([]any, 0, len(values)*count)
+	for range count {
+		result = append(result, values...)
+	}
+	return result
 }
 
 func isSQLNumber(value any) bool {
@@ -309,8 +417,116 @@ func compileSQLExpression(expression dal.Expression, alias string) (string, []an
 			return "", nil, err
 		}
 		return "?", []any{e.Value}, nil
+	case dal.StarExpression:
+		return "*", nil, nil
+	case dal.AggregateFunc:
+		name := strings.ToUpper(e.FuncName())
+		if name == dal.FIRST || name == dal.LAST {
+			return "", nil, fmt.Errorf("%s requires deterministic aggregate ordering and is not native in SQLite", name)
+		}
+		args := e.FuncArgs()
+		if len(args) != 1 {
+			return "", nil, fmt.Errorf("%s requires exactly one argument", name)
+		}
+		arg, values, err := compileSQLExpression(args[0], alias)
+		if err != nil {
+			return "", nil, err
+		}
+		distinctAggregate := false
+		if d, ok := e.(dal.DistinctAggregateFunc); ok {
+			distinctAggregate = d.IsDistinct()
+		}
+		distinct := ""
+		if distinctAggregate {
+			distinct = "DISTINCT "
+		}
+		switch name {
+		case dal.COUNT, dal.SUM, dal.AVERAGE, dal.MIN, dal.MAX:
+		default:
+			return "", nil, fmt.Errorf("unsupported aggregate %q", name)
+		}
+		portableArg := arg
+		if name == dal.COUNT && distinctAggregate {
+			if _, star := args[0].(dal.StarExpression); !star {
+				portableArg = "(" + normalizeSQLNumber(arg) + " COLLATE BINARY)"
+				values = repeatSQLArgs(values, 3)
+			}
+		}
+		if name == dal.MIN || name == dal.MAX {
+			portableArg = "(" + normalizeSQLNumber(arg) + " COLLATE BINARY)"
+			values = repeatSQLArgs(values, 3)
+		}
+		expression := name + "(" + distinct + portableArg + ")"
+		if name == dal.SUM || name == dal.AVERAGE {
+			numericArg := "CASE WHEN typeof(" + arg + ") IN ('integer','real') THEN CAST(" + arg + " AS REAL) ELSE NULL END"
+			expression = name + "(" + distinct + numericArg + ")"
+			values = repeatSQLArgs(values, 2)
+		}
+		if name == dal.SUM {
+			expression = "CAST(" + expression + " AS REAL)"
+		}
+		return expression, values, nil
+	case dal.BinaryExpression:
+		left, leftArgs, err := compileSQLExpression(e.Left, alias)
+		if err != nil {
+			return "", nil, err
+		}
+		right, rightArgs, err := compileSQLExpression(e.Right, alias)
+		if err != nil {
+			return "", nil, err
+		}
+		switch e.Operator {
+		case dal.Add, dal.Subtract, dal.Multiply, dal.Divide:
+		default:
+			return "", nil, fmt.Errorf("unsupported arithmetic operator %q", e.Operator)
+		}
+		left = normalizeSQLNumber(left)
+		right = normalizeSQLNumber(right)
+		leftArgs = repeatSQLArgs(leftArgs, 3)
+		rightArgs = repeatSQLArgs(rightArgs, 3)
+		guard := "typeof(" + left + ") IN ('integer','real') AND typeof(" + right + ") IN ('integer','real')"
+		values := append(append([]any(nil), leftArgs...), rightArgs...)
+		if e.Operator == dal.Divide {
+			guard += " AND " + right + " != 0"
+			values = append(values, rightArgs...)
+		}
+		expression := "(CASE WHEN " + guard + " THEN " + left + " " + string(e.Operator) + " " + right + " ELSE NULL END)"
+		values = append(values, leftArgs...)
+		values = append(values, rightArgs...)
+		return expression, values, nil
 	default:
 		return "", nil, fmt.Errorf("unsupported expression %T", expression)
+	}
+}
+
+func rewriteSQLExpressionAlias(expression dal.Expression, aliases map[string]dal.Expression) dal.Expression {
+	if field, ok := expression.(dal.FieldRef); ok && field.Source() == "" {
+		if replacement, exists := aliases[field.Name()]; exists {
+			return replacement
+		}
+	}
+	if binary, ok := expression.(dal.BinaryExpression); ok {
+		binary.Left = rewriteSQLExpressionAlias(binary.Left, aliases)
+		binary.Right = rewriteSQLExpressionAlias(binary.Right, aliases)
+		return binary
+	}
+	return expression
+}
+
+func rewriteSQLConditionAliases(condition dal.Condition, aliases map[string]dal.Expression) dal.Condition {
+	switch c := condition.(type) {
+	case dal.Comparison:
+		c.Left = rewriteSQLExpressionAlias(c.Left, aliases)
+		c.Right = rewriteSQLExpressionAlias(c.Right, aliases)
+		return c
+	case dal.GroupCondition:
+		children := make([]dal.Condition, len(c.Conditions()))
+		for i, child := range c.Conditions() {
+			children[i] = rewriteSQLConditionAliases(child, aliases)
+		}
+		return dal.NewGroupCondition(c.Operator(), children...)
+	default:
+		return condition
 	}
 }
 
