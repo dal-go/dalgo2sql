@@ -12,9 +12,12 @@ import (
 type executeQueryFunc func(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 
 type readerBase struct {
-	rows     *sql.Rows
-	colNames []string
-	colTypes []*sql.ColumnType
+	rows           *sql.Rows
+	colNames       []string
+	colTypes       []*sql.ColumnType
+	scanColNames   []string
+	scanColTypes   []*sql.ColumnType
+	visibleIndexes []int
 }
 
 func getReaderBase(ctx context.Context, query dal.Query, execute executeQueryFunc) (readerBase, error) {
@@ -24,6 +27,7 @@ func getReaderBase(ctx context.Context, query dal.Query, execute executeQueryFun
 func getReaderBaseWithDialect(ctx context.Context, query dal.Query, execute executeQueryFunc, dialect string) (readerBase, error) {
 	var a []any
 	var text string
+	var projection *wildcardProjectionPlan
 	switch q := query.(type) {
 	case dal.TextQuery:
 		text = q.Text()
@@ -45,6 +49,10 @@ func getReaderBaseWithDialect(ctx context.Context, query dal.Query, execute exec
 			}
 		}
 	case dal.StructuredQuery:
+		var err error
+		if projection, err = planWildcardProjection(q); err != nil {
+			return readerBase{}, err
+		}
 		switch dialect {
 		case "":
 			text = emitSQL(q)
@@ -66,26 +74,49 @@ func getReaderBaseWithDialect(ctx context.Context, query dal.Query, execute exec
 	rb := readerBase{
 		rows: rows,
 	}
-	if rb.colNames, err = rb.rows.Columns(); err != nil {
+	if rb.scanColNames, err = rb.rows.Columns(); err != nil {
+		_ = rb.rows.Close()
 		return rb, fmt.Errorf("failed to read column names: %w", err)
 	}
-	if rb.colTypes, err = rb.rows.ColumnTypes(); err != nil {
+	if rb.scanColTypes, err = rb.rows.ColumnTypes(); err != nil {
+		_ = rb.rows.Close()
 		return rb, fmt.Errorf("failed to read column types: %w", err)
 	}
-	if len(rb.colNames) != len(rb.colTypes) {
+	if len(rb.scanColNames) != len(rb.scanColTypes) {
+		_ = rb.rows.Close()
 		return rb, fmt.Errorf("length if column names and column types don't match")
+	}
+	rb.visibleIndexes = make([]int, len(rb.scanColNames))
+	for i := range rb.visibleIndexes {
+		rb.visibleIndexes[i] = i
+	}
+	if projection != nil {
+		if rb.visibleIndexes, err = projection.visibleIndexes(rb.scanColNames); err != nil {
+			_ = rb.rows.Close()
+			return rb, err
+		}
+	}
+	rb.colNames = make([]string, len(rb.visibleIndexes))
+	rb.colTypes = make([]*sql.ColumnType, len(rb.visibleIndexes))
+	for i, sourceIndex := range rb.visibleIndexes {
+		rb.colNames[i] = rb.scanColNames[sourceIndex]
+		rb.colTypes[i] = rb.scanColTypes[sourceIndex]
 	}
 	return rb, nil
 }
 
 func (rb readerBase) scanValues() (values []any, err error) {
-	values = make([]any, len(rb.colNames))
-	scanArgs := make([]any, len(rb.colNames))
-	for i := range values {
-		scanArgs[i] = &values[i]
+	rawValues := make([]any, len(rb.scanColNames))
+	scanArgs := make([]any, len(rb.scanColNames))
+	for i := range rawValues {
+		scanArgs[i] = &rawValues[i]
 	}
 	if err = rb.rows.Scan(scanArgs...); err != nil {
 		return nil, err
+	}
+	values = make([]any, len(rb.visibleIndexes))
+	for i, sourceIndex := range rb.visibleIndexes {
+		values[i] = rawValues[sourceIndex]
 	}
 	return values, nil
 }

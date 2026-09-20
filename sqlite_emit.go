@@ -42,12 +42,20 @@ func compileStructuredSQL(q dal.StructuredQuery) (string, []any, error) {
 	var b strings.Builder
 	b.WriteString("SELECT ")
 	var args []any
+	wildcard, err := planWildcardProjection(q)
+	if err != nil {
+		return "", nil, err
+	}
 	if columns := q.Columns(); len(columns) == 0 {
 		b.WriteByte('*')
 	} else {
 		for i, column := range columns {
 			if i > 0 {
 				b.WriteString(", ")
+			}
+			if column.Wildcard != nil {
+				b.WriteString(wildcard.sqlExpression(quoteSQLIdentifier))
+				continue
 			}
 			expr, values, err := compileSQLExpression(column.Expression, sourceAlias)
 			if err != nil {
@@ -348,7 +356,19 @@ func validateSQLValue(value any) error {
 // emitSQL preserves the historical string-rewrite helper for compatibility.
 // Structured query execution uses compileStructuredSQL instead.
 func emitSQL(q dal.StructuredQuery) string {
-	text := stripBracketIdents(q.String())
+	text := q.String()
+	if wildcard, err := planWildcardProjection(q); err == nil && wildcard != nil {
+		for _, column := range q.Columns() {
+			if column.Wildcard != nil {
+				// QueryString's legacy FROM rendering does not emit source aliases.
+				// This path supports only a single source, so an unqualified wildcard
+				// is equivalent and avoids producing an alias that is absent from FROM.
+				text = strings.Replace(text, column.String(), "*", 1)
+				break
+			}
+		}
+	}
+	text = stripBracketIdents(text)
 	if limit := q.Limit(); limit > 0 {
 		top := fmt.Sprintf("SELECT TOP %d", limit)
 		if strings.HasPrefix(text, top) {
