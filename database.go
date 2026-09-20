@@ -23,6 +23,26 @@ type database struct {
 	options DbOptions
 }
 
+// QueryCapabilities advertises the SQLite structured-query subset. FIRST and
+// LAST remain local until aggregate-local ORDER BY can be rendered without
+// relying on unspecified row order.
+func (dtb *database) QueryCapabilities() dal.QueryCapabilities {
+	if dtb.options.StructuredQueryDialect != "sqlite" {
+		return dal.QueryCapabilities{}
+	}
+	return dal.QueryCapabilities{
+		GroupBy: true,
+		Having:  true,
+		OrderBy: true,
+		Aggregate: dal.AggregateCapabilities{
+			Count: true, CountDistinct: true,
+			Sum: true, SumDistinct: true,
+			Avg: true, AvgDistinct: true,
+			Min: true, Max: true,
+		},
+	}
+}
+
 func (dtb *database) ExecuteQueryToRecordsetReader(ctx context.Context, query dal.Query, options ...recordset.Option) (dal.RecordsetReader, error) {
 	return getRecordsetReaderWithDialect(ctx, query, dtb.executeQuery, dtb.options.StructuredQueryDialect, options...)
 }

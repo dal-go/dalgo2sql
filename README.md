@@ -25,6 +25,15 @@ We build with our own tooling:
 
     go get github.com/dal-go/dalgo2sql
 
+## SQLite structured aggregation
+
+With `DbOptions.StructuredQueryDialect` set to `sqlite`, structured DALgo queries
+render GROUP BY, COUNT, SUM, AVG, MIN, MAX, DISTINCT aggregates, HAVING, alias
+rewrites, result ordering and pagination natively. SUM/AVG normalize numeric
+inputs to REAL for parity with DALgo's generic `float64` fallback. FIRST/LAST
+are deliberately not advertised until DALgo models aggregate-local ordering;
+using unspecified SQLite row order would not be deterministic.
+
 ## End2end - is a separate module
 
 For end-to-end testing a SQLite driver is used.
