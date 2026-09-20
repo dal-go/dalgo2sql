@@ -9,7 +9,7 @@ on:
 
 jobs:
   qodana:
-    if: false
+    if: ${{ vars.QODANA_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
