@@ -20,6 +20,7 @@ const recordIDHelperColumn = "__dalgo_record_id"
 
 func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute executeQueryFunc, options DbOptions) (rr *recordsReader, err error) {
 	rr = &recordsReader{
+		identityColumnIndex: -1,
 		newRecord: func() dalrecord.Record {
 			return dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("Unknown", ""), make(map[string]any))
 		},
@@ -50,19 +51,35 @@ func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute e
 		err = fmt.Errorf("failed to get SQL reader: %w", err)
 		return
 	}
+	if rr.hideIdentityColumn {
+		rr.identityColumnIndex = len(rr.colNames) - 1
+	}
 
 	return
 }
 
 type recordsReader struct {
 	readerBase
-	newRecord          func() dalrecord.Record
-	identityColumn     string
-	hideIdentityColumn bool
+	newRecord           func() dalrecord.Record
+	identityColumn      string
+	identityColumnIndex int
+	hideIdentityColumn  bool
 }
 
 func selectsIdentityField(columns []dal.Column, name string) bool {
 	for _, column := range columns {
+		if column.Wildcard != nil {
+			excluded := false
+			for _, excludedName := range column.Wildcard.Exclude {
+				if excludedName == name {
+					excluded = true
+					break
+				}
+			}
+			if !excluded {
+				return true
+			}
+		}
 		if field, ok := column.Expression.(dal.FieldRef); ok && field.Name() == name && (column.Alias == "" || column.Alias == name) {
 			return true
 		}
@@ -124,13 +141,17 @@ func (r recordsReader) Next() (record dalrecord.Record, err error) {
 			if b, ok := v.([]byte); ok {
 				v = string(b)
 			}
-			if n == r.identityColumn {
+			identityValue := n == r.identityColumn
+			if r.hideIdentityColumn {
+				identityValue = i == r.identityColumnIndex
+			}
+			if identityValue {
 				record.Key().ID = v
 				if v != nil {
 					record.Key().IDKind = reflect.TypeOf(v).Kind()
 				}
 			}
-			if !r.hideIdentityColumn || n != r.identityColumn {
+			if !r.hideIdentityColumn || i != r.identityColumnIndex {
 				d[n] = v
 			}
 		}

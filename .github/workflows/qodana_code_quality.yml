@@ -1,15 +1,10 @@
 name: Qodana
 on:
   workflow_dispatch:
-  pull_request:
-  push:
-    branches: # Specify your branches here
-      - main # The 'main' branch
-      - 'releases/*' # The release branches
 
 jobs:
   qodana:
-    if: false
+    if: ${{ vars.QODANA_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
