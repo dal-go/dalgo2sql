@@ -85,7 +85,11 @@ func TestSQLiteParameterizedAggregateAcrossResultStages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer raw.Close()
+	defer func() {
+		if err := raw.Close(); err != nil {
+			t.Errorf("close sqlite: %v", err)
+		}
+	}()
 	if _, err := raw.Exec(`CREATE TABLE items (category TEXT, quantity INTEGER);
 		INSERT INTO items VALUES ('A', 1), ('A', 2);`); err != nil {
 		t.Fatal(err)
@@ -101,7 +105,11 @@ func TestSQLiteParameterizedAggregateAcrossResultStages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer reader.Close()
+	defer func() {
+		if err := reader.Close(); err != nil {
+			t.Errorf("close aggregation reader: %v", err)
+		}
+	}()
 	rec, err := reader.Next()
 	if err != nil {
 		t.Fatal(err)
@@ -131,7 +139,11 @@ func TestSQLiteNativeAggregation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer raw.Close()
+	defer func() {
+		if err := raw.Close(); err != nil {
+			t.Errorf("close sqlite: %v", err)
+		}
+	}()
 	_, err = raw.Exec(`CREATE TABLE orders (
         id TEXT PRIMARY KEY, country TEXT, customer_id TEXT,
         quantity INTEGER, unit_price REAL, paid INTEGER
@@ -153,7 +165,11 @@ func TestSQLiteNativeAggregation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer reader.Close()
+	defer func() {
+		if err := reader.Close(); err != nil {
+			t.Errorf("close aggregation reader: %v", err)
+		}
+	}()
 	record, err := reader.Next()
 	if err != nil {
 		t.Fatal(err)
@@ -172,7 +188,11 @@ func TestSQLiteUngroupedEmptyAggregation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer raw.Close()
+	defer func() {
+		if err := raw.Close(); err != nil {
+			t.Errorf("close sqlite: %v", err)
+		}
+	}()
 	if _, err := raw.Exec(`CREATE TABLE empty_orders (id TEXT PRIMARY KEY, amount REAL)`); err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +205,11 @@ func TestSQLiteUngroupedEmptyAggregation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer reader.Close()
+	defer func() {
+		if err := reader.Close(); err != nil {
+			t.Errorf("close aggregation reader: %v", err)
+		}
+	}()
 	rec, err := reader.Next()
 	if err != nil {
 		t.Fatal(err)
@@ -211,7 +235,11 @@ func TestSQLiteAggregationRejectsNonFiniteResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer raw.Close()
+	defer func() {
+		if err := raw.Close(); err != nil {
+			t.Errorf("close sqlite: %v", err)
+		}
+	}()
 	if _, err := raw.Exec(`CREATE TABLE values_to_sum (amount REAL);
 		INSERT INTO values_to_sum VALUES (1e308), (1e308);`); err != nil {
 		t.Fatal(err)
@@ -235,7 +263,11 @@ func TestSQLiteAggregationRejectsNonFiniteResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer recordsetReader.Close()
+	defer func() {
+		if err := recordsetReader.Close(); err != nil {
+			t.Errorf("close aggregation recordset reader: %v", err)
+		}
+	}()
 	if _, _, err := recordsetReader.Next(); err == nil || !strings.Contains(err.Error(), "non-finite aggregate result") {
 		t.Fatalf("recordset error = %v", err)
 	}

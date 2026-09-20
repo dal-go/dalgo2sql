@@ -53,7 +53,11 @@ func TestAggregationNativeStreamingHashParity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer raw.Close()
+	defer func() {
+		if err := raw.Close(); err != nil {
+			t.Errorf("close sqlite: %v", err)
+		}
+	}()
 	if _, err := raw.Exec(`CREATE TABLE events (bucket INTEGER, tag TEXT COLLATE NOCASE, amount INTEGER);
 		INSERT INTO events VALUES
 		(9007199254740992, 'A', 1),
@@ -82,7 +86,11 @@ func readAggregationRows(t *testing.T, ctx context.Context, db dal.DB, query dal
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer reader.Close()
+	defer func() {
+		if err := reader.Close(); err != nil {
+			t.Errorf("close aggregation reader: %v", err)
+		}
+	}()
 	var rows []map[string]any
 	for {
 		rec, err := reader.Next()
