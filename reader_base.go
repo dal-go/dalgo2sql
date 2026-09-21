@@ -62,6 +62,19 @@ func getReaderBaseWithDialect(ctx context.Context, query dal.Query, execute exec
 			if err != nil {
 				return readerBase{}, &access.DeniedError{Decision: access.Decision{Operation: access.Query, Code: access.CodeEnforcementUnsupported, Scope: access.DecisionScopeOperation, Explanation: "structured SQLite query is unsupported"}}
 			}
+			if projection != nil {
+				var names []string
+				if names, err = sqliteSourceColumns(ctx, q, execute); err != nil {
+					return readerBase{}, fmt.Errorf("failed to inspect SQLite wildcard source: %w", err)
+				}
+				if expanded, ok := projection.expandSQLiteWildcard(q, names); ok {
+					text, a, err = compileStructuredSQL(expanded)
+					if err != nil {
+						return readerBase{}, fmt.Errorf("failed to compile expanded SQLite projection: %w", err)
+					}
+					projection = nil
+				}
+			}
 		default:
 			return readerBase{}, fmt.Errorf("unsupported structured query dialect %q", dialect)
 		}
@@ -103,6 +116,33 @@ func getReaderBaseWithDialect(ctx context.Context, query dal.Query, execute exec
 		rb.colTypes[i] = rb.scanColTypes[sourceIndex]
 	}
 	return rb, nil
+}
+
+func sqliteSourceColumns(ctx context.Context, q dal.StructuredQuery, execute executeQueryFunc) ([]string, error) {
+	source := q.From().Base()
+	// table_xinfo gives the actual identifiers, not SELECT * result labels,
+	// which SQLite may prefix when full_column_names is enabled. It also
+	// includes generated columns (hidden 2/3), which SELECT * returns.
+	rows, err := execute(ctx, "SELECT name, hidden FROM pragma_table_xinfo(?) ORDER BY cid", source.Name())
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var names []string
+	for rows.Next() {
+		var name string
+		var hidden int
+		if err := rows.Scan(&name, &hidden); err != nil {
+			return nil, err
+		}
+		if hidden == 0 || hidden == 2 || hidden == 3 { // virtual-table hidden columns (1) are absent from SELECT *
+			names = append(names, name)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return names, nil
 }
 
 func (rb readerBase) scanValues() (values []any, err error) {
