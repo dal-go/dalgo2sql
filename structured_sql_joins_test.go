@@ -502,3 +502,200 @@ func TestCompileStructuredSQLJoinCompositionClauses(t *testing.T) {
 		t.Fatalf("composition args = %s, want %s", got, want)
 	}
 }
+
+func TestCompileStructuredSQLNativeJoinRewritesAggregateAliasesInGroupedHavingAndOrder(t *testing.T) {
+	raw, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	if _, err := raw.Exec(`CREATE TABLE A (id INTEGER); CREATE TABLE B (a_id INTEGER);
+		INSERT INTO A VALUES (1), (2); INSERT INTO B VALUES (1), (1), (2);`); err != nil {
+		t.Fatal(err)
+	}
+	count := dal.NewAggregate(dal.COUNT, false, dal.Star())
+	query := dal.From(dal.NewRootCollectionRef("A", "a")).Join(
+		dal.NewJoinedSource(dal.NewRootCollectionRef("B", "b"), dal.JoinInner, sqlJoin("a", "id", "b", "a_id")),
+	).NewQuery().
+		GroupBy(dal.NewFieldRef("a", "id")).
+		Having(dal.NewGroupCondition(dal.And,
+			dal.NewComparison(dal.NewFieldRef("", "total"), dal.GreaterOrEqual, dal.NewConstant(1)),
+			dal.NewComparison(dal.NewFieldRef("", "id"), dal.GreaterThen, dal.NewConstant(0)),
+		)).
+		OrderBy(dal.Descending(dal.Binary(dal.NewFieldRef("", "total"), dal.Add, dal.NewConstant(1)))).
+		SelectColumns(
+			dal.Column{Expression: dal.NewFieldRef("a", "id"), Alias: "id"},
+			dal.Column{Expression: count, Alias: "total"},
+		)
+	text, args, err := compileStructuredSQL(query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, " HAVING ") || !strings.Contains(text, " AND ") || !strings.Contains(text, " ORDER BY ") {
+		t.Fatalf("grouped native JOIN did not preserve HAVING/ORDER expressions:\n%s", text)
+	}
+	rows, err := raw.Query(text, args...)
+	if err != nil {
+		t.Fatalf("execute grouped native JOIN: %v\n%s", err, text)
+	}
+	defer func() { _ = rows.Close() }()
+	var got []string
+	for rows.Next() {
+		var id, total int
+		if err := rows.Scan(&id, &total); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, fmt.Sprintf("%d:%d", id, total))
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if want := "[1:2 2:1]"; fmt.Sprint(got) != want {
+		t.Fatalf("grouped native JOIN rows = %v, want %s", got, want)
+	}
+}
+
+func TestCompileSQLJoinOnRequiresKnownQualifiedEqualityFields(t *testing.T) {
+	sources := map[string]struct{}{"a": {}, "b": {}}
+	valid := []dal.Condition{
+		sqlJoin("a", "id", "b", "a_id"),
+		sqlJoin("a", "tenant_id", "b", "tenant_id"),
+	}
+	compiled, err := compileSQLJoinOn(valid, sources, "from.joins[0].on")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(compiled, " AND ") || !strings.Contains(compiled, "`a`.`id`") || !strings.Contains(compiled, "`b`.`a_id`") {
+		t.Fatalf("composite ON = %s", compiled)
+	}
+	for _, test := range []struct {
+		name       string
+		conditions []dal.Condition
+		want       string
+	}{
+		{name: "empty", want: "join_shape"},
+		{name: "operator", conditions: []dal.Condition{dal.NewComparison(dal.NewFieldRef("a", "id"), dal.Operator("!="), dal.NewFieldRef("b", "a_id"))}, want: "join_operator"},
+		{name: "unqualified", conditions: []dal.Condition{dal.NewComparison(dal.NewFieldRef("", "id"), dal.Equal, dal.NewFieldRef("b", "a_id"))}, want: "must name a source"},
+		{name: "unknown source", conditions: []dal.Condition{dal.NewComparison(dal.NewFieldRef("missing", "id"), dal.Equal, dal.NewFieldRef("b", "a_id"))}, want: "unknown source"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := compileSQLJoinOn(test.conditions, sources, "from.joins[0].on"); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("ON error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestSQLiteNativeJoinEligibilityDeclinesUnrepresentableQualifiedFieldsBeforeExecution(t *testing.T) {
+	raw, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	if _, err := raw.Exec(`CREATE TABLE A (id INTEGER); CREATE TABLE B (a_id INTEGER)`); err != nil {
+		t.Fatal(err)
+	}
+	execute := raw.QueryContext
+	root := dal.From(dal.NewRootCollectionRef("A", "a"))
+	join := dal.NewJoinedSource(dal.NewRootCollectionRef("B", "b"), dal.JoinInner, sqlJoin("a", "id", "b", "a_id"))
+	root.Join(join)
+	unqualifiedProjection := root.NewQuery().SelectColumns(dal.Column{Expression: dal.Field("id")})
+	if err := canExecuteSQLiteJoin(context.Background(), unqualifiedProjection, "sqlite", execute); err == nil || !strings.Contains(err.Error(), "join_plan") {
+		t.Fatalf("unqualified native projection error = %v, want join_plan decline", err)
+	}
+	missingKey := dal.From(dal.NewRootCollectionRef("A", "a")).Join(
+		dal.NewJoinedSource(dal.NewRootCollectionRef("B", "b"), dal.JoinInner, sqlJoin("a", "id", "b", "missing")),
+	).NewQuery().SelectColumns(dal.Column{Expression: dal.NewFieldRef("a", "id")})
+	if err := canExecuteSQLiteJoin(context.Background(), missingKey, "sqlite", execute); err == nil || !strings.Contains(err.Error(), "join_field") {
+		t.Fatalf("missing native ON key error = %v, want join_field decline", err)
+	}
+}
+
+func TestCompileSQLJoinWhereInUsesPortableTypedPredicates(t *testing.T) {
+	sources := map[string]struct{}{"a": {}}
+	field := dal.NewFieldRef("a", "id")
+	condition := dal.NewComparison(field, dal.In, dal.Array{Value: []any{nil, 1, "one"}})
+	text, args, err := compileSQLConditionWithSources(condition, sources, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, " IS ?") || !strings.Contains(text, "CAST(? AS REAL)") || !strings.Contains(text, " OR ") {
+		t.Fatalf("portable IN SQL = %s", text)
+	}
+	if got, want := fmt.Sprint(args), "[<nil> 1 one]"; got != want {
+		t.Fatalf("portable IN args = %s, want %s", got, want)
+	}
+	empty, args, err := compileSQLConditionWithSources(dal.NewComparison(field, dal.In, dal.Array{Value: []any{}}), sources, true)
+	if err != nil || empty != "0 = 1" || len(args) != 0 {
+		t.Fatalf("empty IN = %q %#v %v", empty, args, err)
+	}
+	nullEqual, args, err := compileSQLConditionWithSources(dal.NewComparison(field, dal.Equal, dal.NewConstant(nil)), sources, true)
+	if err != nil || nullEqual != "(+`a`.`id` COLLATE BINARY) IS NULL" || len(args) != 0 {
+		t.Fatalf("null equality = %q %#v %v", nullEqual, args, err)
+	}
+	nullRange, args, err := compileSQLConditionWithSources(dal.NewComparison(field, dal.GreaterThen, dal.NewConstant(nil)), sources, true)
+	if err != nil || nullRange != "0 = 1" || len(args) != 0 {
+		t.Fatalf("null range = %q %#v %v", nullRange, args, err)
+	}
+	textRange, _, err := compileSQLConditionWithSources(dal.NewComparison(field, dal.LessThen, dal.NewConstant("z")), sources, true)
+	if err != nil || !strings.Contains(textRange, "typeof((+`a`.`id` COLLATE BINARY)) = 'text'") {
+		t.Fatalf("text range = %q %v", textRange, err)
+	}
+	numberRange, _, err := compileSQLConditionWithSources(dal.NewComparison(field, dal.GreaterOrEqual, dal.NewConstant(1)), sources, true)
+	if err != nil || !strings.Contains(numberRange, "typeof(") || !strings.Contains(numberRange, "'integer','real'") {
+		t.Fatalf("numeric range = %q %v", numberRange, err)
+	}
+	for _, test := range []struct {
+		name      string
+		condition dal.Condition
+		want      string
+	}{
+		{name: "constant left", condition: dal.NewComparison(dal.NewConstant(1), dal.Equal, dal.NewConstant(1)), want: "comparison left operand"},
+		{name: "nonarray IN", condition: dal.NewComparison(field, dal.In, dal.NewConstant(1)), want: "IN requires an array"},
+		{name: "boolean IN", condition: dal.NewComparison(field, dal.In, dal.Array{Value: []any{true}}), want: "boolean predicates"},
+		{name: "boolean comparison", condition: dal.NewComparison(field, dal.Equal, dal.NewConstant(true)), want: "boolean predicates"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, _, err := compileSQLConditionWithSources(test.condition, sources, true); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("condition error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestCompileStructuredSQLJoinRejectsIncompletePlanningInputs(t *testing.T) {
+	if _, _, err := compileStructuredSQL(nil); err == nil || !strings.Contains(err.Error(), "requires a source") {
+		t.Fatalf("nil structured query error = %v", err)
+	}
+	root := dal.From(dal.NewRootCollectionRef("A", "a"))
+	root.Join(dal.NewJoinedSource(dal.NewRootCollectionRef("B", "b"), dal.JoinInner, sqlJoin("a", "id", "b", "a_id")))
+	cursor := root.NewQuery().StartFrom("cursor").SelectIntoRecord(nil)
+	if _, _, err := compileStructuredSQL(cursor); err == nil || !strings.Contains(err.Error(), "unsupported cursor") {
+		t.Fatalf("joined cursor error = %v", err)
+	}
+	invalidAggregate := root.NewQuery().SelectColumns(
+		dal.CountAs(dal.Star(), "count"),
+		dal.Column{Expression: dal.NewFieldRef("a", "id"), Alias: "id"},
+	)
+	if _, _, err := compileStructuredSQL(invalidAggregate); err == nil || !strings.Contains(err.Error(), "invalid aggregation") {
+		t.Fatalf("invalid joined aggregation error = %v", err)
+	}
+	unsupportedJoin := dal.From(dal.NewRootCollectionRef("A", "a")).Join(
+		dal.NewJoinedSource(dal.NewRootCollectionRef("B", "b"), dal.JoinRight, sqlJoin("a", "id", "b", "a_id")),
+	).NewQuery().SelectIntoRecord(nil)
+	if _, _, err := compileStructuredSQL(unsupportedJoin); err == nil || !strings.Contains(err.Error(), "join_type") {
+		t.Fatalf("unsupported JOIN type error = %v", err)
+	}
+}
+
+func TestCompileSQLJoinTableSourcesHandleCollectionPointersSafely(t *testing.T) {
+	source := dal.NewQualifiedRootCollectionRef("main", "Invoice", "i")
+	compiled, err := compileSQLTableSource(&source)
+	if err != nil || compiled != "`main`.`Invoice` AS `i`" {
+		t.Fatalf("pointer collection source = %q, %v", compiled, err)
+	}
+	var nilSource *dal.CollectionRef
+	if _, err := compileSQLTableSource(nilSource); err == nil || !strings.Contains(err.Error(), "unsupported structured SQL source") {
+		t.Fatalf("nil collection source error = %v", err)
+	}
+}
