@@ -25,6 +25,9 @@ func getReaderBase(ctx context.Context, query dal.Query, execute executeQueryFun
 }
 
 func getReaderBaseWithDialect(ctx context.Context, query dal.Query, execute executeQueryFunc, dialect string) (readerBase, error) {
+	if err := rejectRawRecursiveStructuredQuery(query); err != nil {
+		return readerBase{}, err
+	}
 	var a []any
 	var text string
 	var projection *wildcardProjectionPlan
@@ -116,6 +119,24 @@ func getReaderBaseWithDialect(ctx context.Context, query dal.Query, execute exec
 		rb.colTypes[i] = rb.scanColTypes[sourceIndex]
 	}
 	return rb, nil
+}
+
+// rejectRawRecursiveStructuredQuery keeps recursive DTQL evaluation in DALgo's
+// generic executor. This adapter only compiles one SQL statement at a time, so
+// attempting a nested query here could bypass the framework's planner and
+// policy-aware leaf execution.
+func rejectRawRecursiveStructuredQuery(query dal.Query) error {
+	q, ok := query.(dal.StructuredQuery)
+	if !ok || !dal.HasSubquery(q) {
+		return nil
+	}
+	return &access.DeniedError{Decision: access.Decision{
+		Operation:   access.Query,
+		Effect:      "deny",
+		Code:        access.CodeEnforcementUnsupported,
+		Scope:       access.DecisionScopeOperation,
+		Explanation: "raw dalgo2sql adapter does not support recursive structured queries",
+	}}
 }
 
 func sqliteSourceColumns(ctx context.Context, q dal.StructuredQuery, execute executeQueryFunc) ([]string, error) {
