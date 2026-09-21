@@ -44,7 +44,7 @@ func (dtb *database) QueryCapabilities() dal.QueryCapabilities {
 }
 
 func (dtb *database) ExecuteQueryToRecordsetReader(ctx context.Context, query dal.Query, options ...recordset.Option) (dal.RecordsetReader, error) {
-	return getRecordsetReaderWithDialect(ctx, query, dtb.executeQuery, dtb.options.StructuredQueryDialect, options...)
+	return getRecordsetReaderWithOptions(ctx, query, dtb.executeQuery, dtb.options, options...)
 }
 
 //func (dtb *database) Connect(ctx context.Context) (dal.Connection, error) {

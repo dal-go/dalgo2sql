@@ -14,15 +14,19 @@ import (
 var _ dal.RecordsetReader = (*recordsetReader)(nil)
 
 func getRecordsetReader(ctx context.Context, query dal.Query, execute executeQueryFunc, options ...recordset.Option) (rr *recordsetReader, err error) {
-	return getRecordsetReaderWithDialect(ctx, query, execute, "", options...)
+	return getRecordsetReaderWithOptions(ctx, query, execute, DbOptions{}, options...)
 }
 
 func getRecordsetReaderWithDialect(ctx context.Context, query dal.Query, execute executeQueryFunc, dialect string, options ...recordset.Option) (rr *recordsetReader, err error) {
+	return getRecordsetReaderWithOptions(ctx, query, execute, DbOptions{StructuredQueryDialect: dialect}, options...)
+}
+
+func getRecordsetReaderWithOptions(ctx context.Context, query dal.Query, execute executeQueryFunc, sqlOptions DbOptions, options ...recordset.Option) (rr *recordsetReader, err error) {
 	rr = &recordsetReader{}
 	if q, ok := query.(dal.StructuredQuery); ok {
 		rr.validateFinite = dal.HasAggregation(q)
 	}
-	if rr.readerBase, err = getReaderBaseWithDialect(ctx, query, execute, dialect); err != nil {
+	if rr.readerBase, err = getReaderBaseWithOptions(ctx, query, execute, sqlOptions); err != nil {
 		return nil, err
 	}
 
