@@ -20,6 +20,12 @@ github.com/dal-go/dalgo v0.81.1-0.20260920192413-1f147732591d h1:RqhffQ2ilm0Cl/X
 github.com/dal-go/dalgo v0.81.1-0.20260920192413-1f147732591d/go.mod h1:+6651I975Yh2hoh+eyiqrI19VHC2lWFQNhN0iQmjZQ0=
 github.com/dal-go/dalgo v0.81.1-0.20260920195652-6378387c7846 h1:90AIyi4ruP/r0ibjV7XZuDMglH+2KED14TcTRacl6qU=
 github.com/dal-go/dalgo v0.81.1-0.20260920195652-6378387c7846/go.mod h1:+6651I975Yh2hoh+eyiqrI19VHC2lWFQNhN0iQmjZQ0=
+github.com/dal-go/dalgo v0.82.2-0.20260921061443-ef8015d4a385 h1:jiXexRU5Y7qSs8Hv0LpDH5lhziD5ejZXDxts11P4hp4=
+github.com/dal-go/dalgo v0.82.2-0.20260921061443-ef8015d4a385/go.mod h1:+6651I975Yh2hoh+eyiqrI19VHC2lWFQNhN0iQmjZQ0=
+github.com/dal-go/dalgo v0.82.2-0.20260921061727-4787b8322151 h1:srHFkYuyRrqnseu48IAtttdtMZyK+V0NEWDVUZseHuA=
+github.com/dal-go/dalgo v0.82.2-0.20260921061727-4787b8322151/go.mod h1:+6651I975Yh2hoh+eyiqrI19VHC2lWFQNhN0iQmjZQ0=
+github.com/dal-go/dalgo v0.83.1-0.20260921063328-05fb54909d13 h1:dDOn2kOetIz3vrjF385vRzdCNBadf8dvJXSyUhvokSE=
+github.com/dal-go/dalgo v0.83.1-0.20260921063328-05fb54909d13/go.mod h1:+6651I975Yh2hoh+eyiqrI19VHC2lWFQNhN0iQmjZQ0=
 github.com/dal-go/record v0.1.3 h1:K85k/kSX08lTefMiMmPpC12nmCY2TVJk7+ZyC5PD9XU=
 github.com/dal-go/record v0.1.3/go.mod h1:quwsVJTT0f6y3Mhx+yHpTobY7luX1M6kyO6fdJ/AFYE=
 github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=

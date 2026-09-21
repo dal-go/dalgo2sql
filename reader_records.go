@@ -72,14 +72,7 @@ type recordsReader struct {
 func selectsIdentityField(columns []dal.Column, name string) bool {
 	for _, column := range columns {
 		if column.Wildcard != nil {
-			excluded := false
-			for _, excludedName := range column.Wildcard.Exclude {
-				if excludedName == name {
-					excluded = true
-					break
-				}
-			}
-			if !excluded {
+			if !column.Wildcard.Excludes(name) {
 				return true
 			}
 		}
