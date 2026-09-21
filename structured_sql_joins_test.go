@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/dal-go/dalgo/dal"
+	"github.com/dal-go/dalgo/dtql"
 	_ "modernc.org/sqlite"
 )
 
@@ -87,7 +88,7 @@ func TestCanonicalJoinFixtureManifestPinsEveryVendoredFixture(t *testing.T) {
 	if len(manifest.Files) == 0 {
 		t.Fatal("canonical fixture manifest is empty")
 	}
-	if got, want := manifest.SourceCommit, "d393914bf9f9fe4a09fbba3188219e24f86ea284"; got != want {
+	if got, want := manifest.SourceCommit, "c999c7372fd944c57e89dad7e75f9f42c8afaae1"; got != want {
 		t.Fatalf("canonical fixture source commit = %q, want exact %q", got, want)
 	}
 	for name, want := range manifest.Files {
@@ -459,6 +460,60 @@ func TestSQLiteRecursiveJoinsOneToManyLeftAndTypedKeys(t *testing.T) {
 	}
 	if integerID != 1 || realID != 1 || textID.Valid {
 		t.Fatalf("typed join = integer:%d real:%v text:%#v", integerID, realID, textID)
+	}
+}
+
+func TestSQLiteNativeJoinHintedFixtureMatchesCanonicalRows(t *testing.T) {
+	raw, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	fixture, err := os.ReadFile("testdata/joins/chinook-mini.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(string(fixture)); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"3/Bea/false/", "2/Ada/true/Evan", "1/Ada/true/Evan"}
+	for _, name := range []string{"chinook-nested.dtql.yaml", "chinook-hinted.dtql.yaml"} {
+		t.Run(name, func(t *testing.T) {
+			contents, err := os.ReadFile("testdata/joins/" + name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			query, err := dtql.Deserialize(contents)
+			if err != nil {
+				t.Fatalf("dtql.Deserialize(%s): %v", name, err)
+			}
+			text, args, err := compileStructuredSQL(query)
+			if err != nil {
+				t.Fatalf("compileStructuredSQL(%s): %v", name, err)
+			}
+			rows, err := raw.Query(text, args...)
+			if err != nil {
+				t.Fatalf("execute %s: %v", name, err)
+			}
+			defer func() { _ = rows.Close() }()
+			var got []string
+			for rows.Next() {
+				var invoiceID int
+				var customer string
+				var employee sql.NullString
+				if err := rows.Scan(&invoiceID, &customer, &employee); err != nil {
+					t.Fatal(err)
+				}
+				got = append(got, fmt.Sprintf("%d/%s/%v/%s", invoiceID, customer, employee.Valid, employee.String))
+			}
+			if err := rows.Err(); err != nil {
+				t.Fatal(err)
+			}
+			if fmt.Sprint(got) != fmt.Sprint(want) {
+				t.Fatalf("%s rows = %#v, want %#v", name, got, want)
+			}
+		})
 	}
 }
 
