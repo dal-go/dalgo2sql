@@ -19,28 +19,20 @@ func compileStructuredSQL(q dal.StructuredQuery) (string, []any, error) {
 	if q == nil || q.From() == nil || q.From().Base() == nil {
 		return "", nil, fmt.Errorf("structured SQL query requires a source")
 	}
-	if len(q.From().Joins()) != 0 || q.StartFrom() != "" || q.StartAfter() != "" {
-		return "", nil, fmt.Errorf("structured SQL query uses an unsupported join or cursor")
+	if q.StartFrom() != "" || q.StartAfter() != "" {
+		return "", nil, fmt.Errorf("structured SQL query uses an unsupported cursor")
 	}
 	if err := dal.ValidateAggregation(q); err != nil {
 		return "", nil, fmt.Errorf("invalid aggregation: %w", err)
 	}
-	source := q.From().Base()
-	switch source := source.(type) {
-	case dal.CollectionRef:
-		if source.Parent() != nil {
-			return "", nil, fmt.Errorf("parented collection sources are not supported")
+	if len(q.From().Joins()) != 0 {
+		if err := dal.ValidateJoinTree(q.From()); err != nil {
+			return "", nil, err
 		}
-	case *dal.CollectionRef:
-		if source == nil || source.Parent() != nil {
-			return "", nil, fmt.Errorf("parented collection sources are not supported")
-		}
-	default:
-		return "", nil, fmt.Errorf("unsupported structured SQL source %T", source)
 	}
-	sourceAlias := source.Alias()
-	if sourceAlias != "" && !isPlainSQLIdentifier(sourceAlias) {
-		return "", nil, fmt.Errorf("structured SQL query source alias %q is not a plain identifier", sourceAlias)
+	fromSQL, sourceAliases, hasJoins, err := compileSQLRelation(q.From(), "from")
+	if err != nil {
+		return "", nil, err
 	}
 	var b strings.Builder
 	b.WriteString("SELECT ")
@@ -74,7 +66,7 @@ func compileStructuredSQL(q dal.StructuredQuery) (string, []any, error) {
 				b.WriteString(wildcard.sqlExpression(quoteSQLIdentifier))
 				continue
 			}
-			expr, values, err := compileSQLExpression(column.Expression, sourceAlias)
+			expr, values, err := compileSQLExpressionWithSources(column.Expression, sourceAliases, hasJoins)
 			if err != nil {
 				return "", nil, fmt.Errorf("column %d: %w", i, err)
 			}
@@ -99,13 +91,9 @@ func compileStructuredSQL(q dal.StructuredQuery) (string, []any, error) {
 		}
 	}
 	b.WriteString(" FROM ")
-	b.WriteString(quoteSQLIdentifier(source.Name()))
-	if sourceAlias != "" {
-		b.WriteString(" AS ")
-		b.WriteString(quoteSQLIdentifier(sourceAlias))
-	}
+	b.WriteString(fromSQL)
 	if q.Where() != nil {
-		condition, values, err := compileSQLCondition(q.Where(), sourceAlias)
+		condition, values, err := compileSQLConditionWithSources(q.Where(), sourceAliases, hasJoins)
 		if err != nil {
 			return "", nil, fmt.Errorf("where: %w", err)
 		}
@@ -119,7 +107,7 @@ func compileStructuredSQL(q dal.StructuredQuery) (string, []any, error) {
 			if i > 0 {
 				b.WriteString(", ")
 			}
-			expr, values, err := compileSQLExpression(group, sourceAlias)
+			expr, values, err := compileSQLExpressionWithSources(group, sourceAliases, hasJoins)
 			if err != nil {
 				return "", nil, fmt.Errorf("groupBy %d: %w", i, err)
 			}
@@ -132,7 +120,7 @@ func compileStructuredSQL(q dal.StructuredQuery) (string, []any, error) {
 		}
 	}
 	if q.Having() != nil {
-		condition, values, err := compileSQLCondition(rewriteSQLConditionAliases(q.Having(), aliases), sourceAlias)
+		condition, values, err := compileSQLConditionWithSources(rewriteSQLConditionAliases(q.Having(), aliases), sourceAliases, hasJoins)
 		if err != nil {
 			return "", nil, fmt.Errorf("having: %w", err)
 		}
@@ -146,7 +134,7 @@ func compileStructuredSQL(q dal.StructuredQuery) (string, []any, error) {
 			if i > 0 {
 				b.WriteString(", ")
 			}
-			expr, values, err := compileSQLExpression(rewriteSQLExpressionAlias(order.Expression(), aliases), sourceAlias)
+			expr, values, err := compileSQLExpressionWithSources(rewriteSQLExpressionAlias(order.Expression(), aliases), sourceAliases, hasJoins)
 			if err != nil {
 				return "", nil, fmt.Errorf("orderBy %d: %w", i, err)
 			}
@@ -182,6 +170,176 @@ func compileStructuredSQL(q dal.StructuredQuery) (string, []any, error) {
 
 func quoteSQLIdentifier(name string) string { return "`" + strings.ReplaceAll(name, "`", "``") + "`" }
 
+// compileSQLRelation emits an ordinary same-database relation tree. A nested
+// right subtree is parenthesized so SQLite preserves LEFT/INNER grouping. The
+// recursive call intentionally starts with an empty visible scope: SQLite's
+// parenthesized JOIN grammar cannot safely represent a nested ON correlated to
+// an alias outside that subtree.
+func compileSQLRelation(from dal.FromSource, path string) (string, map[string]struct{}, bool, error) {
+	return compileSQLRelationWithin(from, path, nil)
+}
+
+func compileSQLRelationWithin(from dal.FromSource, path string, outerSources map[string]struct{}) (string, map[string]struct{}, bool, error) {
+	if from == nil || from.Base() == nil {
+		return "", nil, false, fmt.Errorf("%s: join_shape: relation requires a source", path)
+	}
+	base, err := compileSQLTableSource(from.Base())
+	if err != nil {
+		return "", nil, false, fmt.Errorf("%s: %w", path, err)
+	}
+	aliases := map[string]struct{}{sourceSQLIdentity(from.Base()): {}}
+	text := base
+	joins := from.Joins()
+	for i, join := range joins {
+		joinPath := fmt.Sprintf("%s.joins[%d]", path, i)
+		if join.JoinType() != dal.JoinInner && join.JoinType() != dal.JoinLeft {
+			return "", nil, false, fmt.Errorf("%s.type: join_type: SQLite supports INNER and LEFT joins", joinPath)
+		}
+		right := join.From()
+		if right == nil {
+			if join.RecordsetSource == nil {
+				return "", nil, false, fmt.Errorf("%s.from: join_shape: relation requires a source", joinPath)
+			}
+			right = dal.From(join.RecordsetSource)
+		}
+		correlationScope := copySQLSourceSet(outerSources)
+		for alias := range aliases {
+			correlationScope[alias] = struct{}{}
+		}
+		rightSQL, rightAliases, rightHasJoins, err := compileSQLRelationWithin(right, joinPath+".from", correlationScope)
+		if err != nil {
+			return "", nil, false, err
+		}
+		visible := copySQLSourceSet(aliases)
+		for alias := range rightAliases {
+			if _, exists := visible[alias]; exists {
+				return "", nil, false, fmt.Errorf("%s.from: join_scope: duplicate source alias %q", joinPath, alias)
+			}
+			visible[alias] = struct{}{}
+		}
+		if err := rejectSQLCorrelatedJoinOn(join.On(), outerSources, joinPath+".on"); err != nil {
+			return "", nil, false, err
+		}
+		on, err := compileSQLJoinOn(join.On(), visible, joinPath+".on")
+		if err != nil {
+			return "", nil, false, err
+		}
+		text += " " + string(join.JoinType()) + " JOIN "
+		if rightHasJoins {
+			text += "(" + rightSQL + ")"
+		} else {
+			text += rightSQL
+		}
+		text += " ON " + on
+		aliases = visible
+	}
+	return text, aliases, len(joins) != 0, nil
+}
+
+func rejectSQLCorrelatedJoinOn(conditions []dal.Condition, outerSources map[string]struct{}, path string) error {
+	for i, condition := range conditions {
+		comparison, ok := condition.(dal.Comparison)
+		if !ok {
+			continue
+		}
+		for _, operand := range []dal.Expression{comparison.Left, comparison.Right} {
+			field, ok := operand.(dal.FieldRef)
+			if ok && hasSQLSource(outerSources, field.Source()) {
+				return fmt.Errorf("%s[%d]: join_plan: correlated nested ON reference to %q is not representable by parenthesized SQLite JOIN", path, i, field.Source())
+			}
+		}
+	}
+	return nil
+}
+
+func compileSQLTableSource(source dal.RecordsetSource) (string, error) {
+	var collection dal.CollectionRef
+	switch source := source.(type) {
+	case dal.CollectionRef:
+		collection = source
+	case *dal.CollectionRef:
+		if source == nil {
+			return "", fmt.Errorf("unsupported structured SQL source %T", source)
+		}
+		collection = *source
+	default:
+		return "", fmt.Errorf("unsupported structured SQL source %T", source)
+	}
+	if collection.Parent() != nil {
+		return "", fmt.Errorf("parented collection sources are not supported")
+	}
+	if alias := collection.Alias(); alias != "" && !isPlainSQLIdentifier(alias) {
+		return "", fmt.Errorf("structured SQL query source alias %q is not a plain identifier", alias)
+	}
+	name := quoteSQLIdentifier(collection.Name())
+	if schema := collection.Schema(); schema != "" {
+		name = quoteSQLIdentifier(schema) + "." + name
+	}
+	if alias := collection.Alias(); alias != "" {
+		name += " AS " + quoteSQLIdentifier(alias)
+	}
+	return name, nil
+}
+
+func sourceSQLIdentity(source dal.RecordsetSource) string {
+	if alias := source.Alias(); alias != "" {
+		return alias
+	}
+	return source.Name()
+}
+
+func copySQLSourceSet(sources map[string]struct{}) map[string]struct{} {
+	copy := make(map[string]struct{}, len(sources))
+	for source := range sources {
+		copy[source] = struct{}{}
+	}
+	return copy
+}
+
+func hasSQLSource(sources map[string]struct{}, source string) bool {
+	_, ok := sources[source]
+	return ok
+}
+
+func compileSQLJoinOn(conditions []dal.Condition, sources map[string]struct{}, path string) (string, error) {
+	if len(conditions) == 0 {
+		return "", fmt.Errorf("%s: join_shape: ON must not be empty", path)
+	}
+	parts := make([]string, len(conditions))
+	for i, condition := range conditions {
+		comparison, ok := condition.(dal.Comparison)
+		if !ok || comparison.Operator != dal.Equal {
+			return "", fmt.Errorf("%s[%d]: join_operator: SQLite JOIN requires equality comparisons", path, i)
+		}
+		left, leftArgs, err := compileSQLExpressionWithSources(comparison.Left, sources, true)
+		if err != nil {
+			return "", fmt.Errorf("%s[%d].left: %w", path, i, err)
+		}
+		right, rightArgs, err := compileSQLExpressionWithSources(comparison.Right, sources, true)
+		if err != nil {
+			return "", fmt.Errorf("%s[%d].right: %w", path, i, err)
+		}
+		if len(leftArgs) != 0 || len(rightArgs) != 0 {
+			return "", fmt.Errorf("%s[%d]: join_shape: ON operands must be qualified fields", path, i)
+		}
+		parts[i] = compileSQLTypedJoinEquality(left, right)
+	}
+	return "(" + strings.Join(parts, " AND ") + ")", nil
+}
+
+// SQLite considers INTEGER and REAL comparable numbers, but it also applies
+// column affinity to plain equality. Remove affinity and guard the runtime
+// types so numeric values compare across integer/real representations while
+// text and booleans cannot accidentally match numeric keys. NULL never matches
+// because the equality expression evaluates to NULL.
+func compileSQLTypedJoinEquality(left, right string) string {
+	left = "(+" + left + " COLLATE BINARY)"
+	right = "(+" + right + " COLLATE BINARY)"
+	numeric := "(typeof(%s) IN ('integer','real') AND typeof(%s) IN ('integer','real'))"
+	types := "(typeof(" + left + ") = typeof(" + right + ") OR " + fmt.Sprintf(numeric, left, right) + ")"
+	return "(" + types + " AND " + normalizeSQLNumber(left) + " = " + normalizeSQLNumber(right) + ")"
+}
+
 // rePlainSQLIdentifier matches a bare identifier: a letter or underscore
 // followed by letters, digits or underscores. A source alias must satisfy
 // this before it is trusted to appear (quoted) in emitted SQL, and a
@@ -192,9 +350,17 @@ var rePlainSQLIdentifier = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 func isPlainSQLIdentifier(name string) bool { return rePlainSQLIdentifier.MatchString(name) }
 
 func compileSQLCondition(condition dal.Condition, alias string) (string, []any, error) {
+	sources := map[string]struct{}{}
+	if alias != "" {
+		sources[alias] = struct{}{}
+	}
+	return compileSQLConditionWithSources(condition, sources, false)
+}
+
+func compileSQLConditionWithSources(condition dal.Condition, sources map[string]struct{}, requireQualified bool) (string, []any, error) {
 	switch c := condition.(type) {
 	case dal.Comparison:
-		left, leftArgs, err := compileSQLExpression(c.Left, alias)
+		left, leftArgs, err := compileSQLExpressionWithSources(c.Left, sources, requireQualified)
 		if err != nil {
 			return "", nil, err
 		}
@@ -251,7 +417,7 @@ func compileSQLCondition(condition dal.Condition, alias string) (string, []any, 
 		default:
 			return "", nil, fmt.Errorf("unsupported comparison operator %q", c.Operator)
 		}
-		right, rightArgs, err := compileSQLExpression(c.Right, alias)
+		right, rightArgs, err := compileSQLExpressionWithSources(c.Right, sources, requireQualified)
 		if err != nil {
 			return "", nil, err
 		}
@@ -326,7 +492,7 @@ func compileSQLCondition(condition dal.Condition, alias string) (string, []any, 
 		parts := make([]string, len(children))
 		var args []any
 		for i, child := range children {
-			part, values, err := compileSQLCondition(child, alias)
+			part, values, err := compileSQLConditionWithSources(child, sources, requireQualified)
 			if err != nil {
 				return "", nil, err
 			}
@@ -402,13 +568,24 @@ func normalizedNumber(value any) (float64, error) {
 // case) or exactly equal to alias to compile — anything else names a
 // source this single-table dialect cannot resolve and is rejected.
 func compileSQLExpression(expression dal.Expression, alias string) (string, []any, error) {
+	sources := map[string]struct{}{}
+	if alias != "" {
+		sources[alias] = struct{}{}
+	}
+	return compileSQLExpressionWithSources(expression, sources, false)
+}
+
+func compileSQLExpressionWithSources(expression dal.Expression, sources map[string]struct{}, requireQualified bool) (string, []any, error) {
 	switch e := expression.(type) {
 	case dal.FieldRef:
 		switch {
 		case e.Source() == "":
+			if requireQualified {
+				return "", nil, fmt.Errorf("field %q must name a source in a JOIN query", e.Name())
+			}
 			return quoteSQLIdentifier(e.Name()), nil, nil
-		case alias != "" && e.Source() == alias:
-			return quoteSQLIdentifier(alias) + "." + quoteSQLIdentifier(e.Name()), nil, nil
+		case hasSQLSource(sources, e.Source()):
+			return quoteSQLIdentifier(e.Source()) + "." + quoteSQLIdentifier(e.Name()), nil, nil
 		default:
 			return "", nil, fmt.Errorf("field %q references unknown source %q", e.Name(), e.Source())
 		}
@@ -428,7 +605,7 @@ func compileSQLExpression(expression dal.Expression, alias string) (string, []an
 		if len(args) != 1 {
 			return "", nil, fmt.Errorf("%s requires exactly one argument", name)
 		}
-		arg, values, err := compileSQLExpression(args[0], alias)
+		arg, values, err := compileSQLExpressionWithSources(args[0], sources, requireQualified)
 		if err != nil {
 			return "", nil, err
 		}
@@ -467,11 +644,11 @@ func compileSQLExpression(expression dal.Expression, alias string) (string, []an
 		}
 		return expression, values, nil
 	case dal.BinaryExpression:
-		left, leftArgs, err := compileSQLExpression(e.Left, alias)
+		left, leftArgs, err := compileSQLExpressionWithSources(e.Left, sources, requireQualified)
 		if err != nil {
 			return "", nil, err
 		}
-		right, rightArgs, err := compileSQLExpression(e.Right, alias)
+		right, rightArgs, err := compileSQLExpressionWithSources(e.Right, sources, requireQualified)
 		if err != nil {
 			return "", nil, err
 		}
