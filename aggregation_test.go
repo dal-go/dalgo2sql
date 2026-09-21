@@ -183,6 +183,58 @@ func TestSQLiteNativeAggregation(t *testing.T) {
 	}
 }
 
+func TestSQLiteNativeAggregationRowsHaveDistinctSyntheticKeys(t *testing.T) {
+	raw, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := raw.Close(); err != nil {
+			t.Errorf("close sqlite: %v", err)
+		}
+	}()
+	if _, err := raw.Exec(`CREATE TABLE orders (country TEXT, quantity INTEGER);
+		INSERT INTO orders VALUES ('IE', 1), ('US', 2);`); err != nil {
+		t.Fatal(err)
+	}
+	count := dal.Count()
+	count.Alias = "orders"
+	q := dal.From(dal.NewRootCollectionRef("orders", "")).NewQuery().
+		GroupBy(dal.Field("country")).
+		OrderBy(dal.Ascending(dal.Field("country"))).
+		SelectColumns(dal.Column{Expression: dal.Field("country")}, count)
+	db := NewDatabase(raw, newSchema(), DbOptions{StructuredQueryDialect: "sqlite"})
+	reader, err := db.ExecuteQueryToRecordsReader(context.Background(), q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := reader.Close(); err != nil {
+			t.Errorf("close aggregation reader: %v", err)
+		}
+	}()
+	for ordinal, country := range []string{"IE", "US"} {
+		record, err := reader.Next()
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantKey := []string{"0", "1"}[ordinal]
+		if got := record.Key().ID; got != wantKey {
+			t.Fatalf("row %d key ID = %#v, want %q", ordinal, got, wantKey)
+		}
+		row := record.Data().(map[string]any)
+		if got := row["country"]; got != country {
+			t.Fatalf("row %d country = %#v, want %q", ordinal, got, country)
+		}
+		if _, ok := row[recordIDHelperColumn]; ok {
+			t.Fatalf("row %d unexpectedly exposes %q: %#v", ordinal, recordIDHelperColumn, row)
+		}
+	}
+	if _, err := reader.Next(); err != dal.ErrNoMoreRecords {
+		t.Fatalf("next err = %v", err)
+	}
+}
+
 func TestSQLiteUngroupedEmptyAggregation(t *testing.T) {
 	raw, err := sql.Open("sqlite", ":memory:")
 	if err != nil {

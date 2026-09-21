@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"strconv"
 
 	"github.com/dal-go/dalgo/dal"
 	dalrecord "github.com/dal-go/record"
@@ -32,8 +33,20 @@ func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute e
 			rr.newRecord = func() dalrecord.Record { return q.IntoRecord() }
 		} else if from := q.From(); from != nil && from.Base() != nil {
 			collection := from.Base().Name()
-			rr.newRecord = func() dalrecord.Record {
-				return dalrecord.NewRecordWithData(dalrecord.NewKeyWithID(collection, recordIDHelperColumn), make(map[string]any))
+			if rr.validateFinite {
+				// Aggregate result rows do not have a source record identity. Give
+				// each result row a deterministic synthetic key without exposing a
+				// helper column in its data.
+				ordinal := 0
+				rr.newRecord = func() dalrecord.Record {
+					record := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID(collection, strconv.Itoa(ordinal)), make(map[string]any))
+					ordinal++
+					return record
+				}
+			} else {
+				rr.newRecord = func() dalrecord.Record {
+					return dalrecord.NewRecordWithData(dalrecord.NewKeyWithID(collection, recordIDHelperColumn), make(map[string]any))
+				}
 			}
 		}
 		if primaryKey := primaryKeyForQuery(options, query); primaryKey != "" && !dal.HasAggregation(q) {
