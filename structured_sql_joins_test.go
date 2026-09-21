@@ -476,6 +476,7 @@ func TestSQLiteNativeJoinHintedFixtureMatchesCanonicalRows(t *testing.T) {
 	if _, err := raw.Exec(string(fixture)); err != nil {
 		t.Fatal(err)
 	}
+	db := NewDatabase(raw, dal.NewSchema(nil, nil), DbOptions{StructuredQueryDialect: "sqlite"})
 
 	want := []string{"3/Bea/false/", "2/Ada/true/Evan", "1/Ada/true/Evan"}
 	for _, name := range []string{"chinook-nested.dtql.yaml", "chinook-hinted.dtql.yaml"} {
@@ -512,6 +513,55 @@ func TestSQLiteNativeJoinHintedFixtureMatchesCanonicalRows(t *testing.T) {
 			}
 			if fmt.Sprint(got) != fmt.Sprint(want) {
 				t.Fatalf("%s rows = %#v, want %#v", name, got, want)
+			}
+			if name != "chinook-hinted.dtql.yaml" {
+				return
+			}
+
+			sqlTx, err := raw.BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			plan, err := dal.PlanJoin(context.Background(), query, newTransaction(sqlTx, DbOptions{StructuredQueryDialect: "sqlite"}, dal.NewTransactionOptions()))
+			if err != nil {
+				_ = sqlTx.Rollback()
+				t.Fatal(err)
+			}
+			if err := sqlTx.Rollback(); err != nil {
+				t.Fatal(err)
+			}
+			if plan.Strategy != dal.JoinNative {
+				t.Fatalf("hinted transaction plan = %#v, want native", plan)
+			}
+
+			var throughDALgo []string
+			err = db.RunReadonlyTransaction(context.Background(), func(ctx context.Context, tx dal.ReadTransaction) error {
+				reader, err := tx.ExecuteQueryToRecordsReader(ctx, query)
+				if err != nil {
+					return err
+				}
+				defer func() { _ = reader.Close() }()
+				for {
+					record, err := reader.Next()
+					if errors.Is(err, dal.ErrNoMoreRecords) {
+						return nil
+					}
+					if err != nil {
+						return err
+					}
+					data, ok := record.Data().(map[string]any)
+					if !ok {
+						return fmt.Errorf("record data = %T, want map[string]any", record.Data())
+					}
+					employee, _ := data["employee"].(string)
+					throughDALgo = append(throughDALgo, fmt.Sprintf("%v/%v/%t/%s", data["invoice_id"], data["customer"], data["employee"] != nil, employee))
+				}
+			})
+			if err != nil {
+				t.Fatalf("RunReadonlyTransaction: %v", err)
+			}
+			if fmt.Sprint(throughDALgo) != fmt.Sprint(want) {
+				t.Fatalf("DALgo transaction rows = %#v, want %#v", throughDALgo, want)
 			}
 		})
 	}
