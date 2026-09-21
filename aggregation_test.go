@@ -218,8 +218,9 @@ func TestSQLiteNativeAggregationRowsHaveDistinctSyntheticKeys(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := record.Key().ID; got != ordinal {
-			t.Fatalf("row %d key ID = %#v, want %d", ordinal, got, ordinal)
+		wantKey := []string{"0", "1"}[ordinal]
+		if got := record.Key().ID; got != wantKey {
+			t.Fatalf("row %d key ID = %#v, want %q", ordinal, got, wantKey)
 		}
 		row := record.Data().(map[string]any)
 		if got := row["country"]; got != country {

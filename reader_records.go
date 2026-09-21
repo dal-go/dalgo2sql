@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"strconv"
 
 	"github.com/dal-go/dalgo/dal"
 	dalrecord "github.com/dal-go/record"
@@ -38,7 +39,7 @@ func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute e
 				// helper column in its data.
 				ordinal := 0
 				rr.newRecord = func() dalrecord.Record {
-					record := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID(collection, ordinal), make(map[string]any))
+					record := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID(collection, strconv.Itoa(ordinal)), make(map[string]any))
 					ordinal++
 					return record
 				}
