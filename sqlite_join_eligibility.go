@@ -26,7 +26,13 @@ type sqliteJoinSource struct {
 // preflight rather than a compiler hint: SQLite cannot raise DALgo's
 // join_key_type diagnostic from a JOIN expression after it has started
 // producing rows.
-func (dtb *database) CanExecuteJoin(_ context.Context, _ dal.StructuredQuery) error {
+func (dtb *database) CanExecuteJoin(ctx context.Context, q dal.StructuredQuery) error {
+	if dtb.options.NativeJoinEligibility != nil {
+		if dtb.options.NativeStructuredQueryCompiler == nil {
+			return fmt.Errorf("join_plan: native JOIN eligibility requires a native structured query compiler")
+		}
+		return dtb.options.NativeJoinEligibility(ctx, q)
+	}
 	// A pool query can move to a different connection after a preflight. The
 	// adapter therefore declines direct native execution rather than claiming
 	// a runtime key check it cannot keep atomic with the JOIN itself.
@@ -36,6 +42,12 @@ func (dtb *database) CanExecuteJoin(_ context.Context, _ dal.StructuredQuery) er
 // CanExecuteJoin lets the transaction path make the same decision with its
 // transaction-local view of schema and key values.
 func (t transaction) CanExecuteJoin(ctx context.Context, q dal.StructuredQuery) error {
+	if t.sqlOptions.NativeJoinEligibility != nil {
+		if t.sqlOptions.NativeStructuredQueryCompiler == nil {
+			return fmt.Errorf("join_plan: native JOIN eligibility requires a native structured query compiler")
+		}
+		return t.sqlOptions.NativeJoinEligibility(ctx, q)
+	}
 	return canExecuteSQLiteJoin(ctx, q, t.sqlOptions.StructuredQueryDialect, t.tx.QueryContext)
 }
 

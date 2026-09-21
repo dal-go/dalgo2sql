@@ -21,10 +21,14 @@ type readerBase struct {
 }
 
 func getReaderBase(ctx context.Context, query dal.Query, execute executeQueryFunc) (readerBase, error) {
-	return getReaderBaseWithDialect(ctx, query, execute, "")
+	return getReaderBaseWithOptions(ctx, query, execute, DbOptions{})
 }
 
 func getReaderBaseWithDialect(ctx context.Context, query dal.Query, execute executeQueryFunc, dialect string) (readerBase, error) {
+	return getReaderBaseWithOptions(ctx, query, execute, DbOptions{StructuredQueryDialect: dialect})
+}
+
+func getReaderBaseWithOptions(ctx context.Context, query dal.Query, execute executeQueryFunc, options DbOptions) (readerBase, error) {
 	var a []any
 	var text string
 	var projection *wildcardProjectionPlan
@@ -53,30 +57,41 @@ func getReaderBaseWithDialect(ctx context.Context, query dal.Query, execute exec
 		if projection, err = planWildcardProjection(q); err != nil {
 			return readerBase{}, err
 		}
-		switch dialect {
-		case "":
-			text = emitSQL(q)
-		case "sqlite":
-			var err error
-			text, a, err = compileStructuredSQL(q)
+		if options.NativeStructuredQueryCompiler != nil {
+			fragments, err := translateNativeJoinHints(q.From(), options.NativeJoinHintTranslator)
 			if err != nil {
-				return readerBase{}, &access.DeniedError{Decision: access.Decision{Operation: access.Query, Code: access.CodeEnforcementUnsupported, Scope: access.DecisionScopeOperation, Explanation: "structured SQLite query is unsupported"}}
+				return readerBase{}, err
 			}
-			if projection != nil {
-				var names []string
-				if names, err = sqliteSourceColumns(ctx, q, execute); err != nil {
-					return readerBase{}, fmt.Errorf("failed to inspect SQLite wildcard source: %w", err)
+			text, a, err = options.NativeStructuredQueryCompiler.CompileNativeStructuredQuery(q, fragments)
+			if err != nil {
+				return readerBase{}, fmt.Errorf("native structured query compiler: %w", err)
+			}
+		} else {
+			switch options.StructuredQueryDialect {
+			case "":
+				text = emitSQL(q)
+			case "sqlite":
+				var err error
+				text, a, err = compileStructuredSQL(q)
+				if err != nil {
+					return readerBase{}, &access.DeniedError{Decision: access.Decision{Operation: access.Query, Code: access.CodeEnforcementUnsupported, Scope: access.DecisionScopeOperation, Explanation: "structured SQLite query is unsupported"}}
 				}
-				if expanded, ok := projection.expandSQLiteWildcard(q, names); ok {
-					text, a, err = compileStructuredSQL(expanded)
-					if err != nil {
-						return readerBase{}, fmt.Errorf("failed to compile expanded SQLite projection: %w", err)
+				if projection != nil {
+					var names []string
+					if names, err = sqliteSourceColumns(ctx, q, execute); err != nil {
+						return readerBase{}, fmt.Errorf("failed to inspect SQLite wildcard source: %w", err)
 					}
-					projection = nil
+					if expanded, ok := projection.expandSQLiteWildcard(q, names); ok {
+						text, a, err = compileStructuredSQL(expanded)
+						if err != nil {
+							return readerBase{}, fmt.Errorf("failed to compile expanded SQLite projection: %w", err)
+						}
+						projection = nil
+					}
 				}
+			default:
+				return readerBase{}, fmt.Errorf("unsupported structured query dialect %q", options.StructuredQueryDialect)
 			}
-		default:
-			return readerBase{}, fmt.Errorf("unsupported structured query dialect %q", dialect)
 		}
 	}
 
