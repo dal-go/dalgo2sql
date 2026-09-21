@@ -5,7 +5,7 @@ go 1.26.0
 toolchain go1.27.1
 
 require (
-	github.com/dal-go/dalgo v0.82.2-0.20260921061443-ef8015d4a385
+	github.com/dal-go/dalgo v0.82.2-0.20260921061727-4787b8322151
 	github.com/dal-go/dalgo2sql v0.9.6 // No version as we alway replace it with local version
 	github.com/mattn/go-sqlite3 v1.14.52
 )
