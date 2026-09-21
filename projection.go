@@ -2,6 +2,7 @@ package dalgo2sql
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/dal-go/dalgo/dal"
 )
@@ -10,6 +11,31 @@ type wildcardProjectionPlan struct {
 	qualifier     string
 	projection    *dal.WildcardProjection
 	explicitCount int
+}
+
+// expandSQLiteWildcard replaces the wildcard with the source's visible column
+// names. SQLite schema metadata supplies names without fetching any row
+// values. Duplicate names cannot be addressed unambiguously in a
+// SELECT list, so those retain the existing result-filtering path.
+func (p wildcardProjectionPlan) expandSQLiteWildcard(q dal.StructuredQuery, names []string) (dal.StructuredQuery, bool) {
+	seen := make(map[string]bool, len(names))
+	columns := make([]dal.Column, 0, len(names)+p.explicitCount)
+	for _, name := range names {
+		if name == "" || seen[strings.ToLower(name)] {
+			return q, false
+		}
+		seen[strings.ToLower(name)] = true
+		if !p.projection.Excludes(name) {
+			columns = append(columns, dal.Column{Expression: dal.Field(name)})
+		}
+	}
+	columns = append(columns, q.Columns()[1:]...)
+	if len(columns) == 0 {
+		// SQL has no zero-column SELECT. Preserve the current empty-result
+		// behavior until an explicit zero-column reader representation exists.
+		return q, false
+	}
+	return dal.WithColumns(q, columns), true
 }
 
 func planWildcardProjection(q dal.StructuredQuery) (*wildcardProjectionPlan, error) {

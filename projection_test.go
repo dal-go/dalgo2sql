@@ -2,7 +2,9 @@ package dalgo2sql
 
 import (
 	"context"
+	"database/sql"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -58,9 +60,10 @@ func TestWildcardExclusionRecordsReader(t *testing.T) {
 
 	q := dal.From(dal.NewRootCollectionRef("customers", "c")).NewQuery().
 		SelectColumns(dal.AllColumnsExceptFrom("c", "email", "password_hash", "email"))
-	mock.ExpectQuery("SELECT `c`.* FROM `customers` AS `c`").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "email", "created_at"}).
-			AddRow("c1", "Ada", "ada@example.test", "2026-09-20"))
+	expectSQLiteSourceColumns(mock, "customers", "id", "name", "email", "created_at")
+	mock.ExpectQuery("SELECT `id`, `name`, `created_at` FROM `customers` AS `c`").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "created_at"}).
+			AddRow("c1", "Ada", "2026-09-20"))
 
 	r, err := getRecordsReaderWithOptions(context.Background(), q, db.QueryContext, DbOptions{
 		StructuredQueryDialect: "sqlite",
@@ -97,9 +100,10 @@ func TestWildcardExclusionMasksRecordsReader(t *testing.T) {
 
 	q := dal.From(dal.NewRootCollectionRef("customers", "c")).NewQuery().
 		SelectColumns(dal.AllColumnsExceptFrom("c", "Billing*", "Password*", "missing*"))
-	mock.ExpectQuery("SELECT `c`.* FROM `customers` AS `c`").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "billing_address", "PASSWORD_HASH", "created_at"}).
-			AddRow("c1", "Ada", "1 Main St", "secret", "2026-09-20"))
+	expectSQLiteSourceColumns(mock, "customers", "id", "name", "billing_address", "PASSWORD_HASH", "created_at")
+	mock.ExpectQuery("SELECT `id`, `name`, `created_at` FROM `customers` AS `c`").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "created_at"}).
+			AddRow("c1", "Ada", "2026-09-20"))
 
 	r, err := getRecordsReaderWithOptions(context.Background(), q, db.QueryContext, DbOptions{
 		StructuredQueryDialect: "sqlite",
@@ -136,9 +140,10 @@ func TestWildcardExclusionRecordsetReaderPreservesOrder(t *testing.T) {
 
 	q := dal.From(dal.NewRootCollectionRef("customers", "")).NewQuery().
 		SelectColumns(dal.AllColumnsExcept("email", "missing"))
-	mock.ExpectQuery("SELECT * FROM `customers`").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "email", "created_at"}).
-			AddRow([]byte("c1"), []byte("Ada"), []byte("ada@example.test"), []byte("2026-09-20")))
+	expectSQLiteSourceColumns(mock, "customers", "id", "name", "email", "created_at")
+	mock.ExpectQuery("SELECT `id`, `name`, `created_at` FROM `customers`").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "created_at"}).
+			AddRow([]byte("c1"), []byte("Ada"), []byte("2026-09-20")))
 
 	r, err := getRecordsetReaderWithDialect(context.Background(), q, db.QueryContext, "sqlite")
 	if err != nil {
@@ -175,9 +180,10 @@ func TestWildcardExclusionMasksRecordsetReaderPreservesOrder(t *testing.T) {
 
 	q := dal.From(dal.NewRootCollectionRef("customers", "")).NewQuery().
 		SelectColumns(dal.AllColumnsExcept("Billing*", "Password*", "missing*"))
-	mock.ExpectQuery("SELECT * FROM `customers`").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "BillingEmail", "password_hash", "created_at"}).
-			AddRow([]byte("c1"), []byte("Ada"), []byte("ada@example.test"), []byte("secret"), []byte("2026-09-20")))
+	expectSQLiteSourceColumns(mock, "customers", "id", "name", "BillingEmail", "password_hash", "created_at")
+	mock.ExpectQuery("SELECT `id`, `name`, `created_at` FROM `customers`").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "created_at"}).
+			AddRow([]byte("c1"), []byte("Ada"), []byte("2026-09-20")))
 
 	r, err := getRecordsetReaderWithDialect(context.Background(), q, db.QueryContext, "sqlite")
 	if err != nil {
@@ -210,6 +216,15 @@ func valueString(value any) string {
 		return string(bytes)
 	}
 	return value.(string)
+}
+
+func expectSQLiteSourceColumns(mock sqlmock.Sqlmock, table string, names ...string) {
+	rows := sqlmock.NewRows([]string{"name", "hidden"})
+	for _, name := range names {
+		rows.AddRow(name, 0)
+	}
+	mock.ExpectQuery("SELECT name, hidden FROM pragma_table_xinfo(?) ORDER BY cid").
+		WithArgs(table).WillReturnRows(rows)
 }
 
 func TestWildcardProjectionValidation(t *testing.T) {
@@ -281,6 +296,130 @@ func TestWildcardProjectionMaskKeepsExplicitTail(t *testing.T) {
 	}
 }
 
+func TestSQLiteWildcardMaskPushdownRealDatabase(t *testing.T) {
+	db := openTestSQLiteDB(t, "CREATE TABLE customers (id TEXT, name TEXT, BillingSecret BLOB, PasswordHash TEXT)")
+	if _, err := db.Exec("INSERT INTO customers VALUES (?, ?, ?, ?)", "c1", "Ada", []byte("large secret"), "hash"); err != nil {
+		t.Fatal(err)
+	}
+	q := dal.From(dal.NewRootCollectionRef("customers", "")).NewQuery().SelectColumns(
+		dal.AllColumnsExcept("Billing*", "Password*"),
+		dal.Column{Expression: dal.Field("name"), Alias: "BillingDisplay"},
+	)
+	queries := make([]string, 0, 2)
+	execute := func(ctx context.Context, text string, args ...any) (*sql.Rows, error) {
+		queries = append(queries, text)
+		return db.QueryContext(ctx, text, args...)
+	}
+	r, err := getRecordsetReaderWithDialect(context.Background(), q, execute, "sqlite")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.Close() }()
+	if len(queries) != 2 || queries[0] != "SELECT name, hidden FROM pragma_table_xinfo(?) ORDER BY cid" ||
+		queries[1] != "SELECT `id`, `name`, `name` AS `BillingDisplay` FROM `customers`" {
+		t.Fatalf("queries = %#v", queries)
+	}
+	if strings.Contains(queries[1], "BillingSecret") || strings.Contains(queries[1], "PasswordHash") {
+		t.Fatalf("excluded columns remain in data query: %s", queries[1])
+	}
+	if got := r.Recordset().Columns(); len(got) != 3 || got[2].Name() != "BillingDisplay" {
+		t.Fatalf("visible columns = %#v", got)
+	}
+	if _, _, err := r.Next(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSQLiteWildcardPushdownUsesSchemaNamesWithFullColumnLabels(t *testing.T) {
+	db := openTestSQLiteDB(t, "CREATE TABLE customers (id TEXT, BillingSecret TEXT, computed TEXT GENERATED ALWAYS AS (id || '-computed') VIRTUAL)")
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec("PRAGMA short_column_names=OFF; PRAGMA full_column_names=ON"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO customers (id, BillingSecret) VALUES ('c1', 'secret')"); err != nil {
+		t.Fatal(err)
+	}
+	q := dal.From(dal.NewRootCollectionRef("customers", "")).NewQuery().SelectColumns(dal.AllColumnsExcept("Billing*"))
+	var dataQuery string
+	execute := func(ctx context.Context, text string, args ...any) (*sql.Rows, error) {
+		if !strings.Contains(text, "pragma_table_xinfo") {
+			dataQuery = text
+		}
+		return db.QueryContext(ctx, text, args...)
+	}
+	r, err := getReaderBaseWithDialect(context.Background(), q, execute, "sqlite")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.rows.Close() }()
+	if dataQuery != "SELECT `id`, `computed` FROM `customers`" {
+		t.Fatalf("data query = %q", dataQuery)
+	}
+	if !r.rows.Next() {
+		t.Fatal("expected one row")
+	}
+	values, err := r.scanValues()
+	if err != nil || len(values) != 2 || valueString(values[0]) != "c1" || valueString(values[1]) != "c1-computed" {
+		t.Fatalf("values = %#v, err = %v", values, err)
+	}
+}
+
+func TestSQLiteSourceColumnsOmitOnlyVirtualTableHiddenColumns(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherEqual))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeDatabase(t, db)
+	q := dal.From(dal.NewRootCollectionRef("customers", "")).NewQuery().SelectColumns(dal.AllColumnsExcept("Billing*"))
+	mock.ExpectQuery("SELECT name, hidden FROM pragma_table_xinfo(?) ORDER BY cid").WithArgs("customers").
+		WillReturnRows(sqlmock.NewRows([]string{"name", "hidden"}).
+			AddRow("id", 0).AddRow("internal", 1).AddRow("virtual_generated", 2).AddRow("stored_generated", 3))
+	names, err := sqliteSourceColumns(context.Background(), q, db.QueryContext)
+	if err != nil || !reflect.DeepEqual(names, []string{"id", "virtual_generated", "stored_generated"}) {
+		t.Fatalf("source columns = %#v, err = %v", names, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSQLiteWildcardAllExcludedRetainsEmptyResultFallback(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherEqual))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeDatabase(t, db)
+	q := dal.From(dal.NewRootCollectionRef("customers", "")).NewQuery().SelectColumns(dal.AllColumnsExcept("*"))
+	expectSQLiteSourceColumns(mock, "customers", "id", "secret")
+	mock.ExpectQuery("SELECT * FROM `customers`").WillReturnRows(sqlmock.NewRows([]string{"id", "secret"}).AddRow("c1", "value"))
+	r, err := getReaderBaseWithDialect(context.Background(), q, db.QueryContext, "sqlite")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.rows.Close() }()
+	if len(r.colNames) != 0 || !r.rows.Next() {
+		t.Fatalf("expected one row with zero visible columns, got %#v", r.colNames)
+	}
+	values, err := r.scanValues()
+	if err != nil || len(values) != 0 {
+		t.Fatalf("values = %#v, err = %v", values, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSQLiteWildcardDuplicateMetadataNamesRetainResultFiltering(t *testing.T) {
+	q := dal.From(dal.NewRootCollectionRef("customers", "")).NewQuery().SelectColumns(dal.AllColumnsExcept("secret"))
+	plan, err := planWildcardProjection(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := plan.expandSQLiteWildcard(q, []string{"id", "ID", "secret"}); ok {
+		t.Fatal("ambiguous source column names must not be expanded")
+	}
+}
+
 func TestWildcardExclusionIdentityHelperDoesNotHideSameNamedSourceColumn(t *testing.T) {
 	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherEqual))
 	if err != nil {
@@ -290,9 +429,10 @@ func TestWildcardExclusionIdentityHelperDoesNotHideSameNamedSourceColumn(t *test
 
 	q := dal.From(dal.NewRootCollectionRef("customers", "")).NewQuery().
 		SelectColumns(dal.AllColumnsExcept("id"))
-	mock.ExpectQuery("SELECT *, `id` AS `__dalgo_record_id` FROM `customers`").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "__dalgo_record_id", "__dalgo_record_id"}).
-			AddRow("c1", "source-value", "c1"))
+	expectSQLiteSourceColumns(mock, "customers", "id", "__dalgo_record_id")
+	mock.ExpectQuery("SELECT `__dalgo_record_id`, `id` AS `__dalgo_record_id` FROM `customers`").
+		WillReturnRows(sqlmock.NewRows([]string{"__dalgo_record_id", "__dalgo_record_id"}).
+			AddRow("source-value", "c1"))
 
 	r, err := getRecordsReaderWithOptions(context.Background(), q, db.QueryContext, DbOptions{
 		StructuredQueryDialect: "sqlite",
@@ -329,9 +469,10 @@ func TestWildcardExclusionMaskIdentityHelperDoesNotHideSameNamedSourceColumn(t *
 
 	q := dal.From(dal.NewRootCollectionRef("customers", "")).NewQuery().
 		SelectColumns(dal.AllColumnsExcept("ID*"))
-	mock.ExpectQuery("SELECT *, `id` AS `__dalgo_record_id` FROM `customers`").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "__dalgo_record_id", "__dalgo_record_id"}).
-			AddRow("c1", "source-value", "c1"))
+	expectSQLiteSourceColumns(mock, "customers", "id", "__dalgo_record_id")
+	mock.ExpectQuery("SELECT `__dalgo_record_id`, `id` AS `__dalgo_record_id` FROM `customers`").
+		WillReturnRows(sqlmock.NewRows([]string{"__dalgo_record_id", "__dalgo_record_id"}).
+			AddRow("source-value", "c1"))
 
 	r, err := getRecordsReaderWithOptions(context.Background(), q, db.QueryContext, DbOptions{
 		StructuredQueryDialect: "sqlite",
