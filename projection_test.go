@@ -88,6 +88,45 @@ func TestWildcardExclusionRecordsReader(t *testing.T) {
 	}
 }
 
+func TestWildcardExclusionMasksRecordsReader(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherEqual))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeDatabase(t, db)
+
+	q := dal.From(dal.NewRootCollectionRef("customers", "c")).NewQuery().
+		SelectColumns(dal.AllColumnsExceptFrom("c", "Billing*", "Password*", "missing*"))
+	mock.ExpectQuery("SELECT `c`.* FROM `customers` AS `c`").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "billing_address", "PASSWORD_HASH", "created_at"}).
+			AddRow("c1", "Ada", "1 Main St", "secret", "2026-09-20"))
+
+	r, err := getRecordsReaderWithOptions(context.Background(), q, db.QueryContext, DbOptions{
+		StructuredQueryDialect: "sqlite",
+		Recordsets: map[string]*Recordset{
+			"customers": NewRecordset("customers", Table, []dal.FieldRef{dal.Field("id")}),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.Close() }()
+	record, err := r.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{"id": "c1", "name": "Ada", "created_at": "2026-09-20"}
+	if got := record.Data().(map[string]any); !reflect.DeepEqual(got, want) {
+		t.Fatalf("record data = %#v, want %#v", got, want)
+	}
+	if record.Key().ID != "c1" {
+		t.Fatalf("record key ID = %#v, want c1", record.Key().ID)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestWildcardExclusionRecordsetReaderPreservesOrder(t *testing.T) {
 	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherEqual))
 	if err != nil {
@@ -100,6 +139,45 @@ func TestWildcardExclusionRecordsetReaderPreservesOrder(t *testing.T) {
 	mock.ExpectQuery("SELECT * FROM `customers`").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "email", "created_at"}).
 			AddRow([]byte("c1"), []byte("Ada"), []byte("ada@example.test"), []byte("2026-09-20")))
+
+	r, err := getRecordsetReaderWithDialect(context.Background(), q, db.QueryContext, "sqlite")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.Close() }()
+	if got := r.Recordset().Columns(); len(got) != 3 || got[0].Name() != "id" || got[1].Name() != "name" || got[2].Name() != "created_at" {
+		t.Fatalf("recordset columns = %#v", got)
+	}
+	row, rs, err := r.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, want := range []string{"c1", "Ada", "2026-09-20"} {
+		value, valueErr := row.GetValueByIndex(i, rs)
+		if valueErr != nil {
+			t.Fatal(valueErr)
+		}
+		if stringValue := valueString(value); stringValue != want {
+			t.Fatalf("value %d = %q, want %q", i, stringValue, want)
+		}
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWildcardExclusionMasksRecordsetReaderPreservesOrder(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherEqual))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeDatabase(t, db)
+
+	q := dal.From(dal.NewRootCollectionRef("customers", "")).NewQuery().
+		SelectColumns(dal.AllColumnsExcept("Billing*", "Password*", "missing*"))
+	mock.ExpectQuery("SELECT * FROM `customers`").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "BillingEmail", "password_hash", "created_at"}).
+			AddRow([]byte("c1"), []byte("Ada"), []byte("ada@example.test"), []byte("secret"), []byte("2026-09-20")))
 
 	r, err := getRecordsetReaderWithDialect(context.Background(), q, db.QueryContext, "sqlite")
 	if err != nil {
@@ -185,6 +263,24 @@ func TestWildcardProjectionKeepsExplicitTail(t *testing.T) {
 	}
 }
 
+func TestWildcardProjectionMaskKeepsExplicitTail(t *testing.T) {
+	q := dal.From(dal.NewRootCollectionRef("customers", "")).NewQuery().SelectColumns(
+		dal.AllColumnsExcept("Billing*"),
+		dal.Column{Expression: dal.Field("id"), Alias: "BillingHelper"},
+	)
+	plan, err := planWildcardProjection(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := plan.visibleIndexes([]string{"id", "BILLING_EMAIL", "BillingHelper"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, []int{0, 2}) {
+		t.Fatalf("visible indexes = %#v, want [0 2]", got)
+	}
+}
+
 func TestWildcardExclusionIdentityHelperDoesNotHideSameNamedSourceColumn(t *testing.T) {
 	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherEqual))
 	if err != nil {
@@ -194,6 +290,45 @@ func TestWildcardExclusionIdentityHelperDoesNotHideSameNamedSourceColumn(t *test
 
 	q := dal.From(dal.NewRootCollectionRef("customers", "")).NewQuery().
 		SelectColumns(dal.AllColumnsExcept("id"))
+	mock.ExpectQuery("SELECT *, `id` AS `__dalgo_record_id` FROM `customers`").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "__dalgo_record_id", "__dalgo_record_id"}).
+			AddRow("c1", "source-value", "c1"))
+
+	r, err := getRecordsReaderWithOptions(context.Background(), q, db.QueryContext, DbOptions{
+		StructuredQueryDialect: "sqlite",
+		Recordsets: map[string]*Recordset{
+			"customers": NewRecordset("customers", Table, []dal.FieldRef{dal.Field("id")}),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.Close() }()
+	record, err := r.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Key().ID != "c1" {
+		t.Fatalf("record key ID = %#v, want c1", record.Key().ID)
+	}
+	want := map[string]any{"__dalgo_record_id": "source-value"}
+	if got := record.Data().(map[string]any); !reflect.DeepEqual(got, want) {
+		t.Fatalf("record data = %#v, want %#v", got, want)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWildcardExclusionMaskIdentityHelperDoesNotHideSameNamedSourceColumn(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherEqual))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeDatabase(t, db)
+
+	q := dal.From(dal.NewRootCollectionRef("customers", "")).NewQuery().
+		SelectColumns(dal.AllColumnsExcept("ID*"))
 	mock.ExpectQuery("SELECT *, `id` AS `__dalgo_record_id` FROM `customers`").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "__dalgo_record_id", "__dalgo_record_id"}).
 			AddRow("c1", "source-value", "c1"))

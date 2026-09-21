@@ -8,7 +8,7 @@ import (
 
 type wildcardProjectionPlan struct {
 	qualifier     string
-	excluded      map[string]struct{}
+	projection    *dal.WildcardProjection
 	explicitCount int
 }
 
@@ -56,16 +56,14 @@ func planWildcardProjection(q dal.StructuredQuery) (*wildcardProjectionPlan, err
 			qualifier = base.Name()
 		}
 	}
-	excluded := make(map[string]struct{}, len(projection.Exclude))
 	for i, name := range projection.Exclude {
 		if name == "" {
 			return nil, fmt.Errorf("wildcard projection exclusion %d is empty", i)
 		}
-		excluded[name] = struct{}{}
 	}
 	return &wildcardProjectionPlan{
 		qualifier:     qualifier,
-		excluded:      excluded,
+		projection:    projection,
 		explicitCount: len(columns) - 1,
 	}, nil
 }
@@ -84,10 +82,8 @@ func (p wildcardProjectionPlan) visibleIndexes(columnNames []string) ([]int, err
 	}
 	indexes := make([]int, 0, len(columnNames))
 	for i, name := range columnNames {
-		if i < wildcardEnd {
-			if _, excluded := p.excluded[name]; excluded {
-				continue
-			}
+		if i < wildcardEnd && p.projection.Excludes(name) {
+			continue
 		}
 		indexes = append(indexes, i)
 	}
