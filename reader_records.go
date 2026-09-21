@@ -62,7 +62,7 @@ func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute e
 		}
 	}
 
-	if rr.readerBase, err = getReaderBaseWithDialect(ctx, query, execute, options.StructuredQueryDialect); err != nil {
+	if rr.readerBase, err = getReaderBaseWithOptions(ctx, query, execute, options); err != nil {
 		err = fmt.Errorf("failed to get SQL reader: %w", err)
 		return
 	}

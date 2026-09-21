@@ -49,7 +49,7 @@ var _ dal.ReadTransaction = (*readTransaction)(nil)
 type readTransaction = transaction
 
 func (t readTransaction) ExecuteQueryToRecordsetReader(ctx context.Context, query dal.Query, options ...recordset.Option) (dal.RecordsetReader, error) {
-	return getRecordsetReaderWithDialect(ctx, query, t.tx.QueryContext, t.sqlOptions.StructuredQueryDialect, options...)
+	return getRecordsetReaderWithOptions(ctx, query, t.tx.QueryContext, t.sqlOptions, options...)
 }
 
 var _ dal.ReadwriteTransaction = (*readwriteTransaction)(nil)
