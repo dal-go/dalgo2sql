@@ -370,29 +370,32 @@ func compileSQLConditionWithSources(condition dal.Condition, sources map[string]
 		// Unary plus removes declared affinity without coercing the stored
 		// value; explicit BINARY prevents schema collations widening ACLs.
 		left = "(+" + left + " COLLATE BINARY)"
-		if c.Operator == dal.In {
+		if c.Operator == dal.In || c.Operator == dal.NotIn {
+			operator := "IN"
+			if c.Operator == dal.NotIn {
+				operator = "NOT IN"
+			}
 			if len(leftArgs) != 0 {
-				return "", nil, fmt.Errorf("IN left operand must not contain parameters")
+				return "", nil, fmt.Errorf("%s left operand must not contain parameters", operator)
 			}
 			array, ok := c.Right.(dal.Array)
 			if !ok {
-				return "", nil, fmt.Errorf("IN requires an array right operand")
+				return "", nil, fmt.Errorf("%s requires an array right operand", operator)
 			}
 			values, err := arrayValues(array.Value)
 			if err != nil {
 				return "", nil, err
 			}
 			if len(values) == 0 {
+				if c.Operator == dal.NotIn {
+					return "1 = 1", nil, nil
+				}
 				return "0 = 1", nil, nil
 			}
 			parts := make([]string, len(values))
 			for i, value := range values {
 				if _, ok := value.(bool); ok {
 					return "", nil, fmt.Errorf("portable SQLite boolean predicates require schema typing")
-				}
-				op := "="
-				if value == nil {
-					op = "IS"
 				}
 				operand := left
 				right := "?"
@@ -404,9 +407,15 @@ func compileSQLConditionWithSources(condition dal.Condition, sources map[string]
 					operand = normalizeSQLNumber(left)
 					right = "(+CAST(? AS REAL))"
 				}
-				parts[i] = operand + " " + op + " " + right
+				// Equality against NULL must remain UNKNOWN. IS NULL would
+				// incorrectly make NULL IN [NULL] true and its negation false.
+				parts[i] = operand + " = " + right
 			}
-			return "(" + strings.Join(parts, " OR ") + ")", values, nil
+			membership := "(" + strings.Join(parts, " OR ") + ")"
+			if c.Operator == dal.NotIn {
+				return "NOT " + membership, values, nil
+			}
+			return membership, values, nil
 		}
 		op := string(c.Operator)
 		if c.Operator == dal.Equal {
