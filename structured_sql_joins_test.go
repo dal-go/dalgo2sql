@@ -724,7 +724,7 @@ func TestCompileSQLJoinWhereInUsesPortableTypedPredicates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(text, " IS ?") || !strings.Contains(text, "CAST(? AS REAL)") || !strings.Contains(text, " OR ") {
+	if !strings.Contains(text, " = ?") || strings.Contains(text, " IS ?") || !strings.Contains(text, "CAST(? AS REAL)") || !strings.Contains(text, " OR ") {
 		t.Fatalf("portable IN SQL = %s", text)
 	}
 	if got, want := fmt.Sprint(args), "[<nil> 1 one]"; got != want {
