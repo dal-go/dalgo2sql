@@ -252,6 +252,17 @@ func TestDatabase_RunReadwriteTransaction(t *testing.T) {
 			t.Errorf("expected error, got nil")
 		}
 	})
+
+	t.Run("commit_error", func(t *testing.T) {
+		mock.ExpectBegin().WillReturnError(nil)
+		mock.ExpectCommit().WillReturnError(errors.New("commit error"))
+		err := d.RunReadwriteTransaction(ctx, func(ctx context.Context, tx dal.ReadwriteTransaction) error {
+			return nil
+		})
+		if err == nil {
+			t.Errorf("expected error, got nil")
+		}
+	})
 }
 
 func TestDatabase_Panics(t *testing.T) {

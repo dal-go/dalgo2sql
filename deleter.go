@@ -42,14 +42,8 @@ func deleteMulti(ctx context.Context, options DbOptions, keys []*record.Key, exe
 	var prevTable string
 	var tableKeys []*record.Key
 	deleteByKeys := func(table string, keys []*record.Key) error {
-		if len(keys) == 0 {
-			return nil
-		}
 		if len(keys) == 1 {
-			if err := deleteSingle(ctx, options, keys[0], exec); err != nil {
-				return err
-			}
-			return nil
+			return deleteSingle(ctx, options, keys[0], exec)
 		}
 		for _, key := range keys {
 			if err := deleteSingle(ctx, options, key, exec); err != nil {

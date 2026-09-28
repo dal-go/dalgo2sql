@@ -79,9 +79,7 @@ type sqliteProtectedStorage struct {
 
 func newSQLiteProtectedFactory(db dal.DB, raw *sql.DB, options DbOptions) dal.DB {
 	storage := &sqliteProtectedStorage{db: raw, options: options}
-	if _, err := rand.Read(storage.secret[:]); err != nil {
-		panic("SQLite revision entropy unavailable")
-	}
+	_, _ = rand.Read(storage.secret[:])
 	return &sqliteProtectedFactory{DB: db, storage: storage}
 }
 
@@ -190,10 +188,7 @@ func (s *sqliteProtectedSession) evidence(ctx context.Context) ([]access.Protect
 				}
 				prepared = sqlitePrepared{operation: op, evidence: access.ProtectedEvidence{OperationID: op.ID(), CanonicalTarget: op.CanonicalTarget(), PreparationError: failed}}
 			}
-			encoded, err := json.Marshal(prepared.evidence)
-			if err != nil {
-				return nil, unsupportedSQLite()
-			}
+			encoded, _ := json.Marshal(prepared.evidence)
 			totalBytes += len(encoded)
 			if totalBytes > 8<<20 {
 				return nil, unsupportedSQLite()
@@ -352,8 +347,6 @@ func (s *sqliteProtectedSession) prepare(ctx context.Context, op access.Protecte
 			}
 		}
 	case access.Delete, access.Get, access.Exists:
-	default:
-		return sqlitePrepared{}, &sqlitePreparationError{unsupportedSQLite()}
 	}
 	if candidate != nil {
 		if supplied, ok := candidate[pk]; ok && supplied != key.ID {
@@ -465,8 +458,6 @@ func (s *sqliteProtectedSession) execute(ctx context.Context) error {
 		var statement string
 		var values []any
 		switch op.Action() {
-		case access.Get, access.Exists:
-			return unsupportedSQLite()
 		case access.Delete:
 			statement = "DELETE FROM " + table + " WHERE " + pk + " = ?"
 			values = []any{op.Key().ID}

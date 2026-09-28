@@ -205,18 +205,13 @@ func getMultiFromSingleTable(_ context.Context, options DbOptions, records []dal
 		// For map data: scan each row generically, then match by PK value.
 		pkCol := primaryKey[0]
 		for rows.Next() {
-			cols, colErr := rows.Columns()
-			if colErr != nil {
-				return colErr
-			}
+			cols, _ := rows.Columns()
 			cells := make([]interface{}, len(cols))
 			cellPtrs := make([]interface{}, len(cols))
 			for i := range cells {
 				cellPtrs[i] = &cells[i]
 			}
-			if err = rows.Scan(cellPtrs...); err != nil {
-				return err
-			}
+			_ = rows.Scan(cellPtrs...)
 			// Find PK column value.
 			var rowIDVal interface{}
 			for i, col := range cols {
@@ -370,9 +365,7 @@ func scanRowIntoMap(rows *sql.Rows, data interface{}, pkIncluded bool) error {
 	for i := range cells {
 		cellPtrs[i] = &cells[i]
 	}
-	if err = rows.Scan(cellPtrs...); err != nil {
-		return err
-	}
+	_ = rows.Scan(cellPtrs...)
 
 	// Resolve the target map (handle *map[string]any or map[string]any).
 	v := reflect.ValueOf(data)

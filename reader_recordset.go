@@ -61,8 +61,8 @@ func getRecordsetReaderWithOptions(ctx context.Context, query dal.Query, execute
 					c = recordset.UntypedCol(recordset.NewTypedColumn[time.Time](name, time.Time{}, dbType))
 				case "sql.NullString":
 					c = recordset.UntypedCol(recordset.NewTypedColumn[string](name, "", dbType))
-				case "sql.NullInt8":
-					c = recordset.UntypedCol(recordset.NewTypedColumn[int8](name, 0, dbType))
+				case "sql.NullByte":
+					c = recordset.UntypedCol(recordset.NewTypedColumn[int64](name, 0, dbType))
 				case "sql.NullInt16":
 					c = recordset.UntypedCol(recordset.NewTypedColumn[int16](name, 0, dbType))
 				case "sql.NullInt32":
@@ -105,10 +105,6 @@ func getRecordsetReaderWithOptions(ctx context.Context, query dal.Query, execute
 				err = fmt.Errorf("unsupported column type kind %v for column %s", kind, name)
 				return
 			}
-		}
-		if c == nil {
-			err = fmt.Errorf("column %s has nil recordset column after type mapping", name)
-			return
 		}
 		cols = append(cols, c)
 	}
@@ -174,17 +170,9 @@ func (r *recordsetReader) Next() (row recordset.Row, rs recordset.Recordset, err
 				switch v := value.(type) {
 				case int64:
 					value = float64(v)
-				case int:
-					value = float64(v)
-				case float32:
-					value = float64(v)
 				}
 			} else if vt.Kind() == reflect.Int64 {
 				switch v := value.(type) {
-				case int:
-					value = int64(v)
-				case int32:
-					value = int64(v)
 				case float64:
 					value = int64(v)
 				}

@@ -22,9 +22,6 @@ func translateNativeJoinHints(from dal.FromSource, translator NativeJoinHintTran
 	var expectedPaths []string
 	var walk func(dal.FromSource, string)
 	walk = func(node dal.FromSource, path string) {
-		if node == nil {
-			return
-		}
 		for i, join := range node.Joins() {
 			joinPath := fmt.Sprintf("%s.joins[%d]", path, i)
 			if len(join.Algorithms()) != 0 {
@@ -35,7 +32,9 @@ func translateNativeJoinHints(from dal.FromSource, translator NativeJoinHintTran
 			if child == nil && join.RecordsetSource != nil {
 				child = dal.From(join.RecordsetSource)
 			}
-			walk(child, joinPath+".from")
+			if child != nil {
+				walk(child, joinPath+".from")
+			}
 		}
 	}
 	walk(from, "from")

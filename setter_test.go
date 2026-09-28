@@ -114,4 +114,52 @@ func TestSetter(t *testing.T) {
 			t.Errorf("expected error, got nil")
 		}
 	})
+
+	t.Run("exec_error", func(t *testing.T) {
+		sqlDB, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherEqual))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer closeDatabase(t, sqlDB)
+
+		db := dal.BackendOf(NewDatabase(sqlDB, newSchema(), DbOptions{
+			Recordsets: map[string]*Recordset{
+				"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID")}),
+			},
+		})).(*database)
+
+		u := user{Name: "u1"}
+		record := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "id1"), &u)
+
+		mock.ExpectQuery("SELECT ID FROM users WHERE ID = ?").WithArgs("id1").WillReturnRows(sqlmock.NewRows([]string{"ID"}))
+		mock.ExpectExec("INSERT INTO users(ID, Name) VALUES (?, ?)").WithArgs("id1", "u1").WillReturnError(errors.New("insert error"))
+
+		err = db.Set(ctx, record)
+		if err == nil {
+			t.Errorf("expected error, got nil")
+		}
+	})
+
+	t.Run("composite_primary_key", func(t *testing.T) {
+		sqlDB, _, err := sqlmock.New()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer closeDatabase(t, sqlDB)
+
+		rs := NewRecordset("users", Table, []dal.FieldRef{dal.Field("id1"), dal.Field("id2")})
+		db := dal.BackendOf(NewDatabase(sqlDB, newSchema(), DbOptions{
+			Recordsets: map[string]*Recordset{
+				"users": rs,
+			},
+		})).(*database)
+
+		u := user{Name: "u1"}
+		record := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "id1"), &u)
+
+		err = db.Set(ctx, record)
+		if err == nil {
+			t.Errorf("expected error, got nil")
+		}
+	})
 }

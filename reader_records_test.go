@@ -118,4 +118,57 @@ func TestRecordsReader(t *testing.T) {
 			t.Fatal("expected reader, got nil")
 		}
 	})
+
+	t.Run("Next_into_record_nil_data_and_bytes", func(t *testing.T) {
+		sdb, smock, err := sqlmock.New()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer closeDatabase(t, sdb)
+
+		rows := sqlmock.NewRows([]string{"id", "name"}).AddRow(1, []byte("John"))
+		smock.ExpectQuery("SELECT \\* FROM users").WillReturnRows(rows)
+
+		targetRec := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "u1"), nil)
+		query := dal.From(dal.NewRootCollectionRef("users", "")).NewQuery().SelectIntoRecord(func() dalrecord.Record {
+			return targetRec
+		})
+
+		rr, err := getRecordsReader(ctx, query, sdb.QueryContext)
+		if err != nil {
+			t.Fatalf("failed to get records reader: %v", err)
+		}
+		rec, err := rr.Next()
+		if err != nil {
+			t.Fatalf("failed to get next record: %v", err)
+		}
+		if rec.Data() == nil {
+			t.Fatalf("expected non-nil data")
+		}
+		data := rec.Data().(map[string]any)
+		if data["name"] != "John" {
+			t.Fatalf("expected string John, got %v", data["name"])
+		}
+	})
+
+	t.Run("Next_scan_error_via_col_mismatch", func(t *testing.T) {
+		sdb, smock, err := sqlmock.New()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer closeDatabase(t, sdb)
+
+		rows := sqlmock.NewRows([]string{"id"}).AddRow(1)
+		smock.ExpectQuery("SELECT id FROM users").WillReturnRows(rows)
+
+		rr, err := getRecordsReader(ctx, dal.NewTextQuery("SELECT id FROM users", nil), sdb.QueryContext)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rr.scanColNames = append(rr.scanColNames, "extra")
+		_, err = rr.Next()
+		if err == nil {
+			t.Fatal("expected scan error, got nil")
+		}
+	})
 }

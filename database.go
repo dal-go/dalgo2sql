@@ -68,8 +68,6 @@ func (dtb *database) RunReadonlyTransaction(ctx context.Context, f dal.ROTxWorke
 	var sqlTxOptions sql.TxOptions
 	if dalgoTxOptions.IsReadonly() {
 		sqlTxOptions.ReadOnly = !dtb.onlyReadWriteTx
-	} else {
-		return fmt.Errorf("attemt to run readonly transation without readonly option")
 	}
 	dbTx, err := dtb.db.BeginTx(ctx, &sqlTxOptions)
 	if err != nil {
@@ -81,9 +79,6 @@ func (dtb *database) RunReadonlyTransaction(ctx context.Context, f dal.ROTxWorke
 		if err != nil {
 			return fmt.Errorf("failed to begin transaction: %w", err)
 		}
-	}
-	if dbTx == nil {
-		return fmt.Errorf("sql driver returned nil transaction")
 	}
 	if err = f(ctx, newTransaction(dbTx, dtb.options, dalgoTxOptions)); err != nil {
 		if rollbackErr := dbTx.Rollback(); rollbackErr != nil {

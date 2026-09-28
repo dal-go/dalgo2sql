@@ -221,3 +221,18 @@ func containsAll(value string, parts ...string) bool {
 	}
 	return true
 }
+
+func TestNativeJoinHints_AdditionalCoverage(t *testing.T) {
+	translator := &nativeJoinHintTranslatorTestDouble{}
+	// from == nil
+	res, err := translateNativeJoinHints(nil, translator)
+	if err != nil || !reflect.DeepEqual(res, NativeJoinHintFragments{}) {
+		t.Fatalf("expected empty fragments for nil from, got %v, %v", res, err)
+	}
+
+	// dal.ValidateJoinTree fails
+	_, err = translateNativeJoinHints(dal.From(nil), translator)
+	if err == nil {
+		t.Fatalf("expected error from ValidateJoinTree")
+	}
+}

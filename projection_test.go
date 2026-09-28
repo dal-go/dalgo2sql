@@ -499,3 +499,30 @@ func TestWildcardExclusionMaskIdentityHelperDoesNotHideSameNamedSourceColumn(t *
 		t.Fatal(err)
 	}
 }
+
+func TestProjection_AdditionalCoverage(t *testing.T) {
+	// missing source
+	q := dal.From(nil).NewQuery().SelectColumns(dal.AllColumnsExcept("x"))
+	_, err := planWildcardProjection(q)
+	if err == nil {
+		t.Fatalf("expected error for missing source")
+	}
+
+	// qualifier from base.Name() when alias is empty
+	q2 := dal.From(dal.NewRootCollectionRef("customers", "")).NewQuery().
+		SelectColumns(dal.AllColumnsExceptFrom("customers", "email"))
+	plan, err := planWildcardProjection(q2)
+	if err != nil || plan.qualifier != "customers" {
+		t.Fatalf("expected qualifier customers, got %v, err: %v", plan, err)
+	}
+
+	// visibleIndexes fewer columns than explicitCount
+	p := wildcardProjectionPlan{
+		explicitCount: 5,
+		projection:    &dal.WildcardProjection{},
+	}
+	_, err = p.visibleIndexes([]string{"a", "b"})
+	if err == nil {
+		t.Fatalf("expected error when columns < explicitCount")
+	}
+}

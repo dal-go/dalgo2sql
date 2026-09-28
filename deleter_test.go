@@ -191,4 +191,41 @@ func TestDeleter(t *testing.T) {
 			t.Errorf("unexpected error: %v", err)
 		}
 	})
+
+	t.Run("DeleteMulti_single_key_error", func(t *testing.T) {
+		sqlDB, mock, err := sqlmock.New()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer closeDatabase(t, sqlDB)
+
+		db := dal.BackendOf(NewDatabase(sqlDB, newSchema(), DbOptions{})).(*database)
+		keys := []*record.Key{
+			record.NewKeyWithID("users", "u1"),
+		}
+		mock.ExpectExec("DELETE FROM users WHERE ID = ?").WithArgs("u1").WillReturnError(errors.New("exec error"))
+		err = db.DeleteMulti(ctx, keys)
+		if err == nil {
+			t.Errorf("expected error, got nil")
+		}
+	})
+
+	t.Run("DeleteMulti_multi_table_error", func(t *testing.T) {
+		sqlDB, mock, err := sqlmock.New()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer closeDatabase(t, sqlDB)
+
+		db := dal.BackendOf(NewDatabase(sqlDB, newSchema(), DbOptions{})).(*database)
+		keys := []*record.Key{
+			record.NewKeyWithID("users", "u1"),
+			record.NewKeyWithID("posts", "p1"),
+		}
+		mock.ExpectExec("DELETE FROM users WHERE ID = ?").WithArgs("u1").WillReturnError(errors.New("exec error"))
+		err = db.DeleteMulti(ctx, keys)
+		if err == nil {
+			t.Errorf("expected error, got nil")
+		}
+	})
 }

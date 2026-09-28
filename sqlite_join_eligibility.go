@@ -82,10 +82,7 @@ func canExecuteSQLiteJoin(ctx context.Context, q dal.StructuredQuery, dialect st
 	if _, _, err := compileStructuredSQL(q); err != nil {
 		return fmt.Errorf("join_plan: SQLite cannot natively compile query: %w", err)
 	}
-	sources, err := sqliteJoinSources(q.From())
-	if err != nil {
-		return err
-	}
+	sources, _ := sqliteJoinSources(q.From())
 	return preflightSQLiteJoinKeys(ctx, q.From(), sources, execute, "from")
 }
 

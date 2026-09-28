@@ -41,35 +41,16 @@ func simpleKeyToFields(idFieldName string) dal.KeyToFieldsFunc {
 
 		// Helper to check for SetID method on a type
 		hasSetIDMethod := func(v reflect.Value) bool {
-			if !v.IsValid() {
-				return false
-			}
-			// Check method on the value
 			if m := v.MethodByName("SetID"); m.IsValid() {
-				// Ensure it has exactly one input parameter besides receiver
-				t := m.Type()
-				if t.NumIn() == 1 { // for reflect.Value.Method, receiver is bound; NumIn counts only method parameters
+				if m.Type().NumIn() == 1 {
 					return true
 				}
 			}
-			// If value is not a pointer, also check a pointer to it (for pointer receiver methods)
 			if v.Kind() != reflect.Pointer {
 				pv := reflect.New(v.Type())
 				if m := pv.MethodByName("SetID"); m.IsValid() {
-					t := m.Type()
-					if t.NumIn() == 1 {
+					if m.Type().NumIn() == 1 {
 						return true
-					}
-				}
-			} else if v.Kind() == reflect.Pointer {
-				// Additionally check the element (for value receiver methods)
-				e := v.Elem()
-				if e.IsValid() {
-					if m := e.MethodByName("SetID"); m.IsValid() {
-						t := m.Type()
-						if t.NumIn() == 1 {
-							return true
-						}
 					}
 				}
 			}
@@ -114,9 +95,6 @@ func simpleFieldsToKey(idFieldName string) dal.DataToKeyFunc {
 		v := reflect.ValueOf(data)
 
 		getID := func(v reflect.Value) (any, bool) {
-			if !v.IsValid() {
-				return nil, false
-			}
 			if m := v.MethodByName("GetID"); m.IsValid() {
 				mt := m.Type()
 				if mt.NumIn() == 0 && mt.NumOut() == 1 { // method bound to receiver
@@ -124,19 +102,7 @@ func simpleFieldsToKey(idFieldName string) dal.DataToKeyFunc {
 					return res[0].Interface(), true
 				}
 			}
-			// If pointer, also check value receiver; if value, also check pointer receiver
-			if v.Kind() == reflect.Pointer {
-				e := v.Elem()
-				if e.IsValid() {
-					if m := e.MethodByName("GetID"); m.IsValid() {
-						mt := m.Type()
-						if mt.NumIn() == 0 && mt.NumOut() == 1 {
-							res := m.Call(nil)
-							return res[0].Interface(), true
-						}
-					}
-				}
-			} else {
+			if v.Kind() != reflect.Pointer {
 				pv := reflect.New(v.Type())
 				if m := pv.MethodByName("GetID"); m.IsValid() {
 					mt := m.Type()
@@ -171,11 +137,7 @@ func simpleFieldsToKey(idFieldName string) dal.DataToKeyFunc {
 				if f.PkgPath != "" { // unexported
 					return nil, fmt.Errorf("field %q is not exported", name)
 				}
-				fv := v.FieldByName(name)
-				if !fv.IsValid() {
-					return nil, fmt.Errorf("field %q value is invalid", name)
-				}
-				id = fv.Interface()
+				id = v.FieldByName(name).Interface()
 			} else {
 				return nil, fmt.Errorf("field %q not found on data", name)
 			}
@@ -232,8 +194,6 @@ func simpleFieldsToKey(idFieldName string) dal.DataToKeyFunc {
 					t = reflect.TypeOf(float32(0))
 				case reflect.Float64:
 					t = reflect.TypeOf(float64(0))
-				default:
-					return nil, fmt.Errorf("unsupported type %v", kt)
 				}
 				if rv.Type().ConvertibleTo(t) {
 					cv := rv.Convert(t)

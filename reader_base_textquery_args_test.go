@@ -2,8 +2,11 @@ package dalgo2sql
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"testing"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/dal-go/dalgo/dal"
 )
 
@@ -101,5 +104,105 @@ func TestGetReaderBase_TextQuery_MixedArgs(t *testing.T) {
 	}
 	if id != 2 {
 		t.Errorf("id = %d, want 2", id)
+	}
+}
+
+type failingCompiler struct{}
+
+func (failingCompiler) CompileNativeStructuredQuery(query dal.StructuredQuery, fragments NativeJoinHintFragments) (string, []any, error) {
+	return "", nil, errors.New("compiler error")
+}
+
+func TestReaderBase_AdditionalCoverage(t *testing.T) {
+	ctx := context.Background()
+
+	// 1. planWildcardProjection fails: missing source
+	qBadProj := dal.From(nil).NewQuery().SelectColumns(dal.AllColumnsExcept("x"))
+	_, err := getReaderBaseWithOptions(ctx, qBadProj, nil, DbOptions{})
+	if err == nil {
+		t.Fatal("expected error from planWildcardProjection")
+	}
+
+	// 2. NativeStructuredQueryCompiler returns error
+	qValid := dal.From(dal.NewRootCollectionRef("widgets", "")).NewQuery().SelectColumns(dal.Column{Expression: dal.Field("id")})
+	_, err = getReaderBaseWithOptions(ctx, qValid, nil, DbOptions{
+		NativeStructuredQueryCompiler: failingCompiler{},
+	})
+	if err == nil {
+		t.Fatal("expected error from NativeStructuredQueryCompiler")
+	}
+
+	// 3. compileStructuredSQL fails in sqlite dialect
+	qBadLimit := dal.From(dal.NewRootCollectionRef("widgets", "")).NewQuery().Limit(-1).SelectIntoRecordset()
+	_, err = getReaderBaseWithOptions(ctx, qBadLimit, nil, DbOptions{
+		StructuredQueryDialect: "sqlite",
+	})
+	if err == nil {
+		t.Fatal("expected error from compileStructuredSQL")
+	}
+
+	// 4. sqliteSourceColumns fails: execute returns error
+	qWild := dal.From(dal.NewRootCollectionRef("widgets", "")).NewQuery().SelectColumns(dal.AllColumnsExcept("x"))
+	_, err = getReaderBaseWithOptions(ctx, qWild, func(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+		return nil, errors.New("exec error")
+	}, DbOptions{
+		StructuredQueryDialect: "sqlite",
+	})
+	if err == nil {
+		t.Fatal("expected error from sqliteSourceColumns execute")
+	}
+
+	// 5. execute succeeds but rows is closed -> rb.rows.Columns() fails
+	sdb, smock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeDatabase(t, sdb)
+
+	rows := sqlmock.NewRows([]string{"id"})
+	smock.ExpectQuery("SELECT id FROM widgets").WillReturnRows(rows)
+	rowsClosed, _ := sdb.QueryContext(ctx, "SELECT id FROM widgets")
+	_ = rowsClosed.Close()
+
+	_, err = getReaderBaseWithOptions(ctx, dal.NewTextQuery("SELECT 1", nil), func(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+		return rowsClosed, nil
+	}, DbOptions{})
+	if err == nil {
+		t.Fatal("expected error from Columns() on closed rows")
+	}
+
+	// 6. visibleIndexes error: fewer columns returned than explicit projections
+	qWildExplicit := dal.From(dal.NewRootCollectionRef("widgets", "")).NewQuery().
+		SelectColumns(dal.AllColumnsExcept("x"), dal.Column{Expression: dal.Field("a")}, dal.Column{Expression: dal.Field("b")})
+	rows1Col := sqlmock.NewRows([]string{"only_one"}).AddRow(1)
+	smock.ExpectQuery("SELECT \\* FROM widgets").WillReturnRows(rows1Col)
+
+	_, err = getReaderBaseWithOptions(ctx, qWildExplicit, func(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+		return sdb.QueryContext(ctx, "SELECT * FROM widgets")
+	}, DbOptions{})
+	if err == nil {
+		t.Fatal("expected error from visibleIndexes")
+	}
+
+	// 7. sqliteSourceColumns: scan error and rows.Err() error
+	qTable := dal.From(dal.NewRootCollectionRef("widgets", "")).NewQuery().SelectIntoRecordset()
+	// Scan error (string into int)
+	rowsScanErr := sqlmock.NewRows([]string{"name", "hidden"}).AddRow("col", "not-an-int")
+	smock.ExpectQuery("SELECT name, hidden FROM pragma_table_xinfo").WillReturnRows(rowsScanErr)
+	_, err = sqliteSourceColumns(ctx, qTable, func(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+		return sdb.QueryContext(ctx, query, args...)
+	})
+	if err == nil {
+		t.Fatal("expected scan error from sqliteSourceColumns")
+	}
+
+	// rows.Err() error
+	rowsErr := sqlmock.NewRows([]string{"name", "hidden"}).AddRow("col", 0).RowError(0, errors.New("pragma row error"))
+	smock.ExpectQuery("SELECT name, hidden FROM pragma_table_xinfo").WillReturnRows(rowsErr)
+	_, err = sqliteSourceColumns(ctx, qTable, func(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+		return sdb.QueryContext(ctx, query, args...)
+	})
+	if err == nil {
+		t.Fatal("expected rows error from sqliteSourceColumns")
 	}
 }

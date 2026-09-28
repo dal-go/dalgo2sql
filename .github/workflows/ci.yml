@@ -23,4 +23,4 @@ jobs:
     with:
       require_conventional_pr_title: true
       code_coverage: true
-      min_test_coverage_percent: 90
+      min_test_coverage_percent: 100

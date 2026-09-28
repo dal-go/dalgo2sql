@@ -324,3 +324,48 @@ func Test_simpleFieldsToKey_ErrorOnNilData(t *testing.T) {
 		t.Fatalf("expected error for nil data, got nil")
 	}
 }
+
+type withSetIDWrongArgs struct{}
+
+func (*withSetIDWrongArgs) SetID(_, _ any) {}
+
+func Test_defaultSchema_AdditionalCoverage(t *testing.T) {
+	f := simpleKeyToFields("ID")
+	key := record.NewKeyWithID("users", 123)
+	fields, err := f(key, withSetIDPtr{})
+	if err != nil || len(fields) != 0 {
+		t.Fatalf("expected 0 fields, got %v, err: %v", fields, err)
+	}
+
+	fields, err = f(key, withSetIDWrongArgs{})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+
+	schema := NewSimpleSchema("ID")
+	incomplete := record.NewIncompleteKey("users", reflect.Int, nil)
+	_, err = schema.DataToKey(incomplete, hasExportedID{ID: nil})
+	if err == nil {
+		t.Fatalf("expected error for nil id")
+	}
+
+	incompleteBool := record.NewIncompleteKey("users", reflect.Bool, nil)
+	_, err = schema.DataToKey(incompleteBool, hasExportedID{ID: 1})
+	if err == nil {
+		t.Fatalf("expected error converting int to bool")
+	}
+
+	incompleteSlice := record.NewIncompleteKey("users", reflect.Slice, nil)
+	_, err = schema.DataToKey(incompleteSlice, hasExportedID{ID: 1})
+	if err == nil {
+		t.Fatalf("expected error converting int to slice")
+	}
+
+	k, err := schema.DataToKey(incompleteSlice, hasExportedID{ID: []byte("val")})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if k.ID == nil {
+		t.Fatalf("expected key id")
+	}
+}

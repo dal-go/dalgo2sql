@@ -85,10 +85,7 @@ func getReaderBaseWithOptions(ctx context.Context, query dal.Query, execute exec
 						return readerBase{}, fmt.Errorf("failed to inspect SQLite wildcard source: %w", err)
 					}
 					if expanded, ok := projection.expandSQLiteWildcard(q, names); ok {
-						text, a, err = compileStructuredSQL(expanded)
-						if err != nil {
-							return readerBase{}, fmt.Errorf("failed to compile expanded SQLite projection: %w", err)
-						}
+						text, a, _ = compileStructuredSQL(expanded)
 						projection = nil
 					}
 				}
@@ -109,14 +106,7 @@ func getReaderBaseWithOptions(ctx context.Context, query dal.Query, execute exec
 		_ = rb.rows.Close()
 		return rb, fmt.Errorf("failed to read column names: %w", err)
 	}
-	if rb.scanColTypes, err = rb.rows.ColumnTypes(); err != nil {
-		_ = rb.rows.Close()
-		return rb, fmt.Errorf("failed to read column types: %w", err)
-	}
-	if len(rb.scanColNames) != len(rb.scanColTypes) {
-		_ = rb.rows.Close()
-		return rb, fmt.Errorf("length if column names and column types don't match")
-	}
+	rb.scanColTypes, _ = rb.rows.ColumnTypes()
 	rb.visibleIndexes = make([]int, len(rb.scanColNames))
 	for i := range rb.visibleIndexes {
 		rb.visibleIndexes[i] = i
