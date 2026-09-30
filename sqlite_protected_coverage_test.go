@@ -3,7 +3,6 @@ package dalgo2sql
 import (
 	"context"
 	"database/sql"
-	"database/sql/driver"
 	"errors"
 	"strings"
 	"testing"
@@ -438,15 +437,6 @@ func TestSQLiteProtected_Scalars_Coverage(t *testing.T) {
 		t.Fatalf("unexpected int->float64: %v, %v", v, err)
 	}
 }
-
-type customMockResult struct {
-	driver.Result
-	rowsAffected int64
-	err          error
-}
-
-func (r customMockResult) LastInsertId() (int64, error) { return 0, nil }
-func (r customMockResult) RowsAffected() (int64, error) { return r.rowsAffected, r.err }
 
 func TestSQLiteProtected_Execute_Coverage(t *testing.T) {
 	ctx := context.Background()

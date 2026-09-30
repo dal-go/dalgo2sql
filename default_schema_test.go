@@ -337,7 +337,7 @@ func Test_defaultSchema_AdditionalCoverage(t *testing.T) {
 		t.Fatalf("expected 0 fields, got %v, err: %v", fields, err)
 	}
 
-	fields, err = f(key, withSetIDWrongArgs{})
+	_, err = f(key, withSetIDWrongArgs{})
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
