@@ -3,6 +3,7 @@ package dalgo2sql
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"math"
 	"reflect"
 	"strings"
@@ -13,9 +14,16 @@ import (
 )
 
 func TestNormalizeValueByDatabaseType(t *testing.T) {
-	nan, ok := normalizeValueByDatabaseType("NUMERIC", "NaN").(float64)
-	if !ok || !math.IsNaN(nan) {
-		t.Errorf("NaN numeric text: got %v (ok=%v)", nan, ok)
+	special := map[string]func(float64) bool{
+		"NaN":       math.IsNaN,
+		"Infinity":  func(f float64) bool { return math.IsInf(f, 1) },
+		"-Infinity": func(f float64) bool { return math.IsInf(f, -1) },
+	}
+	for text, is := range special {
+		got, ok := normalizeValueByDatabaseType("NUMERIC", text).(float64)
+		if !ok || !is(got) {
+			t.Errorf("%s numeric text: got %v (ok=%v)", text, got, ok)
+		}
 	}
 	tests := []struct {
 		name     string
@@ -24,16 +32,29 @@ func TestNormalizeValueByDatabaseType(t *testing.T) {
 	}{
 		{"numeric string", "NUMERIC", "13.86", 13.86},
 		{"numeric bytes", "NUMERIC", []byte("13.86"), 13.86},
-		{"decimal string", "DECIMAL", "7", float64(7)},
+		{"whole number", "NUMERIC", "7", float64(7)},
 		{"lower case type", "numeric", "0.5", 0.5},
 		{"negative", "NUMERIC", "-2.25", -2.25},
+		{"explicit plus", "NUMERIC", "+2.5", 2.5},
+		{"leading dot", "NUMERIC", ".5", 0.5},
+		{"trailing dot", "NUMERIC", "5.", float64(5)},
 		{"nil stays nil", "NUMERIC", nil, nil},
 		{"unparsable string keeps text", "NUMERIC", "abc", "abc"},
 		{"unparsable bytes keep text as string", "NUMERIC", []byte("abc"), "abc"},
+		{"empty text keeps text", "NUMERIC", "", ""},
+		{"lower case inf keeps text", "NUMERIC", "inf", "inf"},
+		{"lower case nan keeps text", "NUMERIC", "nan", "nan"},
+		{"hex float keeps text", "NUMERIC", "0x1p4", "0x1p4"},
+		{"exponent keeps text", "NUMERIC", "1e5", "1e5"},
+		{"surrounding space keeps text", "NUMERIC", " 13.86 ", " 13.86 "},
+		{"out of range keeps text", "NUMERIC", "1" + strings.Repeat("0", 400), "1" + strings.Repeat("0", 400)},
 		{"float64 untouched", "NUMERIC", 1.5, 1.5},
 		{"int64 untouched", "NUMERIC", int64(3), int64(3)},
-		{"json bytes", "JSON", []byte(`{"a":1}`), `{"a":1}`},
-		{"jsonb bytes", "JSONB", []byte(`[1]`), `[1]`},
+		// DECIMAL is MySQL's name for the exact type; MySQL callers keep their text.
+		{"decimal string untouched", "DECIMAL", "13.80", "13.80"},
+		{"decimal bytes untouched", "DECIMAL", []byte("13.80"), []byte("13.80")},
+		{"json bytes untouched", "JSON", []byte(`{"a":1}`), []byte(`{"a":1}`)},
+		{"jsonb bytes untouched", "JSONB", []byte(`[1]`), []byte(`[1]`)},
 		{"jsonb string untouched", "JSONB", `[1]`, `[1]`},
 		{"jsonb nil untouched", "JSONB", nil, nil},
 		{"varchar bytes untouched", "VARCHAR", []byte("13.86"), []byte("13.86")},
@@ -87,6 +108,8 @@ func TestRecordsReader_NormalisesByDatabaseTypeName(t *testing.T) {
 	}
 }
 
+// Pins behaviour that does not depend on the normaliser: the records reader
+// already stores every []byte as a string.
 func TestRecordsReader_JSONBytesBecomeString(t *testing.T) {
 	ctx := context.Background()
 	db, _ := numericMock(t, "JSONB", []byte(nil), []byte(`{"a":1}`))
@@ -152,17 +175,81 @@ func TestRecordsetReader_NumericStringBecomesFloat64(t *testing.T) {
 	}
 }
 
-func TestRecordsetReader_UnparsableNumericIsAnErrorNotAPanic(t *testing.T) {
+func TestRecordsetReader_StringInFloatColumnIsAnErrorNotAPanicAndNeverQuotesTheCell(t *testing.T) {
 	ctx := context.Background()
-	db, _ := numericMock(t, "NUMERIC", float64(0), "abc")
+	const cell = "sentinel-cell-text"
+	db, _ := numericMock(t, "NUMERIC", float64(0), cell)
 	rr, err := getRecordsetReader(ctx, dal.NewTextQuery("SELECT amount", nil), db.QueryContext)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = rr.Close() }()
 	_, _, err = rr.Next()
-	if err == nil || !strings.Contains(err.Error(), "column amount") || !strings.Contains(err.Error(), "abc") {
-		t.Errorf("expected error naming column and text, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "column amount") || !strings.Contains(err.Error(), "string") {
+		t.Fatalf("expected error naming the column and the Go type, got %v", err)
+	}
+	if strings.Contains(err.Error(), cell) {
+		t.Errorf("error quotes the cell text: %v", err)
+	}
+}
+
+// A column whose recordset Go type is not float64 keeps what the driver
+// delivered: normalisation must not hand dalgo's strict recordset a value of
+// the wrong type (it panics on a mismatch).
+func TestRecordsetReader_NormalisationFollowsTheColumnGoType(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name     string
+		dbType   string
+		scanType any
+		value    any
+		want     any
+	}{
+		{"numeric in a []byte column", "NUMERIC", []byte(nil), []byte("13.86"), []byte("13.86")},
+		{"unparsable numeric in a []byte column", "NUMERIC", []byte(nil), []byte("abc"), []byte("abc")},
+		{"jsonb in a []byte column", "JSONB", []byte(nil), []byte(`{"a":1}`), []byte(`{"a":1}`)},
+		{"decimal in a string column", "DECIMAL", "", []byte("13.80"), "13.80"},
+		{"large decimal in a string column", "DECIMAL", "", []byte("12345678901234567890.12"), "12345678901234567890.12"},
+		{"numeric in a string column", "NUMERIC", "", "13.80", "13.80"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, _ := numericMock(t, tc.dbType, tc.scanType, tc.value)
+			rr, err := getRecordsetReader(ctx, dal.NewTextQuery("SELECT amount", nil), db.QueryContext)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = rr.Close() }()
+			row, rs, err := rr.Next()
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := row.GetValueByIndex(0, rs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("got %T(%v), want %T(%v)", got, got, tc.want, tc.want)
+			}
+		})
+	}
+}
+
+func TestRecordsReader_DecimalIsNotNormalised(t *testing.T) {
+	ctx := context.Background()
+	db, _ := numericMock(t, "DECIMAL", "", []byte("13.80"), "12345678901234567890.12")
+	rr, err := getRecordsReader(ctx, dal.NewTextQuery("SELECT amount", nil), db.QueryContext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rr.Close() }()
+	for i, want := range []string{"13.80", "12345678901234567890.12"} {
+		rec, err := rr.Next()
+		if err != nil {
+			t.Fatalf("row %d: %v", i, err)
+		}
+		if got := rec.Data().(map[string]any)["amount"]; got != want {
+			t.Errorf("row %d: got %T(%v), want %q", i, got, got, want)
+		}
 	}
 }
 
@@ -180,6 +267,8 @@ func TestRecordsetReader_NumericNaNIsRejectedForAggregates(t *testing.T) {
 	}
 }
 
+// Pins behaviour that does not depend on the normaliser: a string-typed
+// recordset column already converts []byte.
 func TestRecordsetReader_JSONBytesBecomeString(t *testing.T) {
 	ctx := context.Background()
 	db, _ := numericMock(t, "JSONB", "", []byte(`{"a":1}`))
@@ -201,55 +290,141 @@ func TestRecordsetReader_JSONBytesBecomeString(t *testing.T) {
 	}
 }
 
-// SQLite results are unchanged: a NUMERIC-affinity column already yields numbers.
-func TestReaders_SQLiteNumericColumnUnchanged(t *testing.T) {
-	ctx := context.Background()
+// readAllRecords drains a records reader and fails the test on any error other
+// than the end of the results.
+func readAllRecords(t *testing.T, rr *recordsReader, column string) (values []any) {
+	t.Helper()
+	defer func() { _ = rr.Close() }()
+	for {
+		rec, err := rr.Next()
+		if errors.Is(err, dal.ErrNoMoreRecords) {
+			return values
+		}
+		if err != nil {
+			t.Fatalf("records reader: %v", err)
+		}
+		values = append(values, rec.Data().(map[string]any)[column])
+	}
+}
+
+// readAllRecordset drains a recordset reader and fails the test on any error
+// other than the end of the results.
+func readAllRecordset(t *testing.T, rr *recordsetReader, column int) (values []any) {
+	t.Helper()
+	defer func() { _ = rr.Close() }()
+	for {
+		row, rs, err := rr.Next()
+		if errors.Is(err, dal.ErrNoMoreRecords) {
+			return values
+		}
+		if err != nil {
+			t.Fatalf("recordset reader: %v", err)
+		}
+		v, err := row.GetValueByIndex(column, rs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		values = append(values, v)
+	}
+}
+
+func openSQLite(t *testing.T, script string) *sql.DB {
+	t.Helper()
 	raw, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer closeDatabase(t, raw)
-	if _, err = raw.Exec(`CREATE TABLE prices (id INTEGER PRIMARY KEY, amount NUMERIC);
-		INSERT INTO prices VALUES (1, 13.86), (2, 7), (3, NULL), (4, 'abc');`); err != nil {
+	t.Cleanup(func() { closeDatabase(t, raw) })
+	raw.SetMaxOpenConns(1)
+	if _, err = raw.Exec(script); err != nil {
 		t.Fatal(err)
 	}
-	q := dal.NewTextQuery("SELECT amount FROM prices ORDER BY id", nil)
+	return raw
+}
 
-	rr, err := getRecordsReader(ctx, q, raw.QueryContext)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var got []any
-	for {
-		rec, err := rr.Next()
-		if err != nil {
-			break
-		}
-		got = append(got, rec.Data().(map[string]any)["amount"])
-	}
-	_ = rr.Close()
-	if want := []any{13.86, int64(7), nil, "abc"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("records reader: got %v, want %v", got, want)
+// SQLite results are unchanged: numeric-affinity and decimal columns already
+// yield numbers, JSON columns yield text, and BLOBs stay BLOBs.
+func TestReaders_SQLiteResultsUnchanged(t *testing.T) {
+	ctx := context.Background()
+	raw := openSQLite(t, `
+		CREATE TABLE prices (id INTEGER PRIMARY KEY, amount NUMERIC, price NUMERIC(10,2), dec DECIMAL, doc JSON, docb JSONB);
+		INSERT INTO prices VALUES (1, 13.86, 13.86, 13.86, '{"a":1}', '{"b":2}'), (2, 7, 7, 7, '[]', '[]'), (3, NULL, NULL, NULL, NULL, NULL);
+		CREATE TABLE blobs (id INTEGER PRIMARY KEY, docb JSONB, n NUMERIC, dec DECIMAL);
+		INSERT INTO blobs VALUES (1, x'7B7D', x'3133', x'3133'), (2, x'5B5D', x'616263', x'616263');
+		CREATE TABLE reals (id INTEGER PRIMARY KEY, amount REAL);
+		INSERT INTO reals VALUES (1, 1.5), (2, 'abc-sentinel');`)
+
+	for _, tc := range []struct {
+		column  string
+		records []any // records reader
+		recset  []any // recordset reader
+	}{
+		{"amount", []any{13.86, int64(7), nil}, []any{13.86, float64(7), float64(0)}},
+		{"price", []any{13.86, int64(7), nil}, []any{13.86, float64(7), float64(0)}},
+		{"dec", []any{13.86, int64(7), nil}, []any{13.86, float64(7), float64(0)}},
+		{"doc", []any{`{"a":1}`, `[]`, nil}, []any{`{"a":1}`, `[]`, ""}},
+		{"docb", []any{`{"b":2}`, `[]`, nil}, []any{`{"b":2}`, `[]`, ""}},
+	} {
+		t.Run(tc.column, func(t *testing.T) {
+			text := "SELECT " + tc.column + " FROM prices ORDER BY id"
+			rr, err := getRecordsReader(ctx, dal.NewTextQuery(text, nil), raw.QueryContext)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := readAllRecords(t, rr, tc.column); !reflect.DeepEqual(got, tc.records) {
+				t.Errorf("records reader: got %v, want %v", got, tc.records)
+			}
+			rsr, err := getRecordsetReader(ctx, dal.NewTextQuery(text, nil), raw.QueryContext)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := readAllRecordset(t, rsr, 0); !reflect.DeepEqual(got, tc.recset) {
+				t.Errorf("recordset reader: got %v, want %v", got, tc.recset)
+			}
+		})
 	}
 
-	rsr, err := getRecordsetReader(ctx, dal.NewTextQuery("SELECT amount FROM prices WHERE id <= 3 ORDER BY id", nil), raw.QueryContext)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = rsr.Close() }()
-	var gotRS []any
-	for {
-		row, rs, err := rsr.Next()
-		if err != nil {
-			break
+	t.Run("blob columns", func(t *testing.T) {
+		for _, column := range []string{"docb", "n", "dec"} {
+			rsr, err := getRecordsetReader(ctx, dal.NewTextQuery("SELECT "+column+" FROM blobs ORDER BY id", nil), raw.QueryContext)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := readAllRecordset(t, rsr, 0)
+			want := map[string][]any{
+				"docb": {[]byte("{}"), []byte("[]")},
+				"n":    {[]byte("13"), []byte("abc")},
+				"dec":  {[]byte("13"), []byte("abc")},
+			}[column]
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("%s: got %v, want %v", column, got, want)
+			}
 		}
-		v, err := row.GetValueByIndex(0, rs)
+		rr, err := getRecordsReader(ctx, dal.NewTextQuery("SELECT docb FROM blobs ORDER BY id", nil), raw.QueryContext)
 		if err != nil {
 			t.Fatal(err)
 		}
-		gotRS = append(gotRS, v)
-	}
-	if len(gotRS) != 3 || gotRS[0] != 13.86 || gotRS[1] != float64(7) {
-		t.Errorf("recordset reader: got %v", gotRS)
-	}
+		if got, want := readAllRecords(t, rr, "docb"), []any{"{}", "[]"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("records reader docb: got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("text row in a REAL column", func(t *testing.T) {
+		rsr, err := getRecordsetReader(ctx, dal.NewTextQuery("SELECT amount FROM reals ORDER BY id", nil), raw.QueryContext)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = rsr.Close() }()
+		row, rs, err := rsr.Next()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v, _ := row.GetValueByIndex(0, rs); v != 1.5 {
+			t.Errorf("first row: got %v", v)
+		}
+		_, _, err = rsr.Next()
+		if err == nil || strings.Contains(err.Error(), "abc-sentinel") {
+			t.Errorf("expected an error that does not quote the cell, got %v", err)
+		}
+	})
 }

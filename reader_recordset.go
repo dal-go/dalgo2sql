@@ -146,15 +146,20 @@ func (r *recordsetReader) Next() (row recordset.Row, rs recordset.Recordset, err
 
 	row = r.rs.NewRow()
 	for i := range r.colNames {
-		value := normalizeValueByDatabaseType(r.colTypes[i].DatabaseTypeName(), values[i])
+		col := r.rs.GetColumnByIndex(i)
+		vt := col.ValueType()
+		value := values[i]
+		if vt.Kind() == reflect.Float64 {
+			// Only a float64 column can hold the converted value; any other column
+			// keeps what the driver delivered.
+			value = normalizeValueByDatabaseType(r.colTypes[i].DatabaseTypeName(), value)
+		}
 		if r.validateFinite {
 			if number, ok := value.(float64); ok && (math.IsNaN(number) || math.IsInf(number, 0)) {
 				err = fmt.Errorf("non-finite aggregate result in column %q", r.colNames[i])
 				return
 			}
 		}
-		col := r.rs.GetColumnByIndex(i)
-		vt := col.ValueType()
 		if value == nil {
 			if vt == reflect.TypeOf([]byte(nil)) {
 				value = []byte(nil)
@@ -171,10 +176,11 @@ func (r *recordsetReader) Next() (row recordset.Row, rs recordset.Recordset, err
 				case int64:
 					value = float64(v)
 				case string:
-					// NUMERIC text that did not parse cannot live in a float64
-					// column; fail with the column name instead of letting the
-					// recordset's strict type assertion panic.
-					err = fmt.Errorf("failed to set value for column %s: %q is not a number", r.colNames[i], v)
+					// A string cannot live in a float64 column (a NUMERIC that is
+					// not a number, or text stored in a SQLite REAL column); fail
+					// with the column name and Go type, never the cell, instead of
+					// letting the recordset's strict type assertion panic.
+					err = fmt.Errorf("failed to set value for column %s: unexpected %T value in a float64 column", r.colNames[i], v)
 					return
 				}
 			} else if vt.Kind() == reflect.Int64 {

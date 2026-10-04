@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -83,39 +84,55 @@ type recordsReader struct {
 	validateFinite      bool
 }
 
-// normalizeValueByDatabaseType turns a driver value into the Go type its
-// database type implies. Drivers such as pgx deliver NUMERIC and DECIMAL as
-// text and JSON and JSONB as []byte, whatever ScanType reports.
+// decimalText matches the text PostgreSQL prints for a finite NUMERIC: an
+// optional sign and decimal digits with an optional fraction, no exponent.
+var decimalText = regexp.MustCompile(`^[+-]?([0-9]+\.?[0-9]*|\.[0-9]+)$`)
+
+// normalizeValueByDatabaseType turns the text a PostgreSQL driver delivers for
+// a NUMERIC column into a float64. pgx reports float64 as the scan type of
+// NUMERIC but delivers a string.
 //
-//   - NUMERIC / DECIMAL delivered as string or []byte becomes float64; text
-//     that does not parse is kept (as a string).
-//   - JSON / JSONB delivered as []byte becomes string.
+//   - NUMERIC delivered as string or []byte becomes float64 when the text is
+//     decimal text, or exactly NaN, Infinity or -Infinity (PostgreSQL's
+//     spellings). Any other text, and decimal text outside the float64 range,
+//     is kept as a string.
+//   - Every other type name (DECIMAL, which is MySQL's, included), every other
+//     value and nil are returned unchanged. JSON and JSONB need no handling here:
+//     the records reader already stores []byte as string, and a string-typed
+//     recordset column converts []byte.
 //
-// Every other type name, and every other value (nil included), is returned
-// unchanged, so results from drivers that already deliver native values (SQLite)
-// are not altered.
+// Callers choose where this applies: the recordset reader calls it only for a
+// float64-typed column, so a value is never turned into a Go type the column
+// cannot hold.
+//
+// A float64 holds about 15 significant digits exactly. Longer NUMERIC values,
+// such as a NUMERIC(20,0) key, are rounded, so distinct values can compare
+// equal. A NUMERIC NaN or infinity in a plain SELECT becomes a non-finite
+// float64, which encoding/json refuses to marshal; aggregate queries reject it.
 func normalizeValueByDatabaseType(databaseTypeName string, value any) any {
-	switch strings.ToUpper(databaseTypeName) {
-	case "NUMERIC", "DECIMAL":
-		var text string
-		switch v := value.(type) {
-		case string:
-			text = v
-		case []byte:
-			text = string(v)
-		default:
-			return value
-		}
-		if number, err := strconv.ParseFloat(text, 64); err == nil {
-			return number
-		}
-		return text
-	case "JSON", "JSONB":
-		if b, ok := value.([]byte); ok {
-			return string(b)
+	if !strings.EqualFold(databaseTypeName, "NUMERIC") {
+		return value
+	}
+	var text string
+	switch v := value.(type) {
+	case string:
+		text = v
+	case []byte:
+		text = string(v)
+	default:
+		return value
+	}
+	switch text {
+	case "NaN", "Infinity", "-Infinity":
+	default:
+		if !decimalText.MatchString(text) {
+			return text
 		}
 	}
-	return value
+	if number, err := strconv.ParseFloat(text, 64); err == nil {
+		return number
+	}
+	return text
 }
 
 func selectsIdentityField(columns []dal.Column, name string) bool {
