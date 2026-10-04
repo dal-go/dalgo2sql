@@ -272,3 +272,58 @@ func TestAssignColumnValue_NilStoresZero(t *testing.T) {
 		t.Errorf("nil must store the zero value: %+v", target)
 	}
 }
+
+// An integer field over a NUMERIC column delivered as text is filled from the
+// driver's text, not from the float64 the normaliser made of it, so values
+// beyond 2^53 keep every digit and the full int64 and uint64 range is reachable.
+func TestAssignColumnValue_IntegerFieldsReadTheDriversText(t *testing.T) {
+	type wide struct {
+		Int64  int64
+		Int8   int8
+		Uint64 uint64
+		Uint8  uint8
+	}
+	tests := []struct {
+		name       string
+		field      string
+		raw        any
+		normalized any
+		want       any
+		wantErr    string
+	}{
+		{name: "int64 beyond 2^53", field: "Int64", raw: "9007199254740993", normalized: 9007199254740992.0, want: int64(9007199254740993)},
+		{name: "int64 beyond 2^53 as bytes", field: "Int64", raw: []byte("9007199254740993"), normalized: 9007199254740992.0, want: int64(9007199254740993)},
+		{name: "negative int64 beyond 2^53", field: "Int64", raw: "-9007199254740993", normalized: -9007199254740992.0, want: int64(-9007199254740993)},
+		{name: "MaxInt64", field: "Int64", raw: "9223372036854775807", normalized: 9223372036854775808.0, want: int64(math.MaxInt64)},
+		{name: "MaxUint64", field: "Uint64", raw: "18446744073709551615", normalized: 18446744073709551616.0, want: uint64(math.MaxUint64)},
+		{name: "uint64 beyond 2^53", field: "Uint64", raw: "9007199254740993", normalized: 9007199254740992.0, want: uint64(9007199254740993)},
+		{name: "whole NUMERIC with zero scale falls back to the normalised value", field: "Int64", raw: "12.00", normalized: 12.0, want: int64(12)},
+		{name: "uint whole NUMERIC with zero scale", field: "Uint64", raw: "12.00", normalized: 12.0, want: uint64(12)},
+		{name: "fractional NUMERIC is still refused", field: "Int64", raw: "12.5", normalized: 12.5, wantErr: "is not an int64"},
+		{name: "fractional NUMERIC for uint is still refused", field: "Uint64", raw: "12.5", normalized: 12.5, wantErr: "is not a uint64"},
+		{name: "exact text beyond int64 is refused", field: "Int64", raw: "9223372036854775808", normalized: 9223372036854775808.0, wantErr: "is not an int64"},
+		{name: "exact text beyond uint64 is refused", field: "Uint64", raw: "18446744073709551616", normalized: 18446744073709551616.0, wantErr: "is not a uint64"},
+		{name: "exact text beyond the field is refused", field: "Int8", raw: "300", normalized: 300.0, wantErr: "overflows int8"},
+		{name: "exact text beyond the unsigned field is refused", field: "Uint8", raw: "300", normalized: 300.0, wantErr: "overflows uint8"},
+		{name: "a driver integer is used as is", field: "Int64", raw: int64(7), normalized: int64(7), want: int64(7)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var target wide
+			field := reflect.ValueOf(&target).Elem().FieldByName(tt.field)
+			err := assignColumnValue(field, tt.raw, tt.normalized)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("got error %v, want one containing %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := field.Interface(); got != tt.want {
+				t.Fatalf("got %T(%v), want %T(%v)", got, got, tt.want, tt.want)
+			}
+		})
+	}
+}

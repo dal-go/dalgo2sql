@@ -194,12 +194,32 @@ func TestScanIntoData_StructFallsBackToScanyWhereScanyMatched(t *testing.T) {
 			t.Errorf("got %+v, %v", got, err)
 		}
 	})
-	t.Run("a column without a field keeps scany's error", func(t *testing.T) {
-		err := getScanned(t, &scanGetCity{}, []string{"unknown"}, "x")
+	t.Run("a dotted column that scany cannot match keeps scany's error", func(t *testing.T) {
+		err := getScanned(t, &scanGetCity{}, []string{"unknown.field"}, "x")
 		if err == nil || !strings.Contains(err.Error(), "no corresponding field") {
 			t.Errorf("got %v", err)
 		}
 	})
+}
+
+// A column without a field is reported by name, and the name is the column
+// that has no field, never a neighbour the matcher did match.
+func TestScanIntoData_StructColumnWithoutFieldNamesThatColumn(t *testing.T) {
+	err := getScanned(t, &scanGetCity{}, []string{"areasqkm", "typo"}, 5, "x")
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	for _, want := range []string{`column "typo"`, "no corresponding field in dalgo2sql.scanGetCity"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q lacks %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "areasqkm") {
+		t.Errorf("error %q blames a column the matcher matched", err)
+	}
+	if err := getScanned(t, &scanGetCity{}, []string{"unknown"}, "x"); err == nil || !strings.Contains(err.Error(), `column "unknown": no corresponding field`) {
+		t.Errorf("got %v", err)
+	}
 }
 
 func TestScanIntoData_StructEmbeddedPointers(t *testing.T) {

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math"
 	"reflect"
 	"strings"
 	"testing"
@@ -257,5 +258,25 @@ func TestRecordsReader_StructTargetNameCollisions(t *testing.T) {
 				t.Errorf("got %v", err)
 			}
 		})
+	}
+}
+
+// PostgreSQL returns NUMERIC for SUM(bigint): an integer field must get every
+// digit of it, not the float64 the normaliser makes.
+func TestRecordsReader_StructTargetIntegerFieldsOverNumericText(t *testing.T) {
+	type totals struct {
+		Total int64
+		Big   uint64
+		Max   int64
+	}
+	col := func(name string) *sqlmock.Column { return sqlmock.NewColumn(name).OfType("NUMERIC", float64(0)) }
+	rows := sqlmock.NewRowsWithColumnDefinition(col("Total"), col("Big"), col("Max")).
+		AddRow("9007199254740993", []byte("18446744073709551615"), "9223372036854775807")
+	var got totals
+	if err := nextStruct(t, &got, rows); err != nil {
+		t.Fatal(err)
+	}
+	if got != (totals{Total: 9007199254740993, Big: math.MaxUint64, Max: math.MaxInt64}) {
+		t.Errorf("got %+v", got)
 	}
 }

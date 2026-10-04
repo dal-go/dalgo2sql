@@ -167,9 +167,12 @@ func structSetter(target any) (set func(column string, raw, normalized any) erro
 //     type sees the exact NUMERIC text and a JSON type sees []byte.
 //   - A string field takes raw text; a []byte field (json.RawMessage included)
 //     takes a copy of raw bytes.
+//   - An integer field takes the integer the driver's text spells, so a NUMERIC
+//     such as 9007199254740993 keeps every digit; text that is not a plain
+//     integer (12.00) goes the way of the next line.
 //   - Every other field takes normalized, with []byte turned into string as a
-//     map target stores it: integers, floats, booleans (SQLite stores them as
-//     integers), time.Time and interface fields.
+//     map target stores it: floats, booleans (SQLite stores them as integers),
+//     time.Time and interface fields, and integers as just said.
 //   - nil stores the zero value.
 func assignColumnValue(field reflect.Value, raw, normalized any) error {
 	if scanner, ok := field.Addr().Interface().(sql.Scanner); ok {
@@ -212,7 +215,7 @@ func assignColumnValue(field reflect.Value, raw, normalized any) error {
 		}
 		field.SetBool(b)
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		n, err := toInt64(source)
+		n, err := exactInt64(raw, source)
 		if err != nil {
 			return err
 		}
@@ -221,7 +224,7 @@ func assignColumnValue(field reflect.Value, raw, normalized any) error {
 		}
 		field.SetInt(n)
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		n, err := toUint64(source)
+		n, err := exactUint64(raw, source)
 		if err != nil {
 			return err
 		}
@@ -247,6 +250,29 @@ func assignColumnValue(field reflect.Value, raw, normalized any) error {
 		return fmt.Errorf("cannot assign %T to %s", value, field.Type())
 	}
 	return nil
+}
+
+// exactInt64 reads an integer field from the driver's text when that text is an
+// integer, because normalized is a float64 for NUMERIC and float64 holds only
+// 53 bits. Any other text, and every value that is not text, is converted from
+// normalized as before.
+func exactInt64(raw any, normalized reflect.Value) (int64, error) {
+	if text, ok := textValue(raw).(string); ok {
+		if n, err := strconv.ParseInt(text, 10, 64); err == nil {
+			return n, nil
+		}
+	}
+	return toInt64(normalized)
+}
+
+// exactUint64 is exactInt64 for unsigned fields.
+func exactUint64(raw any, normalized reflect.Value) (uint64, error) {
+	if text, ok := textValue(raw).(string); ok {
+		if n, err := strconv.ParseUint(text, 10, 64); err == nil {
+			return n, nil
+		}
+	}
+	return toUint64(normalized)
 }
 
 // textValue turns []byte into string and returns every other value unchanged:

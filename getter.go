@@ -350,9 +350,9 @@ var scannerType = reflect.TypeOf((*sql.Scanner)(nil)).Elem()
 // value as it did for scany.
 //
 // scany stays in charge where it knew more than the matcher: a Scanner target
-// with one column is scanned as a whole, and a column that no field matches is
-// left to scany, which also accepts dotted names for nested struct fields and
-// rejects the column with its own error otherwise.
+// with one column is scanned as a whole, and a row with a dotted column name
+// that no field matches is left to scany, which accepts dotted names for nested
+// struct fields. Any other column without a field is an error naming it.
 func scanRowIntoStruct(rows *sql.Rows, data any, fields *structFields) error {
 	cols, err := rows.Columns()
 	if err != nil {
@@ -368,7 +368,10 @@ func scanRowIntoStruct(rows *sql.Rows, data any, fields *structFields) error {
 			return err
 		}
 		if !found {
-			return sqlscan.ScanRow(data, rows)
+			if strings.Contains(col, ".") {
+				return sqlscan.ScanRow(data, rows)
+			}
+			return fmt.Errorf("column %q: no corresponding field in %s", col, fields.elem.Type())
 		}
 		dest[i] = field.Addr().Interface()
 	}
