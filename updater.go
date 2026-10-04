@@ -40,6 +40,12 @@ func renderUpdateNames(options DbOptions, key *record.Key, updates []update.Upda
 	if err != nil {
 		return updateTarget{}, err
 	}
+	// The table written is the key's own collection, but the primary key is looked
+	// up, and an error names it, by the whole path joined: every segment of it
+	// must be a name that can be written.
+	if _, err = options.recordsetIdentifier(key); err != nil {
+		return updateTarget{}, err
+	}
 	target := updateTarget{table: table, fields: make([]string, len(updates))}
 	for i, u := range updates {
 		if target.fields[i], err = options.sqlIdentifier(positionField, u.FieldName()); err != nil {

@@ -130,6 +130,52 @@ func TestExistsSingle_RefusesTheCollectionOnItsOwn(t *testing.T) {
 	}
 }
 
+// The batch and record checks run before these builders, so a name only reaches
+// the check inside them when a builder is called on its own, or when a record
+// changed in between (see TestSetSingle_ChecksTheNamesAgainWhereTheStatementIsBuilt).
+func TestExistsSingle_RefusesThePrimaryKeyOnItsOwn(t *testing.T) {
+	options := DbOptions{Recordsets: map[string]*Recordset{
+		"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("id; --")}),
+	}}
+	_, err := existsSingle(options, dalrecord.NewKeyWithID("users", "k1"), func(string, ...any) (*sql.Rows, error) {
+		t.Fatal("a statement was sent")
+		return nil, nil
+	})
+	if !errors.Is(err, ErrUnsafeName) || !strings.Contains(err.Error(), positionPrimaryKey) {
+		t.Errorf("error = %v, want one wrapping ErrUnsafeName for the primary key", err)
+	}
+}
+
+func TestGetMultiFromSingleTable_RefusesTheCollectionOnItsOwn(t *testing.T) {
+	records := []dalrecord.Record{
+		dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("a b", "k1"), map[string]any{}),
+		dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("a b", "k2"), map[string]any{}),
+	}
+	err := getMultiFromSingleTable(context.Background(), DbOptions{}, records, func(string, ...any) (*sql.Rows, error) {
+		t.Fatal("a statement was sent")
+		return nil, nil
+	})
+	if !errors.Is(err, ErrUnsafeName) {
+		t.Errorf("error = %v, want one wrapping ErrUnsafeName", err)
+	}
+	for _, record := range records {
+		if !errors.Is(record.Error(), ErrUnsafeName) {
+			t.Errorf("record error = %v, want one wrapping ErrUnsafeName", record.Error())
+		}
+	}
+}
+
+func TestExecInsert_RefusesTheNamesOnItsOwn(t *testing.T) {
+	record := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("a b", "k1"), map[string]any{"name": "v"})
+	err := execInsert(context.Background(), DbOptions{}, record, func(context.Context, string, ...any) (sql.Result, error) {
+		t.Fatal("a statement was sent")
+		return nil, nil
+	})
+	if !errors.Is(err, ErrUnsafeName) {
+		t.Errorf("error = %v, want one wrapping ErrUnsafeName", err)
+	}
+}
+
 func TestDeleteMultiInSingleTable_RefusesTheCollectionOnItsOwn(t *testing.T) {
 	keys := []*dalrecord.Key{dalrecord.NewKeyWithID("a b", "k1"), dalrecord.NewKeyWithID("a b", "k2")}
 	err := deleteMultiInSingleTable(context.Background(), DbOptions{}, keys, func(context.Context, string, ...any) (sql.Result, error) {
@@ -285,6 +331,28 @@ func TestKeyPathNames_SQLiteQuotedNamesAgainstAFile(t *testing.T) {
 		must(db.DeleteMulti(ctx, []*dalrecord.Key{detail("o3")}))
 		if n := count("`Order Details`"); n != 0 {
 			t.Errorf("%d rows left, want 0", n)
+		}
+	})
+
+	// Before names were validated, a name was pasted as written, so a caller could
+	// pass `"Order Details"` (quotes included) to reach the table Order Details.
+	// The name is now one literal identifier, quote characters included: SQLite
+	// finds no such table, and the bare name is the way in.
+	t.Run("a name that carries its own quoting no longer finds the table", func(t *testing.T) {
+		const selfQuoted = `"Order Details"`
+		db.options.Recordsets[selfQuoted] = NewRecordset(selfQuoted, Table, []dal.FieldRef{dal.Field("Order ID")})
+		key := dalrecord.NewKeyWithID(selfQuoted, "o1")
+		err := db.Get(ctx, dalrecord.NewRecordWithData(key, map[string]any{}))
+		if err == nil || !strings.Contains(err.Error(), `no such table: "Order Details"`) {
+			t.Errorf("Get through the self-quoted name: error = %v, want SQLite to find no such table", err)
+		}
+		if errors.Is(err, ErrUnsafeName) {
+			t.Errorf("Get through the self-quoted name was refused as unsafe: %v", err)
+		}
+		// The bare name reaches the table: the row is not there, the table is.
+		err = db.Get(ctx, dalrecord.NewRecordWithData(detail("o1"), map[string]any{}))
+		if err == nil || strings.Contains(err.Error(), "no such table") {
+			t.Errorf("Get through the bare name: error = %v, want the table found and the row not", err)
 		}
 	})
 

@@ -26,8 +26,18 @@ import (
 //     ordinary identifier.
 //   - With no dialect, or one without reviewed quoting, a name must be a plain
 //     identifier: a letter or underscore followed by letters, digits or
-//     underscores, ASCII only. It is written as given, so the statement text of
-//     every name accepted is the text this package has always sent.
+//     underscores, ASCII only, and no longer than 255 bytes. It is written as
+//     given, so the statement text of every name accepted is the text this
+//     package has always sent.
+//
+// A name used to be pasted into the statement as written, so one that carried
+// its own quoting ("Order Details" with the quote characters, [Order Details],
+// a name between backticks) acted as a quoted identifier. It no longer does:
+// with no dialect such a name is refused, and with "sqlite" it is one literal
+// name, quote characters included, that finds no table. A caller passes the
+// bare name (Order Details) with the "sqlite" dialect. With no dialect there is
+// no way to reach a table or column that needs quoting until that engine has
+// reviewed quoting.
 var ErrUnsafeName = errors.New("unsafe SQL name")
 
 // The positions a name can have in a key read or write; an ErrUnsafeName error
@@ -42,9 +52,13 @@ const (
 	// dialectSQLite is the StructuredQueryDialect whose identifier quoting
 	// (quoteSQLIdentifier) has been reviewed.
 	dialectSQLite = "sqlite"
-	// maxQuotedNameBytes bounds a name written quoted. SQLite sets no limit of
-	// its own; PostgreSQL and MySQL stop at 63 and 64 bytes.
-	maxQuotedNameBytes = 255
+	// maxNameBytes bounds every name, quoted or plain. SQLite sets no limit of
+	// its own; MySQL refuses a name over 64 bytes, and PostgreSQL truncates one
+	// over 63 bytes with a notice, so a longer name would address the table named
+	// by its first 63 bytes. The bound keeps error messages and statements short;
+	// a name of 64 to 255 bytes is still accepted, and PostgreSQL still truncates
+	// it.
+	maxNameBytes = 255
 	// maxNameInError is how many characters of a refused name its error shows.
 	maxNameInError = 32
 )
@@ -95,7 +109,7 @@ func quotableNameProblem(name string) string {
 	switch {
 	case name == "":
 		return "is empty"
-	case len(name) > maxQuotedNameBytes:
+	case len(name) > maxNameBytes:
 		return "is too long"
 	case !utf8.ValidString(name):
 		return "is not valid UTF-8"
@@ -114,6 +128,9 @@ func quotableNameProblem(name string) string {
 func (o DbOptions) sqlIdentifier(position, name string) (string, error) {
 	quote := reviewedIdentifierQuoting(o.StructuredQueryDialect)
 	if quote == nil {
+		if len(name) > maxNameBytes {
+			return "", newUnsafeNameError(position, name, "is too long")
+		}
 		if !isPlainSQLIdentifier(name) {
 			return "", newUnsafeNameError(position, name, "is not a plain identifier")
 		}
@@ -161,13 +178,21 @@ func recordFieldNames(data any) (names []string) {
 	return names
 }
 
-// checkRecordNames refuses a record whose collection or field names may not be
-// written into SQL text. The statement builders refuse the same names on their
-// own; this runs first so that a write whose first statement is not the one
-// that carries the field names (an existence check) sends nothing at all.
+// checkRecordNames refuses a record whose collection, primary-key or field names
+// may not be written into SQL text. The statement builders refuse the same names
+// on their own; this runs first so that a write whose first statement is not the
+// one that carries the names (an existence check), and a batch of writes of which
+// an earlier record would be written before a later one is refused, send nothing
+// at all.
 func (o DbOptions) checkRecordNames(record dalrecord.Record) error {
-	if _, err := o.recordsetIdentifier(record.Key()); err != nil {
+	key := record.Key()
+	if _, err := o.recordsetIdentifier(key); err != nil {
 		return err
+	}
+	for _, name := range o.PrimaryKeyFieldNames(key) {
+		if _, err := o.sqlIdentifier(positionPrimaryKey, name); err != nil {
+			return err
+		}
 	}
 	// The statement builders read the data the same way: Data() panics while the
 	// record's error is unset or set to a failure, and SetError(nil) clears both.

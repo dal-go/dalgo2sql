@@ -83,6 +83,13 @@ func execInsert(ctx context.Context, options DbOptions, record dalrecord.Record,
 
 // InsertMulti inserts multiple records in a single transaction at once. TODO: Implement batched multi-insertOperation
 func (t transaction) InsertMulti(ctx context.Context, records []dalrecord.Record, opts ...dal.InsertOption) error {
+	// The whole batch is checked before its first statement: an earlier record
+	// would otherwise be inserted before a later one is refused.
+	for _, record := range records {
+		if err := t.sqlOptions.checkRecordNames(record); err != nil {
+			return err
+		}
+	}
 	for _, record := range records {
 		if err := insertSingle(ctx, t.sqlOptions, record, t.tx.ExecContext, t.tx.Query, opts...); err != nil {
 			return err

@@ -49,7 +49,16 @@ var hostileNames = []string{
 	"a`b",
 	"1abc",
 	"a.b",
+	// Names that carry their own quoting acted as quoted identifiers while names
+	// were pasted as written; no mode writes them as they are now.
+	`"Order Details"`,
+	"[Order Details]",
+	"`x`",
+	"'x'",
 }
+
+// selfQuotedNames are the hostileNames that carry their own quote characters.
+var selfQuotedNames = []string{`"Order Details"`, "[Order Details]", "`x`", "'x'"}
 
 // unquotableNames are refused even by a dialect that quotes: no quoting makes
 // them safe to write into SQL text.
@@ -60,7 +69,7 @@ var unquotableNames = []string{
 	"del\x7fname",
 	"c1\u0085name",
 	"bad\xffutf8",
-	strings.Repeat("a", maxQuotedNameBytes+1),
+	strings.Repeat("a", maxNameBytes+1),
 }
 
 // nameCase names the three kinds of name one operation writes into SQL text.
@@ -345,6 +354,10 @@ func TestKeyPathNames_EmptyCollectionNeverReachesTheExecutor(t *testing.T) {
 	}
 }
 
+// hostilePrimaryKeyCollection is a collection whose name is fine and whose
+// configured primary-key column is not.
+const hostilePrimaryKeyCollection = "accounts"
+
 // A refused name refuses the whole batch: no statement for an earlier, valid
 // key of the same call may have reached the database.
 func TestKeyPathNames_BatchIsRefusedAsAWhole(t *testing.T) {
@@ -379,12 +392,54 @@ func TestKeyPathNames_BatchIsRefusedAsAWhole(t *testing.T) {
 				dalrecord.NewRecordWithData(hostile.key("id2"), map[string]any{}),
 			})
 		}},
+		// GetMulti visits the collections of a batch in map order, so a batch that
+		// mixes a valid collection with a hostile one is run repeatedly: before the
+		// whole batch was checked up front, the valid read was sent in about half
+		// of the runs.
+		{"get-multi valid and hostile collection", "collection", func(ctx context.Context, api keyPathAPI) (err error) {
+			for range 25 {
+				err = api.GetMulti(ctx, []dalrecord.Record{
+					dalrecord.NewRecordWithData(good.key("id1"), map[string]any{}),
+					dalrecord.NewRecordWithData(hostile.key("id2"), map[string]any{}),
+				})
+			}
+			return err
+		}},
+		{"get-multi several valid and one hostile collection", "collection", func(ctx context.Context, api keyPathAPI) (err error) {
+			for range 25 {
+				err = api.GetMulti(ctx, []dalrecord.Record{
+					dalrecord.NewRecordWithData(good.key("id1"), map[string]any{}),
+					dalrecord.NewRecordWithData(good.key("id3"), map[string]any{}),
+					dalrecord.NewRecordWithData(hostile.key("id2"), map[string]any{}),
+				})
+			}
+			return err
+		}},
+		{"get-multi one valid and several hostile collection", "collection", func(ctx context.Context, api keyPathAPI) (err error) {
+			for range 25 {
+				err = api.GetMulti(ctx, []dalrecord.Record{
+					dalrecord.NewRecordWithData(good.key("id1"), map[string]any{}),
+					dalrecord.NewRecordWithData(hostile.key("id2"), map[string]any{}),
+					dalrecord.NewRecordWithData(hostile.key("id3"), map[string]any{}),
+				})
+			}
+			return err
+		}},
+		// A primary-key column that cannot be written refuses the batch before the
+		// first record of a collection that can.
+		{"set-multi primary key", "primary key", func(ctx context.Context, api keyPathAPI) error {
+			return api.SetMulti(ctx, []dalrecord.Record{
+				good.mapRecord("id1"),
+				dalrecord.NewRecordWithData(dalrecord.NewKeyWithID(hostilePrimaryKeyCollection, "id2"), map[string]any{"name": "v"}),
+			})
+		}},
 	}
 	for _, batch := range batches {
 		t.Run(batch.name, func(t *testing.T) {
 			// users is valid, the other collection is not; both are configured.
 			options := good.options("")
 			options.Recordsets[hostile.collection] = NewRecordset(hostile.collection, Table, []dal.FieldRef{dal.Field("id")})
+			options.Recordsets[hostilePrimaryKeyCollection] = NewRecordset(hostilePrimaryKeyCollection, Table, []dal.FieldRef{dal.Field("id; --")})
 			for _, r := range keyPathAPIs(t, options) {
 				t.Run(r.kind, func(t *testing.T) {
 					requireRefused(t, r.recorder, batch.run(context.Background(), r.api), batch.position)
@@ -478,5 +533,105 @@ func TestKeyPathNames_SelectAllKeysNeverReachesTheExecutor(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// insertMultiAPI is the batch insert of a transaction; a database handle has none.
+type insertMultiAPI interface {
+	InsertMulti(context.Context, []dalrecord.Record, ...dal.InsertOption) error
+}
+
+// InsertMulti refuses the whole batch: an earlier, valid record may not be
+// inserted before a later one is found to carry a name that cannot be written.
+func TestKeyPathNames_InsertMultiIsRefusedAsAWhole(t *testing.T) {
+	good := validNames()
+	hostile := validNames()
+	hostile.collection = "x; DROP TABLE y"
+	hostileField := validNames()
+	hostileField.field = "name = 1; --"
+	batches := []struct {
+		name     string
+		position string
+		records  func() []dalrecord.Record
+		opts     []dal.InsertOption
+	}{
+		{"collection", "collection", func() []dalrecord.Record {
+			return []dalrecord.Record{good.mapRecord("id1"), hostile.mapRecord("id2")}
+		}, nil},
+		{"field", "field", func() []dalrecord.Record {
+			return []dalrecord.Record{good.mapRecord("id1"), hostileField.mapRecord("id2")}
+		}, nil},
+		{"primary key", "primary key", func() []dalrecord.Record {
+			return []dalrecord.Record{
+				good.mapRecord("id1"),
+				dalrecord.NewRecordWithData(dalrecord.NewKeyWithID(hostilePrimaryKeyCollection, "id2"), map[string]any{"name": "v"}),
+			}
+		}, nil},
+		// With an ID generator the first statement of a record is an existence
+		// check, not the insert.
+		{"collection, generated IDs", "collection", func() []dalrecord.Record {
+			return []dalrecord.Record{
+				dalrecord.NewRecordWithData(good.incompleteKey(), map[string]any{"name": "v"}),
+				dalrecord.NewRecordWithData(hostile.incompleteKey(), map[string]any{"name": "v"}),
+			}
+		}, []dal.InsertOption{dal.WithRandomStringKey(8, 3)}},
+	}
+	for _, batch := range batches {
+		t.Run(batch.name, func(t *testing.T) {
+			options := good.options("")
+			options.Recordsets[hostile.collection] = NewRecordset(hostile.collection, Table, []dal.FieldRef{dal.Field("id")})
+			options.Recordsets[hostilePrimaryKeyCollection] = NewRecordset(hostilePrimaryKeyCollection, Table, []dal.FieldRef{dal.Field("id; --")})
+			r := keyPathAPIs(t, options)[1] // the transaction
+			api, ok := r.api.(insertMultiAPI)
+			if !ok {
+				t.Fatalf("%T has no InsertMulti", r.api)
+			}
+			requireRefused(t, r.recorder, api.InsertMulti(context.Background(), batch.records(), batch.opts...), batch.position)
+		})
+	}
+}
+
+// Update prints the recordset name in the error of a recordset with no primary
+// key, so a hostile parent collection must be refused before that message is
+// built, not echoed raw and unbounded.
+func TestKeyPathNames_UpdateRefusesAHostileParentCollection(t *testing.T) {
+	// The sqlite dialect quotes "x; DROP TABLE y", so only a name it cannot quote
+	// is refused there.
+	cases := []struct{ dialect, hostile string }{
+		{"", "x\ny"},
+		{"", "x; DROP TABLE y"},
+		{"sqlite", "x\ny"},
+		{"sqlite", "nul\x00parent"},
+	}
+	for _, tt := range cases {
+		label := strings.NewReplacer("\n", `\n`, "\x00", `\x00`).Replace(tt.hostile)
+		t.Run(tt.dialect+"/"+label, func(t *testing.T) {
+			parent := dalrecord.NewKeyWithID(tt.hostile, "p1")
+			// The leaf collection is valid and configured; the joined recordset
+			// name users_<parent> has no primary key configured.
+			key := dalrecord.NewKeyWithParentAndID(parent, "users", "u1")
+			c := validNames()
+			runs := map[string]func(context.Context, keyPathAPI) error{
+				"update": func(ctx context.Context, api keyPathAPI) error {
+					return api.Update(ctx, key, c.updates())
+				},
+				"update-multi": func(ctx context.Context, api keyPathAPI) error {
+					return api.UpdateMulti(ctx, []*dalrecord.Key{key}, c.updates())
+				},
+			}
+			for name, run := range runs {
+				t.Run(name, func(t *testing.T) {
+					for _, r := range keyPathAPIs(t, c.options(tt.dialect)) {
+						t.Run(r.kind, func(t *testing.T) {
+							err := run(context.Background(), r.api)
+							requireRefused(t, r.recorder, err, "collection")
+							if strings.Contains(err.Error(), "\n") || len(err.Error()) > 200 {
+								t.Errorf("the error echoes the name raw or unbounded: %q", err)
+							}
+						})
+					}
+				})
+			}
+		})
 	}
 }

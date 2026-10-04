@@ -130,6 +130,14 @@ func getSingle(_ context.Context, options DbOptions, record dalrecord.Record, ex
 }
 
 func getMulti(ctx context.Context, options DbOptions, records []dalrecord.Record, exec queryExecutor) error {
+	// The whole batch is checked before its first read: the collections below are
+	// read one after the other in map order, so a refusal found half way would
+	// leave it to chance which of the valid ones had been sent.
+	for _, r := range records {
+		if _, err := options.recordsetIdentifier(r.Key()); err != nil {
+			return refuseRecords(records, err)
+		}
+	}
 	byCollection := make(map[string][]dalrecord.Record)
 	for _, r := range records {
 		id := r.Key().Collection()

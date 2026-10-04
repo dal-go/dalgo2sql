@@ -31,10 +31,33 @@ func TestSQLIdentifier_WithoutDialect(t *testing.T) {
 		}
 	})
 
-	t.Run("a plain identifier has no length bound", func(t *testing.T) {
-		name := strings.Repeat("a", 10*maxQuotedNameBytes)
-		if got, err := options.sqlIdentifier(positionCollection, name); err != nil || got != name {
-			t.Errorf("a long plain identifier was refused: %v", err)
+	// PostgreSQL truncates a longer identifier to 63 bytes, so a name past the
+	// bound would address the table named by its first bytes.
+	t.Run("a plain identifier is bounded like a quoted name", func(t *testing.T) {
+		atBound := strings.Repeat("a", maxNameBytes)
+		if got, err := options.sqlIdentifier(positionCollection, atBound); err != nil || got != atBound {
+			t.Errorf("a plain identifier of %d bytes was refused: %v", maxNameBytes, err)
+		}
+		_, err := options.sqlIdentifier(positionCollection, atBound+"a")
+		if !errors.Is(err, ErrUnsafeName) || !strings.Contains(err.Error(), "is too long") {
+			t.Errorf("a plain identifier of %d bytes: error = %v, want a refusal that says it is too long", maxNameBytes+1, err)
+		}
+		if err != nil && len(err.Error()) > 200 {
+			t.Errorf("the refusal is %d bytes long, it must not echo the name", len(err.Error()))
+		}
+	})
+
+	// A name carrying its own quotes used to act as a quoted identifier, because
+	// names were pasted as written. Without a dialect there is no reviewed quoting
+	// to write it with, so it is refused.
+	t.Run("a name that carries its own quoting is refused", func(t *testing.T) {
+		for _, dialect := range []string{"", "postgres", "mysql"} {
+			options := DbOptions{StructuredQueryDialect: dialect}
+			for _, name := range selfQuotedNames {
+				if got, err := options.sqlIdentifier(positionCollection, name); got != "" || !errors.Is(err, ErrUnsafeName) {
+					t.Errorf("dialect %q: sqlIdentifier(%q) = %q, %v; want a refusal wrapping ErrUnsafeName", dialect, name, got, err)
+				}
+			}
 		}
 	})
 
@@ -56,27 +79,47 @@ func TestSQLIdentifier_SQLite(t *testing.T) {
 
 	t.Run("a name is quoted and its quote character escaped", func(t *testing.T) {
 		quoted := map[string]string{
-			"users":           "`users`",
-			"Order Details":   "`Order Details`",
-			"Unit Price":      "`Unit Price`",
-			"a`b":             "`a``b`",
-			"``":              "``````",
-			`a" OR 1=1 --`:    "`a\" OR 1=1 --`",
-			"x; DROP TABLE y": "`x; DROP TABLE y`",
-			"it's":            "`it's`",
-			"a--b":            "`a--b`",
-			"a/*b*/c":         "`a/*b*/c`",
-			"café":            "`café`",
-			"1abc":            "`1abc`",
-			"a.b":             "`a.b`",
-			"a?b":             "`a?b`",
-			strings.Repeat("é", maxQuotedNameBytes/2): "`" + strings.Repeat("é", maxQuotedNameBytes/2) + "`",
-			strings.Repeat("a", maxQuotedNameBytes):   "`" + strings.Repeat("a", maxQuotedNameBytes) + "`",
+			"users":                             "`users`",
+			"Order Details":                     "`Order Details`",
+			"Unit Price":                        "`Unit Price`",
+			"a`b":                               "`a``b`",
+			"``":                                "``````",
+			`a" OR 1=1 --`:                      "`a\" OR 1=1 --`",
+			"x; DROP TABLE y":                   "`x; DROP TABLE y`",
+			"it's":                              "`it's`",
+			"a--b":                              "`a--b`",
+			"a/*b*/c":                           "`a/*b*/c`",
+			"café":                              "`café`",
+			"1abc":                              "`1abc`",
+			"a.b":                               "`a.b`",
+			"a?b":                               "`a?b`",
+			strings.Repeat("é", maxNameBytes/2): "`" + strings.Repeat("é", maxNameBytes/2) + "`",
+			strings.Repeat("a", maxNameBytes):   "`" + strings.Repeat("a", maxNameBytes) + "`",
 		}
 		for name, want := range quoted {
 			got, err := options.sqlIdentifier(positionField, name)
 			if err != nil || got != want {
 				t.Errorf("sqlIdentifier(%q) = %q, %v; want %q", name, got, err, want)
+			}
+		}
+	})
+
+	// The name is one literal identifier, quote characters included, so a caller
+	// that used to pass `"Order Details"` to reach the table Order Details must
+	// pass Order Details now.
+	t.Run("a name that carries its own quoting is one literal name", func(t *testing.T) {
+		want := map[string]string{
+			`"Order Details"`: "`\"Order Details\"`",
+			"[Order Details]": "`[Order Details]`",
+			"`x`":             "```x```",
+			"'x'":             "`'x'`",
+		}
+		if len(want) != len(selfQuotedNames) {
+			t.Fatalf("%d expectations for %d names", len(want), len(selfQuotedNames))
+		}
+		for name, quoted := range want {
+			if got, err := options.sqlIdentifier(positionCollection, name); err != nil || got != quoted {
+				t.Errorf("sqlIdentifier(%q) = %q, %v; want %q", name, got, err, quoted)
 			}
 		}
 	})
@@ -209,6 +252,38 @@ func TestRecordsetIdentifier(t *testing.T) {
 		}
 	})
 
+	// Each case below joins into a name that passes the joined-name check in its
+	// mode, so only the check of the segment itself can refuse it.
+	t.Run("a segment is refused although the joined name is acceptable", func(t *testing.T) {
+		cases := map[string]struct {
+			parentCollection string // "" builds a parent with an empty collection
+			dialect          string
+			joined           string
+		}{
+			"a leading digit, joined name plain":            {"1abc", "", "lines_1abc"},
+			"an empty parent collection, joined name plain": {"", "", "lines_"},
+			"an empty parent collection, sqlite":            {"", "sqlite", "`lines_`"},
+		}
+		for name, tt := range cases {
+			t.Run(name, func(t *testing.T) {
+				options := DbOptions{StructuredQueryDialect: tt.dialect}
+				parent := &dalrecord.Key{ID: "p1"}
+				if tt.parentCollection != "" {
+					parent = dalrecord.NewKeyWithID(tt.parentCollection, "p1")
+				}
+				child := dalrecord.NewKeyWithParentAndID(parent, "lines", "l1")
+				// The joined name alone is acceptable: that is what makes the case.
+				if got, err := options.sqlIdentifier(positionCollection, getRecordsetName(child)); err != nil || got != tt.joined {
+					t.Fatalf("joined name: sqlIdentifier = %q, %v; want %q", got, err, tt.joined)
+				}
+				_, err := options.recordsetIdentifier(child)
+				if !errors.Is(err, ErrUnsafeName) || !strings.Contains(err.Error(), positionCollection) {
+					t.Errorf("recordsetIdentifier = %v, want a refusal of the segment", err)
+				}
+			})
+		}
+	})
+
 	t.Run("a dialect that quotes quotes the joined name once", func(t *testing.T) {
 		parent := dalrecord.NewKeyWithID("Order Details", "o1")
 		child := dalrecord.NewKeyWithParentAndID(parent, "Line Items", "l1")
@@ -219,7 +294,7 @@ func TestRecordsetIdentifier(t *testing.T) {
 	})
 
 	t.Run("the joined name is bounded too", func(t *testing.T) {
-		long := strings.Repeat("a", maxQuotedNameBytes-10)
+		long := strings.Repeat("a", maxNameBytes-10)
 		parent := dalrecord.NewKeyWithID(long, "p1")
 		child := dalrecord.NewKeyWithParentAndID(parent, long, "c1")
 		if _, err := (DbOptions{StructuredQueryDialect: "sqlite"}).recordsetIdentifier(child); !errors.Is(err, ErrUnsafeName) {
