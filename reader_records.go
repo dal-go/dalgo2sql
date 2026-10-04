@@ -52,6 +52,13 @@ func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute e
 			}
 		}
 		if primaryKey := primaryKeyForQuery(options, query); primaryKey != "" && !dal.HasAggregation(q) {
+			if isKeysOnlyQuery(q) && len(q.OrderBy()) == 0 {
+				// A keys-only query names no order, and SQL returns rows in no
+				// defined order without one, so callers would see a different
+				// order from one run or database to the next. Order by the key.
+				q = orderedByKey{StructuredQuery: q, key: primaryKey}
+				query = q
+			}
 			rr.identityColumn = primaryKey
 			if selected := q.Columns(); len(selected) > 0 && !selectsIdentityField(selected, primaryKey) {
 				columns := append([]dal.Column(nil), selected...)
@@ -73,6 +80,22 @@ func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute e
 	}
 
 	return
+}
+
+// isKeysOnlyQuery reports whether q was built with SelectKeysOnly: it selects
+// no columns, reads into no record and names a key kind.
+func isKeysOnlyQuery(q dal.StructuredQuery) bool {
+	return len(q.Columns()) == 0 && q.IDKind() != reflect.Invalid && q.IntoRecord() == nil
+}
+
+// orderedByKey is a query that sorts ascending by one field, the primary key.
+type orderedByKey struct {
+	dal.StructuredQuery
+	key string
+}
+
+func (o orderedByKey) OrderBy() []dal.OrderExpression {
+	return []dal.OrderExpression{dal.AscendingField(o.key)}
 }
 
 type recordsReader struct {
@@ -188,45 +211,53 @@ func (r recordsReader) Next() (record dalrecord.Record, err error) {
 		data = make(map[string]any)
 		record = dalrecord.NewRecordWithData(record.Key(), data)
 	}
-	switch d := data.(type) {
-	case map[string]any:
-		var values []any
-		if values, err = r.scanValues(); err != nil {
-			return nil, err
+	var set func(column string, value any) error
+	if d, isMap := data.(map[string]any); isMap {
+		set = func(column string, value any) error {
+			d[column] = value
+			return nil
 		}
-		for i, n := range r.colNames {
-			v := normalizeValueByDatabaseType(r.colTypes[i].DatabaseTypeName(), values[i])
-			if r.validateFinite {
-				if number, ok := v.(float64); ok && (math.IsNaN(number) || math.IsInf(number, 0)) {
-					return nil, fmt.Errorf("non-finite aggregate result in column %q", n)
-				}
-			}
-			// database/sql returns []byte for TEXT/VARCHAR columns with some
-			// drivers (notably go-sql-driver/mysql); store as string so the
-			// map is usable and JSON-serializes as text, not base64. Matches
-			// scanRowIntoMap on the Get path.
-			if b, ok := v.([]byte); ok {
-				v = string(b)
-			}
-			identityValue := n == r.identityColumn
-			if r.hideIdentityColumn {
-				identityValue = i == r.identityColumnIndex
-			}
-			if identityValue {
-				record.Key().ID = v
-				if v != nil {
-					record.Key().IDKind = reflect.TypeOf(v).Kind()
-				}
-			}
-			if !r.hideIdentityColumn || i != r.identityColumnIndex {
-				d[n] = v
-			}
-		}
-	default:
-		// TODO: implement Scan into `*struct` and into `[]any`
-
-		err = fmt.Errorf("unsupported data type %T", data)
+	} else if structSet, isStruct := structSetter(data, true); isStruct {
+		// A struct target takes the same normalised values as a map: the
+		// conversion to the field type happens after normalisation.
+		set = structSet
+	} else {
+		// TODO: implement Scan into `[]any`
+		return nil, fmt.Errorf("unsupported data type %T", data)
+	}
+	var values []any
+	if values, err = r.scanValues(); err != nil {
 		return nil, err
+	}
+	for i, n := range r.colNames {
+		v := normalizeValueByDatabaseType(r.colTypes[i].DatabaseTypeName(), values[i])
+		if r.validateFinite {
+			if number, ok := v.(float64); ok && (math.IsNaN(number) || math.IsInf(number, 0)) {
+				return nil, fmt.Errorf("non-finite aggregate result in column %q", n)
+			}
+		}
+		// database/sql returns []byte for TEXT/VARCHAR columns with some
+		// drivers (notably go-sql-driver/mysql); store as string so the
+		// map is usable and JSON-serializes as text, not base64. Matches
+		// scanRowIntoMap on the Get path.
+		if b, ok := v.([]byte); ok {
+			v = string(b)
+		}
+		identityValue := n == r.identityColumn
+		if r.hideIdentityColumn {
+			identityValue = i == r.identityColumnIndex
+		}
+		if identityValue {
+			record.Key().ID = v
+			if v != nil {
+				record.Key().IDKind = reflect.TypeOf(v).Kind()
+			}
+		}
+		if !r.hideIdentityColumn || i != r.identityColumnIndex {
+			if err = set(n, v); err != nil {
+				return nil, err
+			}
+		}
 	}
 	return
 }

@@ -335,7 +335,39 @@ func scanIntoData(rows *sql.Rows, data interface{}, pkIncluded bool) error {
 	if pkIncluded {
 		return scanIntoDataWithPrimaryKeyIncluded(rows, data)
 	}
+	if set, isStruct := structSetter(data, false); isStruct {
+		return scanRowIntoStruct(rows, set)
+	}
 	return sqlscan.ScanRow(data, rows)
+}
+
+// scanRowIntoStruct scans the current row into a struct through set, which
+// matches each column to a field by name without regard to case. scany matches
+// case-sensitively, so a SQLite column declared as "Name" never reached a
+// field Name that has no db tag.
+func scanRowIntoStruct(rows *sql.Rows, set func(column string, value any) error) error {
+	cols, err := rows.Columns()
+	if err != nil {
+		return err
+	}
+	cells := make([]any, len(cols))
+	cellPtrs := make([]any, len(cols))
+	for i := range cells {
+		cellPtrs[i] = &cells[i]
+	}
+	if err = rows.Scan(cellPtrs...); err != nil {
+		return err
+	}
+	for i, col := range cols {
+		value := cells[i]
+		if b, ok := value.([]byte); ok {
+			value = string(b)
+		}
+		if err = set(col, value); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // isMapData reports whether data is a map[string]any or *map[string]any.
