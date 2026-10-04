@@ -3,7 +3,9 @@ package dalgo2sql
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -168,9 +170,6 @@ func TestEmitSQLGuardTable(t *testing.T) {
 		{"where aggregate argument", func(v string) dal.StructuredQuery {
 			return guardQuery(baseFrom(), where(dal.NewComparison(dal.NewAggregate(dal.SUM, true, dal.Field(v)), dal.GreaterThen, dal.Constant{Value: 1})))
 		}},
-		{"where aggregate name", func(v string) dal.StructuredQuery {
-			return guardQuery(baseFrom(), where(dal.NewComparison(dal.NewAggregate(v, false, dal.Field("a")), dal.GreaterThen, dal.Constant{Value: 1})))
-		}},
 		{"group by", func(v string) dal.StructuredQuery {
 			return guardQuery(baseFrom(), func(b dal.IQueryBuilder) dal.IQueryBuilder { return b.GroupBy(dal.Field(v)) })
 		}},
@@ -200,6 +199,9 @@ func TestEmitSQLGuardTable(t *testing.T) {
 				text, err := emitSQL(p.build(bad))
 				if text != "" || !errors.Is(err, dal.ErrNotSupported) {
 					t.Fatalf("%q accepted: text=%q err=%v", bad, text, err)
+				}
+				if strings.Contains(err.Error(), bad) {
+					t.Fatalf("error echoes the caller's name %q: %v", bad, err)
 				}
 			}
 		})
@@ -279,8 +281,13 @@ func TestEmitSQLGuardValues(t *testing.T) {
 				}
 			}
 			for _, v := range refused {
-				if text, err := emitSQL(build(v)); text != "" || !errors.Is(err, dal.ErrNotSupported) {
+				text, err := emitSQL(build(v))
+				if text != "" || !errors.Is(err, dal.ErrNotSupported) {
 					t.Errorf("value %q accepted: text=%q err=%v", v, text, err)
+					continue
+				}
+				if strings.Contains(err.Error(), v) {
+					t.Errorf("error echoes the caller's value %q: %v", v, err)
 				}
 			}
 		})
@@ -305,6 +312,12 @@ func (s strangeValue) MarshalJSON() ([]byte, error) { return []byte(s.Text), nil
 
 type namedString string
 
+// markedStrings is a named slice with its own JSON rendering, like
+// json.RawMessage: Constant.String() would print whatever it marshals to.
+type markedStrings []string
+
+func (m markedStrings) MarshalJSON() ([]byte, error) { return []byte("1 OR 1=1"), nil }
+
 func TestEmitSQLGuardValueTypes(t *testing.T) {
 	scalars := []any{nil, true, 1, int8(1), int16(1), int32(1), int64(1), uint(1), uint8(1), uint16(1), uint32(1), uint64(1), float32(1.5), 2.5, time.Unix(1, 0).UTC(), "s"}
 	for _, v := range scalars {
@@ -325,6 +338,11 @@ func TestEmitSQLGuardValueTypes(t *testing.T) {
 	unsupported := []any{
 		strangeValue{Text: "1 OR 1=1"}, &strangeValue{}, namedString("x"), map[string]any{"a": 1}, struct{}{}, new(string),
 		[]any{strangeValue{Text: "1"}}, []strangeValue{{Text: "1"}}, [][]int{{1}},
+		json.RawMessage(`1 OR 1=1`), markedStrings{"a"}, markedStrings(nil),
+		math.NaN(), math.Inf(1), math.Inf(-1), float32(math.NaN()), float32(math.Inf(1)),
+		time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(-1, 1, 1, 0, 0, 0, 0, time.UTC),
+		[]float64{math.NaN()}, []float64{math.Inf(1)}, []float32{float32(math.Inf(-1))}, []any{1, math.NaN()},
+		[]time.Time{time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC)},
 	}
 	for _, v := range unsupported {
 		constant := guardQuery(baseFrom(), func(b dal.IQueryBuilder) dal.IQueryBuilder {
@@ -548,5 +566,148 @@ func TestEmitSQLGuardRefusesBadWildcardMasks(t *testing.T) {
 		if _, err := emitSQL(q); !errors.Is(err, dal.ErrNotSupported) {
 			t.Errorf("mask %q accepted: %v", mask, err)
 		}
+	}
+}
+
+// An unnamed slice of times in an Array renders each time through %v, which
+// prints the zone abbreviation, a name the caller chooses.
+func TestEmitSQLRefusesTimeInArray(t *testing.T) {
+	hostile := time.Date(2020, 1, 1, 0, 0, 0, 0, time.FixedZone("x') OR 1=1 --", 0))
+	for _, v := range []any{[]time.Time{hostile}, []any{hostile}, []any{time.Unix(1, 0).UTC()}} {
+		q := guardQuery(baseFrom(), func(b dal.IQueryBuilder) dal.IQueryBuilder {
+			return b.Where(dal.NewComparison(dal.Field("a"), dal.In, dal.Array{Value: v}))
+		})
+		if text, err := emitSQL(q); text != "" || !errors.Is(err, dal.ErrNotSupported) {
+			t.Errorf("array %T with a time accepted: text=%q err=%v", v, text, err)
+		}
+	}
+	// In constant position a time is rendered by its JSON marshaller, which
+	// prints only digits, so a time with a hostile zone name is plain.
+	q := guardQuery(baseFrom(), func(b dal.IQueryBuilder) dal.IQueryBuilder {
+		return b.Where(dal.NewComparison(dal.Field("a"), dal.Equal, dal.Constant{Value: hostile}))
+	})
+	text, err := emitSQL(q)
+	if err != nil {
+		t.Fatalf("constant time refused: %v", err)
+	}
+	if strings.Contains(text, "OR 1=1") {
+		t.Fatalf("zone name leaked into %q", text)
+	}
+}
+
+// The aggregate names are the structured compiler's allow-list: a name outside
+// it changes what the statement does, so it is refused in every position, WHERE
+// included, where the core aggregation check does not look.
+func TestEmitSQLGuardAggregateNames(t *testing.T) {
+	positions := map[string]func(name string) dal.StructuredQuery{
+		"where": func(name string) dal.StructuredQuery {
+			return guardQuery(baseFrom(), func(b dal.IQueryBuilder) dal.IQueryBuilder {
+				return b.Where(dal.NewComparison(dal.NewAggregate(name, false, dal.Field("a")), dal.GreaterThen, dal.Constant{Value: 1}))
+			})
+		},
+		"having": func(name string) dal.StructuredQuery {
+			return guardQuery(baseFrom(), func(b dal.IQueryBuilder) dal.IQueryBuilder {
+				return b.Having(dal.NewComparison(dal.NewAggregate(name, true, dal.Field("a")), dal.GreaterThen, dal.Constant{Value: 1}))
+			})
+		},
+		"column": func(name string) dal.StructuredQuery {
+			return baseFrom().NewQuery().SelectColumns(dal.Column{Expression: dal.NewAggregate(name, false, dal.Field("a"))})
+		},
+	}
+	for position, build := range positions {
+		t.Run(position, func(t *testing.T) {
+			for _, name := range []string{dal.COUNT, dal.SUM, dal.AVERAGE, dal.MIN, dal.MAX, "count", "Sum", "avg", "min", "max"} {
+				if _, err := emitSQL(build(name)); err != nil {
+					t.Errorf("aggregate %q refused: %v", name, err)
+				}
+			}
+			for _, name := range []string{
+				"load_extension", "RAND", "random", "ok_name1", "FIRST", "LAST", "GROUP_CONCAT", "SUM2", "",
+				"x) OR 1=1 --", "SUM ", " SUM",
+			} {
+				text, err := emitSQL(build(name))
+				if text != "" || !errors.Is(err, dal.ErrNotSupported) {
+					t.Errorf("aggregate %q accepted: text=%q err=%v", name, text, err)
+					continue
+				}
+				if name != "" && strings.Contains(err.Error(), name) {
+					t.Errorf("error echoes the caller's function name %q: %v", name, err)
+				}
+			}
+		})
+	}
+}
+
+// wrappedQuery keeps every accessor of the query it wraps but renders its own
+// text, as a wrapper type can (see dal.WithWhere).
+type wrappedQuery struct {
+	dal.StructuredQuery
+	text string
+}
+
+func (w wrappedQuery) String() string { return w.text }
+
+// The guard checks what the accessors return, so the text must come from the
+// accessors too, never from a String() the wrapper can override.
+func TestEmitSQLRendersFromAccessors(t *testing.T) {
+	inner := guardQuery(baseFrom(), func(b dal.IQueryBuilder) dal.IQueryBuilder { return b.WhereField("a", dal.Equal, 1) })
+	w := wrappedQuery{StructuredQuery: inner, text: "SELECT * FROM secrets; DROP TABLE x --"}
+	text, err := emitSQL(w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := emitSQL(inner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(text, "secrets") || text != want {
+		t.Fatalf("emitSQL() = %q, want the text of the accessors %q", text, want)
+	}
+}
+
+// A refusal names the position and the reason, never the caller's text: the
+// error reaches logs and clients.
+func TestEmitSQLRefusalsNeverEchoCallerText(t *testing.T) {
+	const canary = "CANARY'\\x]"
+	cases := map[string]dal.StructuredQuery{
+		"comparison operator": guardQuery(baseFrom(), func(b dal.IQueryBuilder) dal.IQueryBuilder {
+			return b.Where(dal.NewComparison(dal.Field("a"), dal.Operator(canary), dal.Constant{Value: 1}))
+		}),
+		"group operator": guardQuery(baseFrom(), func(b dal.IQueryBuilder) dal.IQueryBuilder {
+			return b.Where(dal.NewGroupCondition(dal.Operator(canary), dal.Field("a").EqualTo(1)))
+		}),
+		"arithmetic operator": guardQuery(baseFrom(), func(b dal.IQueryBuilder) dal.IQueryBuilder {
+			return b.OrderBy(dal.Ascending(dal.Binary(dal.Field("a"), dal.ArithmeticOperator(canary), dal.Constant{Value: 1})))
+		}),
+		"parameter name": guardQuery(baseFrom(), func(b dal.IQueryBuilder) dal.IQueryBuilder {
+			return b.Where(dal.NewComparison(dal.Field("a"), dal.Equal, dal.Param{Name: canary}))
+		}),
+		"function name": baseFrom().NewQuery().SelectColumns(dal.Column{Expression: dal.NewAggregate(canary, false, dal.Field("a"))}),
+		"wildcard mask": baseFrom().NewQuery().SelectColumns(dal.AllColumnsExcept(canary)),
+		"string constant": guardQuery(baseFrom(), func(b dal.IQueryBuilder) dal.IQueryBuilder {
+			return b.WhereField("a", dal.Equal, canary)
+		}),
+		"opaque aggregate text": baseFrom().NewQuery().SelectColumns(dal.Column{Expression: opaqueAggregate{text: canary, name: "SUM", args: []dal.Expression{dal.Field("a")}}}),
+	}
+	for name, q := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := emitSQL(q)
+			if !errors.Is(err, dal.ErrNotSupported) {
+				t.Fatalf("error = %v, want ErrNotSupported", err)
+			}
+			if strings.Contains(err.Error(), "CANARY") {
+				t.Fatalf("error echoes the caller's text: %v", err)
+			}
+		})
+	}
+}
+
+// The function name is read raw from a custom aggregate. A name that upper-cases
+// into an allowed one (the long s in "ſum" does) must not pass, because the
+// statement would carry the raw name.
+func TestEmitSQLGuardRefusesNonASCIIAggregateName(t *testing.T) {
+	q := baseFrom().NewQuery().SelectColumns(dal.Column{Expression: opaqueAggregate{text: "ſum(a)", name: "ſum", args: []dal.Expression{dal.Field("a")}}})
+	if text, err := emitSQL(q); text != "" || !errors.Is(err, dal.ErrNotSupported) {
+		t.Fatalf("emitSQL() = %q, %v; want empty text and ErrNotSupported", text, err)
 	}
 }
