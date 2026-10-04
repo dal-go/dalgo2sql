@@ -511,6 +511,19 @@ func compileSQLConditionWithSources(condition dal.Condition, sources map[string]
 			args = append(args, values...)
 		}
 		return "(" + strings.Join(parts, " "+string(c.Operator())+" ") + ")", args, nil
+	case dal.IsNullCondition:
+		operand, args, err := compileSQLExpressionWithSources(c.Operand(), sources, requireQualified)
+		if err != nil {
+			return "", nil, err
+		}
+		// Unary plus drops declared affinity, as for comparisons; it never
+		// turns NULL into a value or a value into NULL. IS [NOT] NULL is
+		// TRUE or FALSE for every input, so it composes with AND and OR.
+		test := "(+" + operand + " COLLATE BINARY) IS NULL"
+		if c.Negated() {
+			test = "(+" + operand + " COLLATE BINARY) IS NOT NULL"
+		}
+		return test, args, nil
 	default:
 		return "", nil, fmt.Errorf("unsupported condition %T", condition)
 	}
@@ -713,6 +726,15 @@ func rewriteSQLConditionAliases(condition dal.Condition, aliases map[string]dal.
 			children[i] = rewriteSQLConditionAliases(child, aliases)
 		}
 		return dal.NewGroupCondition(c.Operator(), children...)
+	case dal.IsNullCondition:
+		operand := c.Operand()
+		if operand != nil {
+			operand = rewriteSQLExpressionAlias(operand, aliases)
+		}
+		if c.Negated() {
+			return dal.NewIsNotNullCondition(operand)
+		}
+		return dal.NewIsNullCondition(operand)
 	default:
 		return condition
 	}
