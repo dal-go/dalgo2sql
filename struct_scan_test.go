@@ -1,0 +1,335 @@
+package dalgo2sql
+
+import (
+	"database/sql"
+	"encoding/json"
+	"math"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestColumnKey(t *testing.T) {
+	for _, name := range []string{"AreaSqKm", "areasqkm", "area_sq_km", "AREA_SQ_KM"} {
+		if got := columnKey(name); got != "areasqkm" {
+			t.Errorf("columnKey(%q) = %q", name, got)
+		}
+	}
+}
+
+type scanEmbedded struct {
+	Promoted string
+}
+
+type scanPointerEmbedded struct {
+	PointerPromoted string
+}
+
+type scanTarget struct {
+	scanEmbedded
+	*scanPointerEmbedded
+	Name       string
+	Tagged     string `db:"label,omitempty"`
+	Hidden     string `db:"-"`
+	hidden     string
+	Duplicate  string
+	Dup_licate string
+}
+
+func TestStructColumnsOf(t *testing.T) {
+	for range 2 { // the second call is served from the cache
+		columns := structColumnsOf(reflect.TypeOf(scanTarget{}))
+		for _, want := range []string{"name", "label", "promoted", "pointerpromoted", "duplicate"} {
+			if _, ok := columns.loose[want]; !ok {
+				t.Errorf("missing %q in %v", want, columns.loose)
+			}
+		}
+		for _, absent := range []string{"tagged", "hidden", "scanembedded", "scanpointerembedded"} {
+			if _, ok := columns.loose[absent]; ok {
+				t.Errorf("unexpected %q in %v", absent, columns.loose)
+			}
+		}
+	}
+	columns := structColumnsOf(reflect.TypeOf(scanTarget{}))
+	if first := columns.loose["duplicate"]; first.index[0] != reflect.TypeOf(scanTarget{}).NumField()-2 {
+		t.Errorf("first field with a shared key must win, got index %v", first.index)
+	}
+	if second, ok := columns.lookup("Dup_licate"); !ok || second.index[0] != reflect.TypeOf(scanTarget{}).NumField()-1 {
+		t.Errorf("an exact name must beat the first field with the same loose key, got %v", second.index)
+	}
+	if got, ok := columns.lookup("DUPLICATE"); !ok || got.index[0] != reflect.TypeOf(scanTarget{}).NumField()-2 {
+		t.Errorf("case-insensitive name: %v", got.index)
+	}
+}
+
+func TestStructSetter_RejectsNonStructPointers(t *testing.T) {
+	var nilTarget *scanTarget
+	for name, target := range map[string]any{
+		"nil":            nil,
+		"struct value":   scanTarget{},
+		"nil pointer":    nilTarget,
+		"pointer to int": new(int),
+		"map":            map[string]any{},
+	} {
+		if _, ok := structSetter(target); ok {
+			t.Errorf("%s: want ok=false", name)
+		}
+		if _, ok := newStructFields(target); ok {
+			t.Errorf("%s: want ok=false", name)
+		}
+	}
+}
+
+func TestStructSetter_Set(t *testing.T) {
+	target := &scanTarget{hidden: "kept"}
+	set, ok := structSetter(target)
+	if !ok {
+		t.Fatal("want ok")
+	}
+	if err := set("NAME", "x", "x"); err != nil || target.Name != "x" {
+		t.Errorf("case-insensitive name: %v %+v", err, target)
+	}
+	if err := set("label", "l", "l"); err != nil || target.Tagged != "l" {
+		t.Errorf("db tag: %v %+v", err, target)
+	}
+	if err := set("promoted", "p", "p"); err != nil || target.Promoted != "p" {
+		t.Errorf("promoted: %v %+v", err, target)
+	}
+	for _, column := range []string{"nothing_like_it", "hidden", "Hidden"} {
+		if err := set(column, "x", "x"); err != nil {
+			t.Errorf("column %q is skipped without an error: %v", column, err)
+		}
+	}
+	if target.hidden != "kept" || target.Hidden != "" {
+		t.Errorf("an unexported or db:\"-\" field is never written: %+v", target)
+	}
+	// scanPointerEmbedded is unexported: its nil pointer cannot be allocated.
+	err := set("PointerPromoted", "x", "x")
+	if err == nil || !strings.Contains(err.Error(), `column "PointerPromoted"`) {
+		t.Errorf("nil embedded pointer of an unexported type: %v", err)
+	}
+	target.scanPointerEmbedded = &scanPointerEmbedded{}
+	set, _ = structSetter(target)
+	if err = set("PointerPromoted", "x", "x"); err != nil || target.PointerPromoted != "x" {
+		t.Errorf("allocated embedded pointer: %v %+v", err, target)
+	}
+	err = set("Name", struct{}{}, struct{}{})
+	if err == nil || !strings.Contains(err.Error(), `column "Name"`) {
+		t.Errorf("unassignable value: %v", err)
+	}
+}
+
+func TestStructSetter_TwoColumnsOfOneRowForOneField(t *testing.T) {
+	set, _ := structSetter(&scanTarget{})
+	if err := set("name", "a", "a"); err != nil {
+		t.Fatal(err)
+	}
+	err := set("NAME", "b", "b")
+	if err == nil || !strings.Contains(err.Error(), "same field") || !strings.Contains(err.Error(), `column "NAME"`) {
+		t.Errorf("got %v", err)
+	}
+}
+
+type scanKinds struct {
+	Bool      bool
+	NamedBool scanNamedBool
+	Int       int
+	Int8      int8
+	Uint      uint
+	Uint8     uint8
+	Float32   float32
+	Float64   float64
+	String    string
+	Named     scanNamedString
+	Time      time.Time
+	Null      sql.NullString
+	Ptr       *string
+	IntPtr    *int
+	Slice     []int
+	Bytes     []byte
+	Raw       json.RawMessage
+	Any       any
+}
+
+type scanNamedString string
+
+type scanNamedBool bool
+
+func TestAssignColumnValue(t *testing.T) {
+	now := time.Now()
+	tests := []struct {
+		name    string
+		field   string
+		value   any
+		want    any
+		wantErr string
+	}{
+		{name: "assignable time", field: "Time", value: now, want: now},
+		{name: "assignable string", field: "String", value: "s", want: "s"},
+		{name: "any field", field: "Any", value: int64(3), want: int64(3)},
+		{name: "scanner", field: "Null", value: "s", want: sql.NullString{String: "s", Valid: true}},
+		{name: "pointer", field: "Ptr", value: "s", want: "s"},
+		{name: "pointer to int", field: "IntPtr", value: int64(4), want: 4},
+		{name: "pointer element error", field: "IntPtr", value: "x", wantErr: "invalid syntax"},
+
+		{name: "bool from bool", field: "Bool", value: true, want: true},
+		{name: "named bool from bool", field: "NamedBool", value: true, want: scanNamedBool(true)},
+		{name: "bool from 1", field: "Bool", value: int64(1), want: true},
+		{name: "bool from 0", field: "Bool", value: int64(0), want: false},
+		{name: "bool from text", field: "Bool", value: "true", want: true},
+		{name: "bool from bad text", field: "Bool", value: "maybe", wantErr: "invalid syntax"},
+		{name: "bool from 2", field: "Bool", value: int64(2), wantErr: "cannot assign 2 to a bool"},
+		{name: "bool from struct", field: "Bool", value: struct{}{}, wantErr: "cannot assign {} to a bool"},
+
+		{name: "int from int64", field: "Int", value: int64(7), want: 7},
+		{name: "int from uint64", field: "Int", value: uint64(7), want: 7},
+		{name: "int from huge uint64", field: "Int", value: uint64(math.MaxUint64), wantErr: "overflows int64"},
+		{name: "int from whole float", field: "Int", value: float64(7), want: 7},
+		{name: "int from fraction", field: "Int", value: 7.5, wantErr: "is not an int64"},
+		{name: "int from NaN", field: "Int", value: math.NaN(), wantErr: "is not an int64"},
+		{name: "int from infinity", field: "Int", value: math.Inf(1), wantErr: "is not an int64"},
+		{name: "int from true", field: "Int", value: true, want: 1},
+		{name: "int from false", field: "Int", value: false, want: 0},
+		{name: "int from text", field: "Int", value: "42", want: 42},
+		{name: "int from bad text", field: "Int", value: "x", wantErr: "invalid syntax"},
+		{name: "int8 overflow", field: "Int8", value: int64(300), wantErr: "overflows int8"},
+
+		{name: "uint from uint64", field: "Uint", value: uint64(7), want: uint(7)},
+		{name: "uint from int64", field: "Uint", value: int64(7), want: uint(7)},
+		{name: "uint from negative", field: "Uint", value: int64(-1), wantErr: "cannot assign -1 to an unsigned integer"},
+		{name: "uint from struct", field: "Uint", value: struct{}{}, wantErr: "cannot assign {} to an unsigned integer"},
+		{name: "uint from whole float", field: "Uint", value: float64(7), want: uint(7)},
+		{name: "uint from negative float", field: "Uint", value: -1.0, wantErr: "is not a uint64"},
+		{name: "uint from fraction", field: "Uint", value: 1.5, wantErr: "is not a uint64"},
+		{name: "uint from huge float", field: "Uint", value: 1e30, wantErr: "is not a uint64"},
+		{name: "uint from text", field: "Uint", value: "42", want: uint(42)},
+		{name: "uint from bad text", field: "Uint", value: "-1", wantErr: "invalid syntax"},
+		{name: "uint8 overflow", field: "Uint8", value: uint64(300), wantErr: "overflows uint8"},
+
+		{name: "float from float", field: "Float64", value: 1.5, want: 1.5},
+		{name: "float from int64", field: "Float64", value: int64(2), want: 2.0},
+		{name: "float from uint64", field: "Float64", value: uint64(2), want: 2.0},
+		{name: "float from text", field: "Float64", value: "13.86", want: 13.86},
+		{name: "float from NaN text", field: "Float64", value: "NaN", want: math.NaN()},
+		{name: "float from bad text", field: "Float64", value: "x", wantErr: "invalid syntax"},
+		{name: "float from struct", field: "Float64", value: struct{}{}, wantErr: "cannot assign struct {} to a float"},
+		{name: "float32 overflow", field: "Float32", value: 1e300, wantErr: "overflows float32"},
+		{name: "float32", field: "Float32", value: 1.5, want: float32(1.5)},
+
+		{name: "named string", field: "Named", value: "n", want: scanNamedString("n")},
+		{name: "string from int", field: "String", value: int64(1), wantErr: "cannot assign int64 to string"},
+		{name: "slice", field: "Slice", value: "x", wantErr: "cannot assign string to []int"},
+		{name: "bytes into an int slice", field: "Slice", value: []byte("x"), wantErr: "cannot assign string to []int"},
+		{name: "bytes into a byte slice", field: "Bytes", value: []byte("x"), want: []byte("x")},
+		{name: "bytes into a named byte slice", field: "Raw", value: []byte("x"), want: json.RawMessage("x")},
+		{name: "bytes into a string", field: "String", value: []byte("x"), want: "x"},
+		{name: "bytes into an interface", field: "Any", value: []byte("x"), want: "x"},
+		{name: "bytes into a named string", field: "Named", value: []byte("n"), want: scanNamedString("n")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var target scanKinds
+			field := reflect.ValueOf(&target).Elem().FieldByName(tt.field)
+			err := assignColumnValue(field, tt.value, tt.value)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("got error %v, want one containing %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := field.Interface()
+			if field.Kind() == reflect.Pointer {
+				got = field.Elem().Interface()
+			}
+			if f, ok := tt.want.(float64); ok && math.IsNaN(f) {
+				if g, ok := got.(float64); !ok || !math.IsNaN(g) {
+					t.Fatalf("got %v, want NaN", got)
+				}
+				return
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("got %T(%v), want %T(%v)", got, got, tt.want, tt.want)
+			}
+		})
+	}
+}
+
+func TestAssignColumnValue_NilStoresZero(t *testing.T) {
+	target := scanKinds{Int: 5, String: "x"}
+	value := "x"
+	target.Ptr = &value
+	rv := reflect.ValueOf(&target).Elem()
+	for _, name := range []string{"Int", "String", "Ptr"} {
+		if err := assignColumnValue(rv.FieldByName(name), nil, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if target.Int != 0 || target.String != "" || target.Ptr != nil {
+		t.Errorf("nil must store the zero value: %+v", target)
+	}
+}
+
+// An integer field over a NUMERIC column delivered as text is filled from the
+// driver's text, not from the float64 the normaliser made of it, so values
+// beyond 2^53 keep every digit and the full int64 and uint64 range is reachable.
+func TestAssignColumnValue_IntegerFieldsReadTheDriversText(t *testing.T) {
+	type wide struct {
+		Int64  int64
+		Int8   int8
+		Uint64 uint64
+		Uint8  uint8
+	}
+	tests := []struct {
+		name       string
+		field      string
+		raw        any
+		normalized any
+		want       any
+		wantErr    string
+	}{
+		{name: "int64 beyond 2^53", field: "Int64", raw: "9007199254740993", normalized: 9007199254740992.0, want: int64(9007199254740993)},
+		{name: "int64 beyond 2^53 as bytes", field: "Int64", raw: []byte("9007199254740993"), normalized: 9007199254740992.0, want: int64(9007199254740993)},
+		{name: "negative int64 beyond 2^53", field: "Int64", raw: "-9007199254740993", normalized: -9007199254740992.0, want: int64(-9007199254740993)},
+		{name: "MaxInt64", field: "Int64", raw: "9223372036854775807", normalized: 9223372036854775808.0, want: int64(math.MaxInt64)},
+		{name: "MaxUint64", field: "Uint64", raw: "18446744073709551615", normalized: 18446744073709551616.0, want: uint64(math.MaxUint64)},
+		{name: "uint64 beyond 2^53", field: "Uint64", raw: "9007199254740993", normalized: 9007199254740992.0, want: uint64(9007199254740993)},
+		{name: "whole NUMERIC with zero scale falls back to the normalised value", field: "Int64", raw: "12.00", normalized: 12.0, want: int64(12)},
+		{name: "uint whole NUMERIC with zero scale", field: "Uint64", raw: "12.00", normalized: 12.0, want: uint64(12)},
+		{name: "whole NUMERIC with a scale beyond 2^53", field: "Int64", raw: "9007199254740993.00", normalized: 9007199254740992.0, want: int64(9007199254740993)},
+		{name: "negative whole NUMERIC with a scale beyond 2^53", field: "Int64", raw: []byte("-9007199254740993.000"), normalized: -9007199254740992.0, want: int64(-9007199254740993)},
+		{name: "uint whole NUMERIC with a scale beyond 2^53", field: "Uint64", raw: "9007199254740993.00", normalized: 9007199254740992.0, want: uint64(9007199254740993)},
+		{name: "MaxUint64 with a scale", field: "Uint64", raw: "18446744073709551615.0", normalized: 18446744073709551616.0, want: uint64(math.MaxUint64)},
+		{name: "scale text is refused when its integer part overflows", field: "Int64", raw: "9223372036854775808.00", normalized: 9223372036854775808.0, wantErr: "is not an int64"},
+		{name: "text that only looks like a whole NUMERIC is not parsed for a text value", field: "Int64", raw: "12.00", normalized: "12.00", wantErr: "invalid syntax"},
+		{name: "fractional NUMERIC is still refused", field: "Int64", raw: "12.5", normalized: 12.5, wantErr: "is not an int64"},
+		{name: "fractional NUMERIC for uint is still refused", field: "Uint64", raw: "12.5", normalized: 12.5, wantErr: "is not a uint64"},
+		{name: "exact text beyond int64 is refused", field: "Int64", raw: "9223372036854775808", normalized: 9223372036854775808.0, wantErr: "is not an int64"},
+		{name: "exact text beyond uint64 is refused", field: "Uint64", raw: "18446744073709551616", normalized: 18446744073709551616.0, wantErr: "is not a uint64"},
+		{name: "exact text beyond the field is refused", field: "Int8", raw: "300", normalized: 300.0, wantErr: "overflows int8"},
+		{name: "exact text beyond the unsigned field is refused", field: "Uint8", raw: "300", normalized: 300.0, wantErr: "overflows uint8"},
+		{name: "a driver integer is used as is", field: "Int64", raw: int64(7), normalized: int64(7), want: int64(7)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var target wide
+			field := reflect.ValueOf(&target).Elem().FieldByName(tt.field)
+			err := assignColumnValue(field, tt.raw, tt.normalized)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("got error %v, want one containing %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := field.Interface(); got != tt.want {
+				t.Fatalf("got %T(%v), want %T(%v)", got, got, tt.want, tt.want)
+			}
+		})
+	}
+}

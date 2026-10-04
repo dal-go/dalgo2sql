@@ -390,7 +390,47 @@ func scanIntoData(rows *sql.Rows, data interface{}, pkIncluded bool) error {
 	if pkIncluded {
 		return scanIntoDataWithPrimaryKeyIncluded(rows, data)
 	}
+	if fields, isStruct := newStructFields(data); isStruct {
+		return scanRowIntoStruct(rows, data, fields)
+	}
 	return sqlscan.ScanRow(data, rows)
+}
+
+var scannerType = reflect.TypeOf((*sql.Scanner)(nil)).Elem()
+
+// scanRowIntoStruct scans the current row into the struct fields describes.
+// Only the column matcher differs from scany: each column is resolved to a
+// field without regard to case or underscores (see structColumns.lookup) and
+// the row is scanned into the field addresses, so database/sql converts every
+// value as it did for scany.
+//
+// scany stays in charge where it knew more than the matcher: a Scanner target
+// with one column is scanned as a whole, and a row with a dotted column name
+// that no field matches is left to scany, which accepts dotted names for nested
+// struct fields. Any other column without a field is an error naming it.
+func scanRowIntoStruct(rows *sql.Rows, data any, fields *structFields) error {
+	cols, err := rows.Columns()
+	if err != nil {
+		return err
+	}
+	if len(cols) == 1 && reflect.TypeOf(data).Implements(scannerType) {
+		return sqlscan.ScanRow(data, rows)
+	}
+	dest := make([]any, len(cols))
+	for i, col := range cols {
+		field, found, err := fields.field(col)
+		if err != nil {
+			return err
+		}
+		if !found {
+			if strings.Contains(col, ".") {
+				return sqlscan.ScanRow(data, rows)
+			}
+			return fmt.Errorf("column %q: no corresponding field in %s", col, fields.elem.Type())
+		}
+		dest[i] = field.Addr().Interface()
+	}
+	return rows.Scan(dest...)
 }
 
 // isMapData reports whether data is a map[string]any or *map[string]any.
