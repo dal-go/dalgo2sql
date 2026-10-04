@@ -10,6 +10,15 @@ on:
     branches:
       - '**'
 
+# A run is superseded only on a pull request. On main (and on tag pushes) the
+# group is unique per ref and commit, so no run is ever cancelled: the main run
+# cuts the version tag (strongo/cicd go_bump) and must complete for every
+# merge. The literal `true` below only ever applies to pull_request groups,
+# which are keyed by pull request number.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || format('{0}-{1}', github.ref, github.sha) }}
+  cancel-in-progress: true
+
 jobs:
 
   strongo_workflow:
