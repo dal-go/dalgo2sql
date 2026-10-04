@@ -335,39 +335,44 @@ func scanIntoData(rows *sql.Rows, data interface{}, pkIncluded bool) error {
 	if pkIncluded {
 		return scanIntoDataWithPrimaryKeyIncluded(rows, data)
 	}
-	if set, isStruct := structSetter(data, false); isStruct {
-		return scanRowIntoStruct(rows, set)
+	if fields, isStruct := newStructFields(data); isStruct {
+		return scanRowIntoStruct(rows, data, fields)
 	}
 	return sqlscan.ScanRow(data, rows)
 }
 
-// scanRowIntoStruct scans the current row into a struct through set, which
-// matches each column to a field by name without regard to case. scany matches
-// case-sensitively, so a SQLite column declared as "Name" never reached a
-// field Name that has no db tag.
-func scanRowIntoStruct(rows *sql.Rows, set func(column string, value any) error) error {
+var scannerType = reflect.TypeOf((*sql.Scanner)(nil)).Elem()
+
+// scanRowIntoStruct scans the current row into the struct fields describes.
+// Only the column matcher differs from scany: each column is resolved to a
+// field without regard to case or underscores (see structColumns.lookup) and
+// the row is scanned into the field addresses, so database/sql converts every
+// value as it did for scany.
+//
+// scany stays in charge where it knew more than the matcher: a Scanner target
+// with one column is scanned as a whole, and a column that no field matches is
+// left to scany, which also accepts dotted names for nested struct fields and
+// rejects the column with its own error otherwise.
+func scanRowIntoStruct(rows *sql.Rows, data any, fields *structFields) error {
 	cols, err := rows.Columns()
 	if err != nil {
 		return err
 	}
-	cells := make([]any, len(cols))
-	cellPtrs := make([]any, len(cols))
-	for i := range cells {
-		cellPtrs[i] = &cells[i]
+	if len(cols) == 1 && reflect.TypeOf(data).Implements(scannerType) {
+		return sqlscan.ScanRow(data, rows)
 	}
-	if err = rows.Scan(cellPtrs...); err != nil {
-		return err
-	}
+	dest := make([]any, len(cols))
 	for i, col := range cols {
-		value := cells[i]
-		if b, ok := value.([]byte); ok {
-			value = string(b)
-		}
-		if err = set(col, value); err != nil {
+		field, found, err := fields.field(col)
+		if err != nil {
 			return err
 		}
+		if !found {
+			return sqlscan.ScanRow(data, rows)
+		}
+		dest[i] = field.Addr().Interface()
 	}
-	return nil
+	return rows.Scan(dest...)
 }
 
 // isMapData reports whether data is a map[string]any or *map[string]any.

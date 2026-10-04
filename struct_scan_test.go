@@ -2,6 +2,7 @@ package dalgo2sql
 
 import (
 	"database/sql"
+	"encoding/json"
 	"math"
 	"reflect"
 	"strings"
@@ -40,19 +41,25 @@ func TestStructColumnsOf(t *testing.T) {
 	for range 2 { // the second call is served from the cache
 		columns := structColumnsOf(reflect.TypeOf(scanTarget{}))
 		for _, want := range []string{"name", "label", "promoted", "pointerpromoted", "duplicate"} {
-			if _, ok := columns[want]; !ok {
-				t.Errorf("missing %q in %v", want, columns)
+			if _, ok := columns.loose[want]; !ok {
+				t.Errorf("missing %q in %v", want, columns.loose)
 			}
 		}
 		for _, absent := range []string{"tagged", "hidden", "scanembedded", "scanpointerembedded"} {
-			if _, ok := columns[absent]; ok {
-				t.Errorf("unexpected %q in %v", absent, columns)
+			if _, ok := columns.loose[absent]; ok {
+				t.Errorf("unexpected %q in %v", absent, columns.loose)
 			}
 		}
 	}
 	columns := structColumnsOf(reflect.TypeOf(scanTarget{}))
-	if first := columns["duplicate"]; first[0] != reflect.TypeOf(scanTarget{}).NumField()-2 {
-		t.Errorf("first field with a shared key must win, got index %v", first)
+	if first := columns.loose["duplicate"]; first.index[0] != reflect.TypeOf(scanTarget{}).NumField()-2 {
+		t.Errorf("first field with a shared key must win, got index %v", first.index)
+	}
+	if second, ok := columns.lookup("Dup_licate"); !ok || second.index[0] != reflect.TypeOf(scanTarget{}).NumField()-1 {
+		t.Errorf("an exact name must beat the first field with the same loose key, got %v", second.index)
+	}
+	if got, ok := columns.lookup("DUPLICATE"); !ok || got.index[0] != reflect.TypeOf(scanTarget{}).NumField()-2 {
+		t.Errorf("case-insensitive name: %v", got.index)
 	}
 }
 
@@ -65,47 +72,62 @@ func TestStructSetter_RejectsNonStructPointers(t *testing.T) {
 		"pointer to int": new(int),
 		"map":            map[string]any{},
 	} {
-		if _, ok := structSetter(target, true); ok {
+		if _, ok := structSetter(target); ok {
+			t.Errorf("%s: want ok=false", name)
+		}
+		if _, ok := newStructFields(target); ok {
 			t.Errorf("%s: want ok=false", name)
 		}
 	}
 }
 
 func TestStructSetter_Set(t *testing.T) {
-	target := &scanTarget{}
-	set, ok := structSetter(target, true)
+	target := &scanTarget{hidden: "kept"}
+	set, ok := structSetter(target)
 	if !ok {
 		t.Fatal("want ok")
 	}
-	if err := set("NAME", "x"); err != nil || target.Name != "x" {
+	if err := set("NAME", "x", "x"); err != nil || target.Name != "x" {
 		t.Errorf("case-insensitive name: %v %+v", err, target)
 	}
-	if err := set("label", "l"); err != nil || target.Tagged != "l" {
+	if err := set("label", "l", "l"); err != nil || target.Tagged != "l" {
 		t.Errorf("db tag: %v %+v", err, target)
 	}
-	if err := set("promoted", "p"); err != nil || target.Promoted != "p" {
+	if err := set("promoted", "p", "p"); err != nil || target.Promoted != "p" {
 		t.Errorf("promoted: %v %+v", err, target)
 	}
-	if err := set("nothing_like_it", "x"); err != nil {
-		t.Errorf("ignored column: %v", err)
+	for _, column := range []string{"nothing_like_it", "hidden", "Hidden"} {
+		if err := set(column, "x", "x"); err != nil {
+			t.Errorf("column %q is skipped without an error: %v", column, err)
+		}
 	}
-	err := set("PointerPromoted", "x")
+	if target.hidden != "kept" || target.Hidden != "" {
+		t.Errorf("an unexported or db:\"-\" field is never written: %+v", target)
+	}
+	// scanPointerEmbedded is unexported: its nil pointer cannot be allocated.
+	err := set("PointerPromoted", "x", "x")
 	if err == nil || !strings.Contains(err.Error(), `column "PointerPromoted"`) {
-		t.Errorf("nil embedded pointer: %v", err)
+		t.Errorf("nil embedded pointer of an unexported type: %v", err)
 	}
 	target.scanPointerEmbedded = &scanPointerEmbedded{}
-	if err = set("PointerPromoted", "x"); err != nil || target.PointerPromoted != "x" {
+	set, _ = structSetter(target)
+	if err = set("PointerPromoted", "x", "x"); err != nil || target.PointerPromoted != "x" {
 		t.Errorf("allocated embedded pointer: %v %+v", err, target)
 	}
-	err = set("Name", struct{}{})
+	err = set("Name", struct{}{}, struct{}{})
 	if err == nil || !strings.Contains(err.Error(), `column "Name"`) {
 		t.Errorf("unassignable value: %v", err)
 	}
+}
 
-	strict, _ := structSetter(target, false)
-	err = strict("nothing_like_it", "x")
-	if err == nil || !strings.Contains(err.Error(), "no corresponding field") {
-		t.Errorf("strict setter must reject an unmatched column: %v", err)
+func TestStructSetter_TwoColumnsOfOneRowForOneField(t *testing.T) {
+	set, _ := structSetter(&scanTarget{})
+	if err := set("name", "a", "a"); err != nil {
+		t.Fatal(err)
+	}
+	err := set("NAME", "b", "b")
+	if err == nil || !strings.Contains(err.Error(), "same field") || !strings.Contains(err.Error(), `column "NAME"`) {
+		t.Errorf("got %v", err)
 	}
 }
 
@@ -125,6 +147,8 @@ type scanKinds struct {
 	Ptr       *string
 	IntPtr    *int
 	Slice     []int
+	Bytes     []byte
+	Raw       json.RawMessage
 	Any       any
 }
 
@@ -196,12 +220,18 @@ func TestAssignColumnValue(t *testing.T) {
 		{name: "named string", field: "Named", value: "n", want: scanNamedString("n")},
 		{name: "string from int", field: "String", value: int64(1), wantErr: "cannot assign int64 to string"},
 		{name: "slice", field: "Slice", value: "x", wantErr: "cannot assign string to []int"},
+		{name: "bytes into an int slice", field: "Slice", value: []byte("x"), wantErr: "cannot assign string to []int"},
+		{name: "bytes into a byte slice", field: "Bytes", value: []byte("x"), want: []byte("x")},
+		{name: "bytes into a named byte slice", field: "Raw", value: []byte("x"), want: json.RawMessage("x")},
+		{name: "bytes into a string", field: "String", value: []byte("x"), want: "x"},
+		{name: "bytes into an interface", field: "Any", value: []byte("x"), want: "x"},
+		{name: "bytes into a named string", field: "Named", value: []byte("n"), want: scanNamedString("n")},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var target scanKinds
 			field := reflect.ValueOf(&target).Elem().FieldByName(tt.field)
-			err := assignColumnValue(field, tt.value)
+			err := assignColumnValue(field, tt.value, tt.value)
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("got error %v, want one containing %q", err, tt.wantErr)
@@ -234,7 +264,7 @@ func TestAssignColumnValue_NilStoresZero(t *testing.T) {
 	target.Ptr = &value
 	rv := reflect.ValueOf(&target).Elem()
 	for _, name := range []string{"Int", "String", "Ptr"} {
-		if err := assignColumnValue(rv.FieldByName(name), nil); err != nil {
+		if err := assignColumnValue(rv.FieldByName(name), nil, nil); err != nil {
 			t.Fatal(err)
 		}
 	}

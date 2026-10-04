@@ -1,6 +1,7 @@
 package dalgo2sql
 
 import (
+	"bytes"
 	"database/sql"
 	"fmt"
 	"math"
@@ -10,9 +11,20 @@ import (
 	"sync"
 )
 
-// structColumns maps a normalised column key to the index path of the struct
-// field that receives it. See columnKey for the normalisation.
-type structColumns map[string][]int
+// structField is one settable field of a struct target.
+type structField struct {
+	index []int // path for reflect.Value.FieldByIndex, through embedded structs
+	id    int   // position among reflect.VisibleFields, tells fields apart
+}
+
+// structColumns maps column names to the fields that receive them. A column is
+// looked up by the three spellings in turn, so a closer spelling always wins
+// over a looser one; see lookup.
+type structColumns struct {
+	exact  map[string]structField // the name as the db tag or Go field spells it
+	folded map[string]structField // the same name lower-cased
+	loose  map[string]structField // see columnKey
+}
 
 var structColumnsCache sync.Map // reflect.Type -> structColumns
 
@@ -23,17 +35,39 @@ func columnKey(name string) string {
 	return strings.ToLower(strings.ReplaceAll(name, "_", ""))
 }
 
+// lookup finds the field for a column: by exact name first, then without
+// regard to case, then without regard to case and underscores.
+func (c structColumns) lookup(column string) (structField, bool) {
+	if field, ok := c.exact[column]; ok {
+		return field, true
+	}
+	if field, ok := c.folded[strings.ToLower(column)]; ok {
+		return field, true
+	}
+	field, ok := c.loose[columnKey(column)]
+	return field, ok
+}
+
 // structColumnsOf lists the exported fields of t, promoted fields of embedded
 // structs included. A field is known by the name in its `db` tag, or by its Go
-// name without one; the tag "-" hides it. When two fields share a key the first
-// wins.
+// name without one; the tag "-" hides it. Within each spelling, when two fields
+// share a name the first in declaration order wins.
 func structColumnsOf(t reflect.Type) structColumns {
 	if cached, ok := structColumnsCache.Load(t); ok {
 		return cached.(structColumns)
 	}
-	columns := structColumns{}
-	for _, f := range reflect.VisibleFields(t) {
-		if !f.IsExported() || (f.Anonymous && f.Type.Kind() == reflect.Struct) {
+	columns := structColumns{
+		exact:  map[string]structField{},
+		folded: map[string]structField{},
+		loose:  map[string]structField{},
+	}
+	add := func(into map[string]structField, name string, field structField) {
+		if _, taken := into[name]; !taken {
+			into[name] = field
+		}
+	}
+	for id, f := range reflect.VisibleFields(t) {
+		if !f.IsExported() || (f.Anonymous && isStructOrPointerToStruct(f.Type)) {
 			continue
 		}
 		name := f.Name
@@ -42,71 +76,135 @@ func structColumnsOf(t reflect.Type) structColumns {
 		} else if tag != "" {
 			name = tag
 		}
-		if _, taken := columns[columnKey(name)]; !taken {
-			columns[columnKey(name)] = f.Index
-		}
+		field := structField{index: f.Index, id: id}
+		add(columns.exact, name, field)
+		add(columns.folded, strings.ToLower(name), field)
+		add(columns.loose, columnKey(name), field)
 	}
 	structColumnsCache.Store(t, columns)
 	return columns
 }
 
-// structSetter returns a function that stores one column value into the struct
-// that target points to. A column without a matching field is an error, as it
-// is with scany, unless ignoreUnmatched is set: the records reader needs that
-// because the identity column of a record is not a field of its data. ok is
-// false when target is not a non-nil pointer to a struct.
-func structSetter(target any, ignoreUnmatched bool) (set func(column string, value any) error, ok bool) {
+func isStructOrPointerToStruct(t reflect.Type) bool {
+	return t.Kind() == reflect.Struct || (t.Kind() == reflect.Pointer && t.Elem().Kind() == reflect.Struct)
+}
+
+// structFields resolves the columns of one row to the fields of a struct.
+type structFields struct {
+	elem    reflect.Value
+	columns structColumns
+	claimed map[int]string // field id -> the column of this row that reached it
+}
+
+// newStructFields returns nil, false when target is not a non-nil pointer to a
+// struct.
+func newStructFields(target any) (*structFields, bool) {
 	rv := reflect.ValueOf(target)
 	if rv.Kind() != reflect.Pointer || rv.IsNil() || rv.Elem().Kind() != reflect.Struct {
 		return nil, false
 	}
 	elem := rv.Elem()
-	columns := structColumnsOf(elem.Type())
-	return func(column string, value any) error {
-		index, found := columns[columnKey(column)]
-		if !found {
-			if ignoreUnmatched {
-				return nil
+	return &structFields{elem: elem, columns: structColumnsOf(elem.Type()), claimed: map[int]string{}}, true
+}
+
+// field returns the field that receives column, allocating nil embedded struct
+// pointers on the way as scany and encoding/json do. found is false when the
+// column has no field. Two columns of one row that reach the same field are an
+// error, since one value would silently replace the other.
+func (s *structFields) field(column string) (field reflect.Value, found bool, err error) {
+	target, found := s.columns.lookup(column)
+	if !found {
+		return reflect.Value{}, false, nil
+	}
+	if other, taken := s.claimed[target.id]; taken {
+		return reflect.Value{}, true, fmt.Errorf("columns %q and %q reach the same field of %s", other, column, s.elem.Type())
+	}
+	s.claimed[target.id] = column
+	field = s.elem
+	for i, x := range target.index {
+		if i > 0 && field.Kind() == reflect.Pointer {
+			if field.IsNil() {
+				if !field.CanSet() {
+					return reflect.Value{}, true, fmt.Errorf("column %q: cannot allocate embedded %s", column, field.Type())
+				}
+				field.Set(reflect.New(field.Type().Elem()))
 			}
-			return fmt.Errorf("column %q: no corresponding field found in %s", column, elem.Type())
+			field = field.Elem()
 		}
-		field, err := elem.FieldByIndexErr(index)
+		field = field.Field(x)
+	}
+	return field, true, nil
+}
+
+// structSetter returns a function that stores one column of a row into the
+// struct that target points to. raw is the value the driver delivered and
+// normalized is the same value after normalizeValueByDatabaseType. A column
+// without a matching field is skipped, because the identity column of a record
+// is not a field of its data. ok is false when target is not a non-nil pointer
+// to a struct. A setter serves one row.
+func structSetter(target any) (set func(column string, raw, normalized any) error, ok bool) {
+	fields, ok := newStructFields(target)
+	if !ok {
+		return nil, false
+	}
+	return func(column string, raw, normalized any) error {
+		field, found, err := fields.field(column)
+		if err == nil && found {
+			err = assignColumnValue(field, raw, normalized)
+		}
 		if err != nil {
-			return fmt.Errorf("column %q: %w", column, err)
-		}
-		if err = assignColumnValue(field, value); err != nil {
 			return fmt.Errorf("column %q: %w", column, err)
 		}
 		return nil
 	}, true
 }
 
-// assignColumnValue stores a database/sql value into a struct field. It
-// handles what drivers deliver for the scalar field kinds: integers, floats,
-// booleans (SQLite stores them as integers) and strings, plus time.Time and
-// any type that implements sql.Scanner, directly or through a pointer. nil
-// stores the zero value.
-func assignColumnValue(field reflect.Value, value any) error {
-	if value == nil {
+// assignColumnValue stores a database/sql value into a struct field of the
+// records reader. raw is what the driver delivered and normalized is raw after
+// NUMERIC normalisation.
+//
+//   - A sql.Scanner receives raw, as database/sql would pass it, so a decimal
+//     type sees the exact NUMERIC text and a JSON type sees []byte.
+//   - A string field takes raw text; a []byte field (json.RawMessage included)
+//     takes a copy of raw bytes.
+//   - Every other field takes normalized, with []byte turned into string as a
+//     map target stores it: integers, floats, booleans (SQLite stores them as
+//     integers), time.Time and interface fields.
+//   - nil stores the zero value.
+func assignColumnValue(field reflect.Value, raw, normalized any) error {
+	if scanner, ok := field.Addr().Interface().(sql.Scanner); ok {
+		return scanner.Scan(raw)
+	}
+	if raw == nil {
 		field.SetZero()
 		return nil
+	}
+	if field.Kind() == reflect.Pointer {
+		pointee := reflect.New(field.Type().Elem())
+		if err := assignColumnValue(pointee.Elem(), raw, normalized); err != nil {
+			return err
+		}
+		field.Set(pointee)
+		return nil
+	}
+	if b, ok := raw.([]byte); ok && field.Kind() == reflect.Slice {
+		if clone := reflect.ValueOf(bytes.Clone(b)); clone.Type().AssignableTo(field.Type()) {
+			field.Set(clone)
+			return nil
+		}
+	}
+	value := textValue(normalized)
+	if field.Kind() == reflect.String {
+		if text, ok := textValue(raw).(string); ok {
+			value = text
+		}
 	}
 	source := reflect.ValueOf(value)
 	if source.Type().AssignableTo(field.Type()) {
 		field.Set(source)
 		return nil
 	}
-	if scanner, ok := field.Addr().Interface().(sql.Scanner); ok {
-		return scanner.Scan(value)
-	}
 	switch field.Kind() {
-	case reflect.Pointer:
-		pointee := reflect.New(field.Type().Elem())
-		if err := assignColumnValue(pointee.Elem(), value); err != nil {
-			return err
-		}
-		field.Set(pointee)
-		return nil
 	case reflect.Bool:
 		b, err := toBool(source)
 		if err != nil {
@@ -149,6 +247,16 @@ func assignColumnValue(field reflect.Value, value any) error {
 		return fmt.Errorf("cannot assign %T to %s", value, field.Type())
 	}
 	return nil
+}
+
+// textValue turns []byte into string and returns every other value unchanged:
+// database/sql returns []byte for TEXT columns with some drivers, and the
+// records reader stores text as string.
+func textValue(v any) any {
+	if b, ok := v.([]byte); ok {
+		return string(b)
+	}
+	return v
 }
 
 func toBool(v reflect.Value) (bool, error) {

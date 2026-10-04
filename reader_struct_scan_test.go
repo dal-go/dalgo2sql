@@ -2,6 +2,9 @@ package dalgo2sql
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -128,6 +131,129 @@ func TestRecordsReader_UnsupportedTargets(t *testing.T) {
 			})
 			rr := structTargetReader(t, rows, query, DbOptions{})
 			if _, err := rr.Next(); err == nil || !strings.HasPrefix(err.Error(), "unsupported data type") {
+				t.Errorf("got %v", err)
+			}
+		})
+	}
+}
+
+type scanReaderShapes struct {
+	Blob    []byte
+	Doc     json.RawMessage
+	Custom  bytesOnlyScanner
+	Label   string
+	Decimal decimalTextScanner
+	Count   int
+	Created sql.NullString
+	Any     any
+}
+
+// decimalTextScanner keeps the exact text a driver delivers for a NUMERIC.
+type decimalTextScanner struct{ text string }
+
+func (d *decimalTextScanner) Scan(value any) error {
+	switch v := value.(type) {
+	case string:
+		d.text = v
+	case []byte:
+		d.text = string(v)
+	default:
+		return fmt.Errorf("decimalTextScanner wants the driver text, got %T", value)
+	}
+	return nil
+}
+
+type ScanReaderExported struct{ Promoted string }
+
+type scanReaderEmbedsPointer struct {
+	*ScanReaderExported
+	Name string
+}
+
+func shapesQuery(data any) dal.StructuredQuery {
+	return dal.From(dal.NewRootCollectionRef("cities", "")).NewQuery().SelectIntoRecord(func() dalrecord.Record {
+		return dalrecord.NewRecordWithIncompleteKey("cities", reflect.String, data)
+	})
+}
+
+func nextStruct(t *testing.T, data any, rows *sqlmock.Rows) error {
+	t.Helper()
+	rr := structTargetReader(t, rows, shapesQuery(data), DbOptions{})
+	_, err := rr.Next()
+	return err
+}
+
+// A struct target takes the driver's value, so []byte reaches []byte fields
+// and Scanners as []byte instead of as the string a map target stores.
+func TestRecordsReader_StructTargetByteValues(t *testing.T) {
+	var got scanReaderShapes
+	rows := sqlmock.NewRows([]string{"blob", "doc", "custom", "label", "any"}).
+		AddRow([]byte{1, 2}, []byte(`{"a":1}`), []byte("raw"), []byte("text"), []byte("as string"))
+	if err := nextStruct(t, &got, rows); err != nil {
+		t.Fatal(err)
+	}
+	if string(got.Blob) != "\x01\x02" || string(got.Doc) != `{"a":1}` || string(got.Custom.got) != "raw" || got.Label != "text" {
+		t.Errorf("got %+v", got)
+	}
+	if got.Any != "as string" {
+		t.Errorf("an interface field takes the string a map target stores, got %T(%v)", got.Any, got.Any)
+	}
+}
+
+func TestRecordsReader_StructTargetNULL(t *testing.T) {
+	got := scanReaderShapes{Count: 3, Created: sql.NullString{String: "x", Valid: true}}
+	if err := nextStruct(t, &got, sqlmock.NewRows([]string{"count", "created", "blob"}).AddRow(nil, nil, nil)); err != nil {
+		t.Fatal(err)
+	}
+	if got.Count != 0 || got.Created.Valid || got.Blob != nil {
+		t.Errorf("NULL stores the zero value, got %+v", got)
+	}
+}
+
+// NUMERIC normalisation turns the text into float64 for numeric and interface
+// fields; a string field or a Scanner gets the driver's text unchanged.
+func TestRecordsReader_StructTargetNumericText(t *testing.T) {
+	col := func(name string) *sqlmock.Column { return sqlmock.NewColumn(name).OfType("NUMERIC", float64(0)) }
+	rows := sqlmock.NewRowsWithColumnDefinition(col("Label"), col("Decimal"), col("Any")).
+		AddRow("12345678901234567890.123456789", []byte("0.1000000000000000055511151231257827"), "14.5")
+	var got scanReaderShapes
+	if err := nextStruct(t, &got, rows); err != nil {
+		t.Fatal(err)
+	}
+	if got.Label != "12345678901234567890.123456789" || got.Decimal.text != "0.1000000000000000055511151231257827" {
+		t.Errorf("got %+v", got)
+	}
+	if got.Any != 14.5 {
+		t.Errorf("interface field keeps the normalised value, got %T(%v)", got.Any, got.Any)
+	}
+}
+
+func TestRecordsReader_StructTargetEmbeddedPointers(t *testing.T) {
+	var got scanReaderEmbedsPointer
+	if err := nextStruct(t, &got, sqlmock.NewRows([]string{"promoted", "name"}).AddRow("p", "n")); err != nil {
+		t.Fatal(err)
+	}
+	if got.ScanReaderExported == nil || got.Promoted != "p" || got.Name != "n" {
+		t.Errorf("nil embedded pointer must be allocated, got %+v", got)
+	}
+	var hidden scanTarget // embeds a pointer to an unexported type: it cannot be allocated
+	if err := nextStruct(t, &hidden, sqlmock.NewRows([]string{"PointerPromoted"}).AddRow("p")); err == nil || !strings.Contains(err.Error(), `column "PointerPromoted"`) {
+		t.Errorf("got %v", err)
+	}
+}
+
+func TestRecordsReader_StructTargetNameCollisions(t *testing.T) {
+	type twoFields struct {
+		UserID string
+		Other  string
+	}
+	for name, cols := range map[string][]string{
+		"differ by case":        {"UserID", "userid"},
+		"differ by underscores": {"userid", "user_id"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := nextStruct(t, &twoFields{}, sqlmock.NewRows(cols).AddRow("a", "b"))
+			if err == nil || !strings.Contains(err.Error(), "same field") {
 				t.Errorf("got %v", err)
 			}
 		})
