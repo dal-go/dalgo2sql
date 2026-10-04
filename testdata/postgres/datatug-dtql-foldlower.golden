@@ -1,0 +1,36 @@
+=== demo-project-1 customer-invoices (the query this stream exists for)
+sql: SELECT "invoiceid", "invoicedate", "billingcity", "billingcountry", "total" FROM "invoice" AS "i" WHERE "customerid" = $1::bigint ORDER BY "invoicedate" DESC
+$1 int64 3
+=== datatug-cli runQueryTestCustomerByIDDTQL (wildcard select, no alias)
+sql: SELECT * FROM "customer" WHERE "customerid" = $1::bigint
+$1 int64 3
+=== datatug-cli customerByIDDTQL (wildcard select, no alias)
+sql: SELECT * FROM "customer" WHERE "customerid" = $1::bigint
+$1 int64 3
+=== datatug-cli customerEmailExplicitDTQL (explicit hidden-column probe, no alias)
+sql: SELECT "customerid", "email" FROM "customer" WHERE "customerid" = $1::bigint
+$1 int64 3
+=== datatug-cli customerAliasedColumnDTQL (COLUMN alias, not source alias; refused upstream by accesspolicies, not by this dialect)
+sql: SELECT "customerid", "firstname" AS "display_name" FROM "customer" WHERE "customerid" = $1::bigint
+$1 int64 3
+=== datatug-cli customerInvoiceDTQL (wildcard select, no alias)
+sql: SELECT * FROM "invoice" WHERE "customerid" = $1::bigint
+$1 int64 3
+=== demo-project-1 customer-invoices (the query this stream exists for), without catalog facts
+sql: SELECT "invoiceid", "invoicedate", "billingcity", "billingcountry", "total" FROM "invoice" AS "i" WHERE "customerid" = $1::bigint ORDER BY "invoicedate" DESC NULLS LAST
+$1 int64 3
+=== datatug-cli runQueryTestCustomerByIDDTQL (wildcard select, no alias), without catalog facts
+sql: SELECT * FROM "customer" WHERE "customerid" = $1::bigint
+$1 int64 3
+=== datatug-cli customerByIDDTQL (wildcard select, no alias), without catalog facts
+sql: SELECT * FROM "customer" WHERE "customerid" = $1::bigint
+$1 int64 3
+=== datatug-cli customerEmailExplicitDTQL (explicit hidden-column probe, no alias), without catalog facts
+sql: SELECT "customerid", "email" FROM "customer" WHERE "customerid" = $1::bigint
+$1 int64 3
+=== datatug-cli customerAliasedColumnDTQL (COLUMN alias, not source alias; refused upstream by accesspolicies, not by this dialect), without catalog facts
+sql: SELECT "customerid", "firstname" AS "display_name" FROM "customer" WHERE "customerid" = $1::bigint
+$1 int64 3
+=== datatug-cli customerInvoiceDTQL (wildcard select, no alias), without catalog facts
+sql: SELECT * FROM "invoice" WHERE "customerid" = $1::bigint
+$1 int64 3
