@@ -1,6 +1,7 @@
 package dalgo2sql
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -106,17 +107,20 @@ func TestProcessPrimaryKey(t *testing.T) {
 	})
 }
 
-func TestBuildSingleRecordQuery_Panics(t *testing.T) {
-	t.Run("insert_no_pk_defined", func(t *testing.T) {
-		defer func() {
-			if r := recover(); r == nil {
-				t.Errorf("expected panic")
-			}
-		}()
-		record := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "u1"), &user2{Name: "John"})
-		_, _ = buildSingleRecordQuery(insertOperation, DbOptions{}, record)
-	})
+// An insert with a key ID has to write the ID to a column, so a recordset with
+// no primary key configured is an error, and no statement is built.
+func TestBuildSingleRecordQuery_InsertWithAKeyIDAndNoPrimaryKeyIsAnError(t *testing.T) {
+	record := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "u1"), &user2{Name: "John"})
+	q, err := buildSingleRecordQuery(insertOperation, DbOptions{}, record)
+	if err == nil || !strings.Contains(err.Error(), "primary key is not defined for recordset users") {
+		t.Errorf("error = %v, want one saying the primary key of recordset users is not defined", err)
+	}
+	if q.text != "" || q.args != nil {
+		t.Errorf("an error left a statement behind: %+v", q)
+	}
+}
 
+func TestBuildSingleRecordQuery_Panics(t *testing.T) {
 	t.Run("update_no_fields", func(t *testing.T) {
 		defer func() {
 			if r := recover(); r == nil {

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"io"
 	"sync"
 	"testing"
 )
@@ -20,6 +21,11 @@ var errReachedDatabase = errors.New("recording driver: statement reached the dat
 type statementRecorder struct {
 	mu         sync.Mutex
 	statements []string
+	// rowExists, when set, makes the driver succeed instead of failing every
+	// statement: a statement that writes affects one row, and a query returns one
+	// row when rowExists reports true for its text and none when it reports false.
+	// Unset, the driver fails every statement with errReachedDatabase.
+	rowExists func(text string) bool
 }
 
 func (r *statementRecorder) record(text string) {
@@ -63,18 +69,49 @@ func (c recordingConn) Prepare(text string) (driver.Stmt, error) {
 	return nil, errReachedDatabase
 }
 
+// answered reports whether the driver answers statements rather than failing
+// them.
+func (c recordingConn) answered() bool { return c.recorder.rowExists != nil }
+
 func (recordingConn) Close() error { return nil }
 
 func (recordingConn) Begin() (driver.Tx, error) { return recordingTx{}, nil }
 
 func (c recordingConn) ExecContext(_ context.Context, text string, _ []driver.NamedValue) (driver.Result, error) {
 	c.recorder.record(text)
+	if c.answered() {
+		return driver.RowsAffected(1), nil
+	}
 	return nil, errReachedDatabase
 }
 
 func (c recordingConn) QueryContext(_ context.Context, text string, _ []driver.NamedValue) (driver.Rows, error) {
 	c.recorder.record(text)
+	if c.answered() {
+		rows := &recordedRows{}
+		if c.recorder.rowExists(text) {
+			rows.remaining = 1
+		}
+		return rows, nil
+	}
 	return nil, errReachedDatabase
+}
+
+// recordedRows is the one-column result of a query the recording driver
+// answers: the given number of rows, each holding the text "1".
+type recordedRows struct{ remaining int }
+
+func (*recordedRows) Columns() []string { return []string{"id"} }
+
+func (*recordedRows) Close() error { return nil }
+
+func (r *recordedRows) Next(dest []driver.Value) error {
+	if r.remaining == 0 {
+		return io.EOF
+	}
+	r.remaining--
+	dest[0] = "1"
+	return nil
 }
 
 type recordingTx struct{}
