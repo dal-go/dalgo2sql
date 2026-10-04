@@ -550,6 +550,102 @@ func TestCompileTypedSQLBareNamesAreReadAsInputColumns(t *testing.T) {
 			wantSQL:  `SELECT "a" AS "x", COUNT("b") AS "a" FROM "Invoice" GROUP BY "a" HAVING "a" > $1::bigint`,
 			wantArgs: []any{1},
 		},
+		{
+			// A dialect that quotes names as written keeps Total and total apart, so
+			// ORDER BY Total reads the input column and the output total is not a
+			// capture. The same statement is refused under a folding dialect
+			// (typed_sql_errors_test.go), which is why the guard compares what is written.
+			name: "ORDER BY a column that differs from a select alias only in case, with exact quoting",
+			query: invoice().OrderBy(dal.Ascending(typedTestField("Total"))).
+				SelectColumns(typedTestColumn(typedTestField("Name"), "total")),
+			wantSQL: `SELECT "Name" AS "total" FROM "Invoice" ORDER BY "Total" ASC NULLS FIRST`,
+		},
+		{
+			name: "ORDER BY an alias whose column name is spelled in another case than the alias that follows it, with exact quoting",
+			query: invoice().OrderBy(dal.Descending(typedTestField("a"))).
+				SelectColumns(typedTestColumn(typedTestField("Total"), "a"), typedTestColumn(typedTestField("Name"), "total")),
+			wantSQL: `SELECT "Total" AS "a", "Name" AS "total" FROM "Invoice" ORDER BY "Total" DESC NULLS LAST`,
+		},
+	})
+}
+
+// TestCompileTypedSQLBareNamesUnderAFoldingDialect repeats
+// TestCompileTypedSQLBareNamesAreReadAsInputColumns for a dialect whose quoteIdent
+// folds case (newFoldingFakeTypedDialect), where two spellings that differ only in
+// case are one identifier to the server. The refusals are in
+// typed_sql_errors_test.go; these are the statements that must still compile.
+//
+// ORDER BY compares the quoted names the compiler wrote: a bare name is a capture
+// only when an output carries the same written name and is not the column itself.
+// GROUP BY and HAVING need no comparison under any case rule, because GROUP BY
+// reads an input column before an output and HAVING cannot see outputs; the two
+// goldens at the end show the written text is the input column's name.
+func TestCompileTypedSQLBareNamesUnderAFoldingDialect(t *testing.T) {
+	folding := newFoldingFakeTypedDialect()
+	invoice := func() dal.IQueryBuilder { return typedTestFrom("Invoice", "").NewQuery() }
+	runTypedGoldens(t, []typedGolden{
+		{
+			// The second output is the column Total written as TOTAL: same identifier,
+			// so the server's output total is the column itself, not another expression.
+			name:    "ORDER BY alias of a column that is also selected under another spelling of its own name",
+			dialect: folding,
+			query: invoice().OrderBy(dal.Ascending(typedTestField("a"))).
+				SelectColumns(typedTestColumn(typedTestField("Total"), "a"), typedTestColumn(typedTestField("TOTAL"), "")),
+			wantSQL: `SELECT "total" AS "a", "total" FROM "invoice" ORDER BY "total" ASC NULLS FIRST`,
+		},
+		{
+			name:    "ORDER BY a column selected under an alias that folds to its own name",
+			dialect: folding,
+			query: invoice().OrderBy(dal.Descending(typedTestField("Total"))).
+				SelectColumns(typedTestColumn(typedTestField("Total"), "TOTAL")),
+			wantSQL: `SELECT "total" AS "total" FROM "invoice" ORDER BY "total" DESC NULLS LAST`,
+		},
+		{
+			name:    "ORDER BY a column that no output shares a written name with",
+			dialect: folding,
+			query: invoice().OrderBy(dal.Ascending(typedTestField("Total"))).
+				SelectColumns(typedTestColumn(typedTestField("Name"), "n"), typedTestColumn(typedTestField("Total"), "a")),
+			wantSQL: `SELECT "name" AS "n", "total" AS "a" FROM "invoice" ORDER BY "total" ASC NULLS FIRST`,
+		},
+		{
+			name:    "ORDER BY a column and a select-all whose column folds to the same name",
+			dialect: folding,
+			facts:   typedCatalogFacts{Fold: strings.ToLower, Sources: map[typedSourceName]typedSourceFacts{{Name: "invoice"}: {Columns: []typedColumnFact{{Name: "total"}, {Name: "name"}, {Name: "secret"}}}}},
+			query: invoice().OrderBy(dal.Ascending(typedTestField("Total"))).
+				SelectColumns(dal.AllColumnsExcept("secret")),
+			wantSQL: `SELECT "total", "name" FROM "invoice" ORDER BY "total" ASC NULLS FIRST`,
+		},
+		{
+			name:    "ORDER BY a qualified name that another select alias takes under a folded spelling",
+			dialect: folding,
+			query: typedTestFrom("Invoice", "i").NewQuery().OrderBy(dal.Ascending(typedTestQualified("i", "Total"))).
+				SelectColumns(typedTestColumn(typedTestField("Name"), "total")),
+			wantSQL: `SELECT "name" AS "total" FROM "invoice" AS "i" ORDER BY "i"."total" ASC NULLS FIRST`,
+		},
+		{
+			name:    "ORDER BY alias nested in an expression, when another select alias takes the column's folded name",
+			dialect: folding,
+			query: invoice().OrderBy(dal.Ascending(dal.Binary(typedTestField("a"), dal.Add, typedTestConst(1)))).
+				SelectColumns(typedTestColumn(typedTestField("Total"), "a"), typedTestColumn(typedTestField("Name"), "total")),
+			wantSQL:  `SELECT "total" AS "a", "name" AS "total" FROM "invoice" ORDER BY ("total" + $1::bigint) ASC NULLS FIRST`,
+			wantArgs: []any{1},
+		},
+		{
+			name:    "GROUP BY a column that another select alias takes under a folded spelling",
+			dialect: folding,
+			query: invoice().GroupBy(typedTestField("A")).
+				SelectColumns(typedTestColumn(typedTestField("A"), "x"), dal.CountAs(typedTestField("b"), "a")),
+			wantSQL: `SELECT "a" AS "x", COUNT("b") AS "a" FROM "invoice" GROUP BY "a"`,
+		},
+		{
+			name:    "HAVING alias of a group key, when another select alias takes the key's folded name",
+			dialect: folding,
+			query: invoice().GroupBy(typedTestField("A")).
+				Having(dal.NewComparison(typedTestField("x"), dal.GreaterThen, typedTestConst(1))).
+				SelectColumns(typedTestColumn(typedTestField("A"), "x"), dal.CountAs(typedTestField("b"), "a")),
+			wantSQL:  `SELECT "a" AS "x", COUNT("b") AS "a" FROM "invoice" GROUP BY "a" HAVING "a" > $1::bigint`,
+			wantArgs: []any{1},
+		},
 	})
 }
 

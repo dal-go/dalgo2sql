@@ -61,13 +61,27 @@ import (
 //     on, and a server logs it. Name the type or the rule, never the content.
 //   - Name resolution (an assumption of the compiler, not checked): a statement
 //     over one source writes bare column names, and the compiler relies on the
-//     PostgreSQL reading of them. A bare name that stands alone in ORDER BY is a
-//     select-list output first, so the compiler refuses an ORDER BY item whose
-//     written name another output shares (typedCheckOrderByName). In GROUP BY a
+//     PostgreSQL reading of them, and on the server taking two quoted names for
+//     one identifier exactly when the texts quoteIdent returned are equal. What
+//     quoteIdent does to a name is the dialect's own business, and it may fold
+//     case: PostgreSQL's FoldLower mode writes Total and total as "total".
+//     A bare name that stands alone in ORDER BY is a select-list output first,
+//     so the compiler refuses an ORDER BY item whose written name is the written
+//     name of another output (typedCheckOrderByName). That check compares the
+//     quoted names quoteIdent returned, never the query's spelling, so it holds
+//     for a folding dialect too. Everything else that looks a name up stays on the
+//     query's spelling, because it decides what DALgo means and not what the
+//     server reads: the lookup of a select alias (typedAliasRewriter), source
+//     qualifiers, and the comparison of ORDER BY with a source's scan
+//     (validateTypedScanRestated). Under a folding dialect those treat Total and
+//     TOTAL as different names, which makes them refuse or leave a name as the
+//     column, never pick another expression, and the ORDER BY check above catches
+//     the written names that then meet. Wildcard exclusions match the catalog's
+//     names exactly, as dal.WildcardProjection.Excludes defines. In GROUP BY a
 //     bare name is an input column before it is an output, and HAVING cannot see
-//     outputs at all, so both write the input column as it is. A dialect for an
-//     engine that reads a select alias before an input column in GROUP BY or
-//     HAVING needs that check extended before it is added.
+//     outputs at all, so both write the input column as it is, under any case
+//     rule. A dialect for an engine that reads a select alias before an input
+//     column in GROUP BY or HAVING needs that check extended before it is added.
 //
 // The interface stays unexported until three dialects exist.
 type typedDialect interface {

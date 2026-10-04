@@ -215,7 +215,10 @@ func validateTypedJoinSources(from dal.FromSource, path string) error {
 // it. This check cannot see that, because it runs before the select list is
 // rendered; typedCheckOrderByName runs on the same item when the statement is
 // compiled and refuses such a statement, so a statement that passes both sorts by
-// the scan's own column.
+// the scan's own column. The comparison here is on the query's spelling, so under
+// a dialect that folds case the scan order Total and an ORDER BY TOTAL are
+// different and the statement is refused: it fails closed, and never accepts a
+// pair that is not the same expression.
 //
 // Database() is not checked. A lone source in a named database is right only
 // because the federated executor already routed the leaf to that database's
@@ -297,10 +300,18 @@ type typedSelectItem struct {
 	expression dal.Expression
 	sql        string
 	args       []any
-	// name is the output column name the server gives the item: the alias, else
-	// the column's own name, else the text the compiler wrote after AS. It is empty
-	// for the bare "*", whose outputs are the input columns themselves.
-	name string
+	// output is the quoted name the server gives the item's output column, as the
+	// dialect wrote it: the alias, else the column's own name, else the text the
+	// compiler wrote after AS. It is empty for the bare "*", whose outputs are the
+	// input columns themselves. It is the quoted text, not the query's spelling,
+	// because the server compares what is written: a dialect that folds case in
+	// quoteIdent writes Total and TOTAL as one identifier.
+	output string
+	// column is, when expression is a field, that field's quoted name on its own
+	// (no source qualifier, no alias), as the dialect wrote it. Empty otherwise.
+	// An item whose output equals the bare quoted name of a column and whose
+	// column equals it too is that column itself.
+	column string
 }
 
 // query assembles the statement. FROM is rendered first because it fixes which
@@ -413,7 +424,7 @@ func (c *typedCompiler) expandWildcard(wildcard *wildcardProjectionPlan) ([]type
 		if err != nil {
 			return nil, err
 		}
-		items = append(items, typedSelectItem{expression: dal.NewFieldRef("", column.Name), sql: quoted, name: column.Name})
+		items = append(items, typedSelectItem{expression: dal.NewFieldRef("", column.Name), sql: quoted, output: quoted, column: quoted})
 	}
 	return items, nil
 }
@@ -423,15 +434,25 @@ func (c *typedCompiler) expandWildcard(wildcard *wildcardProjectionPlan) ([]type
 // expression's own text. That last name must not contain a value, so an
 // unaliased expression that carries a constant is refused.
 func (c *typedCompiler) selectItem(column dal.Column) (typedSelectItem, error) {
+	var item typedSelectItem
+	field, isField := column.Expression.(dal.FieldRef)
+	if isField {
+		// The field's own written name, apart from any source qualifier or alias.
+		quoted, err := c.quote(field.Name())
+		if err != nil {
+			return typedSelectItem{}, err
+		}
+		item.column = quoted
+	}
 	sql, args, err := c.expr(column.Expression)
 	if err != nil {
 		return typedSelectItem{}, err
 	}
-	item := typedSelectItem{expression: column.Expression, sql: sql, args: args}
+	item.expression, item.sql, item.args = column.Expression, sql, args
 	name := column.Alias
 	if name == "" {
-		if field, isField := column.Expression.(dal.FieldRef); isField {
-			item.name = field.Name()
+		if isField {
+			item.output = item.column
 			return item, nil
 		}
 		if len(args) != 0 {
@@ -444,7 +465,7 @@ func (c *typedCompiler) selectItem(column dal.Column) (typedSelectItem, error) {
 		return typedSelectItem{}, err
 	}
 	item.sql += " AS " + quoted
-	item.name = name
+	item.output = quoted
 	return item, nil
 }
 
@@ -509,7 +530,8 @@ func (c *typedCompiler) having(condition dal.Condition, aliases map[string]dal.E
 //
 // An item that rewrites to a bare column name is checked by
 // typedCheckOrderByName: the server reads a bare ORDER BY name as a select-list
-// output first, so the written name must not be one.
+// output first, so the written name must not be one. The check compares the
+// quoted names the dialect wrote, so a dialect that folds case is covered.
 func (c *typedCompiler) orderBy(orders []dal.OrderExpression, items []typedSelectItem, aliases map[string]dal.Expression, grouped bool) (string, []any, error) {
 	if len(orders) == 0 {
 		return "", nil, nil
@@ -525,7 +547,7 @@ func (c *typedCompiler) orderBy(orders []dal.OrderExpression, items []typedSelec
 		if err != nil {
 			return "", nil, fmt.Errorf("orderBy %d: %w", i, err)
 		}
-		if err := typedCheckOrderByName(expression, items); err != nil {
+		if err := typedCheckOrderByName(expression, sql, items); err != nil {
 			return "", nil, fmt.Errorf("orderBy %d: %w", i, err)
 		}
 		if grouped && rewriter.groupedConstant != "" && len(values) != 0 {
@@ -553,25 +575,31 @@ func (c *typedCompiler) orderBy(orders []dal.OrderExpression, items []typedSelec
 // where DALgo sorts by the group key. Every output of that name must be the
 // column itself, so any other one, not just the first, refuses the item.
 //
-// The name an output has is typedSelectItem.name, so an unaliased expression,
-// which the compiler names by its text, counts too. A qualified field cannot be
-// captured, and a join statement writes no bare name (c.expr refuses it first),
-// so a source on the item or on the output needs no comparison here.
+// The comparison is on what was written, never on the query's spelling: written
+// is the quoted name byExpression put in the text, item.output is the quoted name
+// the dialect gave the output, and the item is the column itself when item.column,
+// the quoted name of its own field, equals it. A dialect whose quoteIdent folds
+// case writes Total and total as one identifier, and the server compares the
+// written one, so `SELECT Total AS a, Name AS total ORDER BY a` is the capture
+// above even though the query spells the column and the alias differently. For a
+// dialect that quotes names as written, equal text and equal spelling coincide.
+//
+// An unaliased expression is named by its text (typedSelectItem.output holds the
+// quoted text the compiler wrote after AS), so it counts too. A qualified field
+// cannot be captured, and a join statement writes no bare name (c.expr refuses it
+// first), so a source on the item or on the output needs no comparison here.
 //
 // The refusal sends the query to DALgo's generic engine. Writing the column
 // qualified by the base source would keep it native; refusing is the narrower
 // change, and the shape is rare.
-func typedCheckOrderByName(expression dal.Expression, items []typedSelectItem) error {
+func typedCheckOrderByName(expression dal.Expression, written string, items []typedSelectItem) error {
 	field, ok := expression.(dal.FieldRef)
 	if !ok || field.Source() != "" {
 		return nil
 	}
 	for _, item := range items {
-		if item.name != field.Name() {
-			continue
-		}
-		if output, isField := item.expression.(dal.FieldRef); !isField || output.Name() != field.Name() {
-			return typedUnsupported("ORDER BY resolves to column %q, which the server reads as the select-list output of that name, a different expression", field.Name())
+		if item.output == written && item.column != written {
+			return typedUnsupported("ORDER BY resolves to column %q (written %s), which the server reads as the select-list output of that name, a different expression", field.Name(), written)
 		}
 	}
 	return nil
@@ -1071,11 +1099,13 @@ const (
 // text, as in (a + 1) / (a + 2), it cannot tell which operand is which. A dialect
 // that places the right operand before the left, in a form whose value depends on
 // the position such as (1.0 / right * left), would pass: the fragment is
-// byte-identical to the correct (1.0 / left * right), the arguments stay in order,
-// the first marker takes the left operand's value, and the statement computes the
-// inverse quotient. (A plain (right / left) writes the same bytes as (left /
-// right) for equal texts and does no harm there, but the probe refuses it too,
-// because divide must be a function of its operand texts alone.) For this case the
+// byte-identical to the same form with the operands in the order they were passed,
+// (1.0 / left * right), so the text check cannot object, the arguments stay in
+// order, the first marker takes the left operand's value, and the statement
+// computes the inverse quotient. (A plain (right / left) writes the same bytes
+// as (left / right) for equal texts and does no harm there, but the probe
+// refuses it too, because divide must be a function of its operand texts
+// alone.) For this case the
 // compiler asks the dialect to divide two probe operands that differ and checks
 // the order on them. An operand without a marker carries no argument, so a
 // division with one is not probed and the dialect keeps its freedom to repeat or

@@ -28,6 +28,7 @@ func TestCompileTypedSQLRefusesUnsupportedNodesWithErrNotSupported(t *testing.T)
 	selectOf := func(e dal.Expression) dal.StructuredQuery {
 		return album().SelectColumns(typedTestColumn(e, "x"))
 	}
+	folding := newFoldingFakeTypedDialect()
 	stableFirstLast := newFakeTypedDialect()
 	stableFirstLast.caps.StableRowOrder = true
 	stableFirstLast.caps.Aggregate.First = true
@@ -162,6 +163,66 @@ func TestCompileTypedSQLRefusesUnsupportedNodesWithErrNotSupported(t *testing.T)
 			album().OrderBy(dal.Ascending(typedTestField("(a + b)"))).
 				SelectColumns(typedTestColumn(dal.Binary(typedTestField("a"), dal.Add, typedTestField("b")), "")),
 			nil, `ORDER BY resolves to column "(a + b)"`,
+		},
+		// A dialect that folds case in quoteIdent writes two spellings that differ
+		// only in case as one identifier, and the server compares what is written.
+		// The guard therefore compares the quoted names the compiler wrote, not the
+		// query's spelling: statements that a spelling check lets through are refused
+		// here, and the ones that must still compile are in
+		// TestCompileTypedSQLBareNamesUnderAFoldingDialect.
+		{
+			"folding dialect: ORDER BY alias resolving to a column whose folded name another select alias takes",
+			album().OrderBy(dal.Descending(typedTestField("a"))).
+				SelectColumns(typedTestColumn(typedTestField("Total"), "a"), typedTestColumn(typedTestField("Name"), "total")),
+			folding, `ORDER BY resolves to column "Total" (written "total")`,
+		},
+		{
+			// Total DESC is the scan and the alias resolves to it, so the statement
+			// passes validateTypedScanRestated, which compares spellings; the server
+			// would sort the ten rows by the output total, which is Name.
+			"folding dialect: scan whose ORDER BY alias resolves to the scan column under a folded name another alias takes",
+			dal.From(scanned).NewQuery().OrderBy(dal.Descending(typedTestField("a"))).Limit(10).
+				SelectColumns(typedTestColumn(typedTestField("Total"), "a"), typedTestColumn(typedTestField("Name"), "total")),
+			folding, `ORDER BY resolves to column "Total" (written "total")`,
+		},
+		{
+			// DALgo reads ORDER BY A as the input column A, since no alias is spelled
+			// that way; written, it is the output a, which is Total.
+			"folding dialect: ORDER BY a column that differs from a select alias only in case",
+			album().OrderBy(dal.Ascending(typedTestField("A"))).
+				SelectColumns(typedTestColumn(typedTestField("Total"), "a")),
+			folding, `ORDER BY resolves to column "A" (written "a")`,
+		},
+		{
+			"folding dialect: ORDER BY a column that differs from a select alias only in case, the alias in capitals",
+			album().OrderBy(dal.Ascending(typedTestField("a"))).
+				SelectColumns(typedTestColumn(typedTestField("Total"), "A")),
+			folding, `ORDER BY resolves to column "a" (written "a")`,
+		},
+		{
+			// The scan comparison stays on the query's spelling, so it refuses a pair
+			// the server would read as one column; it never accepts a different one.
+			"folding dialect: scan whose ORDER BY spells the scan column in another case",
+			dal.From(scanned).NewQuery().OrderBy(dal.Descending(typedTestField("TOTAL"))).Limit(10).SelectColumns(),
+			folding, "ORDER BY differs from the scan order",
+		},
+		{
+			"folding dialect: ORDER BY a column whose name another output differs from only in case",
+			album().OrderBy(dal.Ascending(typedTestField("Total"))).
+				SelectColumns(typedTestColumn(typedTestField("Name"), "total")),
+			folding, `ORDER BY resolves to column "Total" (written "total")`,
+		},
+		{
+			"folding dialect: grouped ORDER BY alias of a group key that another select alias takes under a folded name",
+			album().GroupBy(typedTestField("a")).OrderBy(dal.Ascending(typedTestField("x"))).
+				SelectColumns(typedTestColumn(typedTestField("a"), "x"), dal.CountAs(typedTestField("b"), "A")),
+			folding, `ORDER BY resolves to column "a" (written "a")`,
+		},
+		{
+			"folding dialect: ORDER BY a column named like an unaliased select expression, written in another case",
+			album().OrderBy(dal.Ascending(typedTestField("(A + B)"))).
+				SelectColumns(typedTestColumn(dal.Binary(typedTestField("a"), dal.Add, typedTestField("b")), "")),
+			folding, `ORDER BY resolves to column "(A + B)" (written "(a + b)")`,
 		},
 		{"query carrying a DTQL money option", typedMoneyQuery{StructuredQuery: album().SelectColumns(), money: &dal.MoneyConfig{MinorUnitScale: 2, DivisionScale: 4, Rounding: "halfEven"}}, nil, "money"},
 		{"scan-bounded base source in a join", joinedTo(scanned, plainCustomer), nil, "from: join_plan: a scan-bounded source"},

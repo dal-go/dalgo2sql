@@ -39,6 +39,23 @@ func newFakeTypedDialect() *fakeTypedDialect {
 	}
 }
 
+// newFoldingFakeTypedDialect is the fake dialect with a quoteIdent that folds
+// case inside the quotes, as dalgo2postgres's quoteIdent does
+// (sql_gen.go: `"` + strings.ToLower(name) + `"`) and as the PostgreSQL
+// dialect's FoldLower mode will. Two spellings that differ only in case are then
+// one identifier to the server, which a check that compares the query's
+// spelling cannot see.
+func newFoldingFakeTypedDialect() *fakeTypedDialect {
+	d := newFakeTypedDialect()
+	d.quoteOverride = func(name string) (string, error) {
+		if err := checkTypedIdentifier(name, d.identLimit); err != nil {
+			return "", err
+		}
+		return quoteTypedIdentifier(strings.ToLower(name), '"'), nil
+	}
+	return d
+}
+
 func fullFakeTypedCapabilities() dal.QueryCapabilities {
 	return dal.QueryCapabilities{
 		GroupBy: true,
