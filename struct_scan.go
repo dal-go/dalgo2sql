@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -14,7 +15,7 @@ import (
 // structField is one settable field of a struct target.
 type structField struct {
 	index []int // path for reflect.Value.FieldByIndex, through embedded structs
-	id    int   // position among reflect.VisibleFields, tells fields apart
+	id    int   // position in the walk of structColumnsOf, tells fields apart
 }
 
 // structColumns maps column names to the fields that receive them. A column is
@@ -48,10 +49,19 @@ func (c structColumns) lookup(column string) (structField, bool) {
 	return field, ok
 }
 
-// structColumnsOf lists the exported fields of t, promoted fields of embedded
-// structs included. A field is known by the name in its `db` tag, or by its Go
-// name without one; the tag "-" hides it. Within each spelling, when two fields
-// share a name the first in declaration order wins.
+// structColumnsOf lists the exported fields of t, the fields of embedded
+// structs included, as scany's column map does: a breadth-first walk from t, so
+// a shallower field is met before a deeper one and, within a depth, fields come
+// in declaration order. A field is known by the name in its `db` tag, or by its
+// Go name without one. Within each spelling the first field met wins, so an
+// untagged name taken by a shallower field is not visible deeper (Go's own
+// rule), while fields that share a Go name but carry different tags are all
+// reachable, which reflect.VisibleFields would hide. The tag "-" hides a field,
+// an embedded struct with all its fields included. An embedded struct (or
+// pointer to one) is walked in its place, and a type already on the walk is not
+// walked again, so a pointer to its own type cannot loop. The one difference in
+// precedence: an exact spelling beats a looser one when the column is looked up,
+// so a tagged field wins `name` over an untagged `Name` declared before it.
 func structColumnsOf(t reflect.Type) structColumns {
 	if cached, ok := structColumnsCache.Load(t); ok {
 		return cached.(structColumns)
@@ -66,23 +76,54 @@ func structColumnsOf(t reflect.Type) structColumns {
 			into[name] = field
 		}
 	}
-	for id, f := range reflect.VisibleFields(t) {
-		if !f.IsExported() || (f.Anonymous && isStructOrPointerToStruct(f.Type)) {
-			continue
+	type level struct {
+		typ    reflect.Type
+		prefix []int // index path of typ within t
+	}
+	queue := []level{{typ: t}}
+	walked := map[reflect.Type]bool{t: true}
+	id := 0
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		for i := range current.typ.NumField() {
+			f := current.typ.Field(i)
+			tag, _, _ := strings.Cut(f.Tag.Get("db"), ",")
+			if tag == "-" {
+				continue
+			}
+			index := append(slices.Clone(current.prefix), i)
+			if f.Anonymous && isStructOrPointerToStruct(f.Type) {
+				if embedded := structTypeOf(f.Type); !walked[embedded] {
+					walked[embedded] = true
+					queue = append(queue, level{typ: embedded, prefix: index})
+				}
+				continue
+			}
+			if !f.IsExported() {
+				continue
+			}
+			name := f.Name
+			if tag != "" {
+				name = tag
+			}
+			field := structField{index: index, id: id}
+			id++
+			add(columns.exact, name, field)
+			add(columns.folded, strings.ToLower(name), field)
+			add(columns.loose, columnKey(name), field)
 		}
-		name := f.Name
-		if tag, _, _ := strings.Cut(f.Tag.Get("db"), ","); tag == "-" {
-			continue
-		} else if tag != "" {
-			name = tag
-		}
-		field := structField{index: f.Index, id: id}
-		add(columns.exact, name, field)
-		add(columns.folded, strings.ToLower(name), field)
-		add(columns.loose, columnKey(name), field)
 	}
 	structColumnsCache.Store(t, columns)
 	return columns
+}
+
+// structTypeOf returns t, or the type t points to when t is a pointer.
+func structTypeOf(t reflect.Type) reflect.Type {
+	if t.Kind() == reflect.Pointer {
+		return t.Elem()
+	}
+	return t
 }
 
 func isStructOrPointerToStruct(t reflect.Type) bool {
@@ -168,8 +209,8 @@ func structSetter(target any) (set func(column string, raw, normalized any) erro
 //   - A string field takes raw text; a []byte field (json.RawMessage included)
 //     takes a copy of raw bytes.
 //   - An integer field takes the integer the driver's text spells, so a NUMERIC
-//     such as 9007199254740993 keeps every digit; text that is not a plain
-//     integer (12.00) goes the way of the next line.
+//     such as 9007199254740993 or 9007199254740993.00 keeps every digit; text
+//     that is not a whole number (12.5) goes the way of the next line.
 //   - Every other field takes normalized, with []byte turned into string as a
 //     map target stores it: floats, booleans (SQLite stores them as integers),
 //     time.Time and interface fields, and integers as just said.
@@ -252,12 +293,13 @@ func assignColumnValue(field reflect.Value, raw, normalized any) error {
 	return nil
 }
 
-// exactInt64 reads an integer field from the driver's text when that text is an
-// integer, because normalized is a float64 for NUMERIC and float64 holds only
-// 53 bits. Any other text, and every value that is not text, is converted from
-// normalized as before.
+// exactInt64 reads an integer field from the driver's text when that text spells
+// an integer, because normalized is a float64 for NUMERIC and float64 holds only
+// 53 bits. A whole NUMERIC with a scale (9007199254740993.00) spells one too: its
+// fraction is zeros only, so the part before the point is read. Any other text,
+// and every value that is not text, is converted from normalized as before.
 func exactInt64(raw any, normalized reflect.Value) (int64, error) {
-	if text, ok := textValue(raw).(string); ok {
+	if text, ok := wholeNumberText(raw, normalized); ok {
 		if n, err := strconv.ParseInt(text, 10, 64); err == nil {
 			return n, nil
 		}
@@ -267,12 +309,28 @@ func exactInt64(raw any, normalized reflect.Value) (int64, error) {
 
 // exactUint64 is exactInt64 for unsigned fields.
 func exactUint64(raw any, normalized reflect.Value) (uint64, error) {
-	if text, ok := textValue(raw).(string); ok {
+	if text, ok := wholeNumberText(raw, normalized); ok {
 		if n, err := strconv.ParseUint(text, 10, 64); err == nil {
 			return n, nil
 		}
 	}
 	return toUint64(normalized)
+}
+
+// wholeNumberText returns the digits of raw when raw is text that may spell a
+// whole number: the text itself, or for a NUMERIC the normaliser made a float64
+// of, the part before the point when the fraction is zeros only.
+func wholeNumberText(raw any, normalized reflect.Value) (string, bool) {
+	text, ok := textValue(raw).(string)
+	if !ok {
+		return "", false
+	}
+	if normalized.Kind() == reflect.Float64 {
+		if whole, fraction, found := strings.Cut(text, "."); found && strings.Trim(fraction, "0") == "" {
+			return whole, true
+		}
+	}
+	return text, true
 }
 
 // textValue turns []byte into string and returns every other value unchanged:

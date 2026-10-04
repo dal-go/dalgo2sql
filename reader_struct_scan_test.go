@@ -280,3 +280,22 @@ func TestRecordsReader_StructTargetIntegerFieldsOverNumericText(t *testing.T) {
 		t.Errorf("got %+v", got)
 	}
 }
+
+// SUM over numeric(p,2) returns text with a scale: a whole value keeps every
+// digit in an integer field.
+func TestRecordsReader_StructTargetIntegerFieldsOverNumericTextWithScale(t *testing.T) {
+	type totals struct {
+		Total int64
+		Big   uint64
+	}
+	col := func(name string) *sqlmock.Column { return sqlmock.NewColumn(name).OfType("NUMERIC", float64(0)) }
+	rows := sqlmock.NewRowsWithColumnDefinition(col("Total"), col("Big")).
+		AddRow("9007199254740993.00", []byte("9007199254740993.00"))
+	var got totals
+	if err := nextStruct(t, &got, rows); err != nil {
+		t.Fatal(err)
+	}
+	if got != (totals{Total: 9007199254740993, Big: 9007199254740993}) {
+		t.Errorf("got %+v", got)
+	}
+}
