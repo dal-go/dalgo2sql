@@ -56,6 +56,31 @@ func newFoldingFakeTypedDialect() *fakeTypedDialect {
 	return d
 }
 
+// foldingTypedDialect is a dialect whose quoteIdent folds case, with what a test
+// needs to build facts and expectations for it.
+type foldingTypedDialect struct {
+	name    string
+	dialect typedDialect
+	// fold is the Fold the dialect's catalog facts carry: the rule its quoteIdent
+	// applies.
+	fold func(string) string
+	// arg is the argument the dialect sends beside the marker of a Go constant.
+	arg func(value any) any
+}
+
+// foldingTypedDialects lists every dialect whose quoteIdent folds case: the fake
+// one, and the real PostgreSQL dialect in FoldLower mode. The compiler's rules for
+// such a dialect (the name-resolution section of typedDialect) are proved against
+// both, so they hold for the dialect that ships and not only for a model of it.
+func foldingTypedDialects(t *testing.T) []foldingTypedDialect {
+	t.Helper()
+	postgres := newPostgresDialect(postgresFoldLower)
+	return []foldingTypedDialect{
+		{name: "fake", dialect: newFoldingFakeTypedDialect(), fold: strings.ToLower, arg: func(value any) any { return value }},
+		{name: "PostgreSQL FoldLower", dialect: postgres, fold: postgresTestFolding(t, postgres).Fold, arg: func(value any) any { return typedBoundArgument(t, postgres, value) }},
+	}
+}
+
 func fullFakeTypedCapabilities() dal.QueryCapabilities {
 	return dal.QueryCapabilities{
 		GroupBy: true,
@@ -194,7 +219,7 @@ type typedGolden struct {
 	name     string
 	query    dal.StructuredQuery
 	facts    typedCatalogFacts
-	dialect  *fakeTypedDialect
+	dialect  typedDialect
 	wantSQL  string
 	wantArgs []any
 }

@@ -1,0 +1,132 @@
+=== select all
+sql: SELECT * FROM "album"
+=== columns and aliases
+sql: SELECT "title", "albumid" AS "id" FROM "album"
+=== schema-qualified source with an alias
+sql: SELECT "a"."title" FROM "public"."album" AS "a"
+=== a select-all expanded from the catalog facts, minus exclusions
+sql: SELECT "customerid", "firstname", "lastname", "country" FROM "customer"
+=== a select-all with a mask and an explicit column after it
+sql: SELECT "customerid", "firstname", "lastname", "country", "email" AS "mail" FROM "customer"
+=== a select-all needs the catalog facts
+refused: column 0: not supported: a wildcard projection needs catalog facts for its source
+=== an unaliased expression is named by its text
+sql: SELECT ("a" + "b") AS "(a + b)" FROM "album"
+=== a constant in the select list needs an alias
+sql: SELECT $1::bigint AS "five" FROM "album"
+$1 int64 5
+=== an unaliased expression carrying a constant is refused
+refused: column 0: not supported: an expression carrying a constant needs an alias
+=== equality
+sql: SELECT * FROM "album" WHERE "albumid" = $1::bigint
+$1 int64 7
+=== every comparison operator in AND and OR groups
+sql: SELECT * FROM "album" WHERE ("a" > $1::bigint AND "b" >= $2::bigint AND ("c" < $3::bigint OR "d" <= $4::bigint OR "e" = $5))
+$1 int64 1
+$2 int64 2
+$3 int64 3
+$4 int64 4
+$5 string "five"
+=== equal to null is IS NULL and binds nothing
+sql: SELECT * FROM "album" WHERE "title" IS NULL
+=== is null
+sql: SELECT * FROM "album" WHERE "title" IS NULL
+=== is not null
+sql: SELECT * FROM "album" WHERE "title" IS NOT NULL
+=== ordering against null stays a bound NULL
+sql: SELECT * FROM "album" WHERE "albumid" > $1
+$1 nil
+=== IN list
+sql: SELECT * FROM "album" WHERE "albumid" IN ($1::bigint, $2::numeric, $3)
+$1 int64 1
+$2 string "2.5"
+$3 string "three"
+=== NOT IN list
+sql: SELECT * FROM "album" WHERE "title" NOT IN ($1, $2)
+$1 string "a"
+$2 string "b"
+=== IN list with a NULL keeps three-valued logic
+sql: SELECT * FROM "album" WHERE "albumid" NOT IN ($1::bigint, $2)
+$1 int64 1
+$2 nil
+=== empty IN is FALSE
+sql: SELECT * FROM "album" WHERE FALSE
+=== empty NOT IN is TRUE
+sql: SELECT * FROM "album" WHERE TRUE
+=== add subtract multiply
+sql: SELECT ("a" + "b") AS "s", ("a" - $1::bigint) AS "d", ($2::numeric * "b") AS "m" FROM "album"
+$1 int64 2
+$2 string "2.5"
+=== divide is on double precision with a zero divisor read as NULL
+sql: SELECT (("a")::double precision / NULLIF(("b")::double precision, 0)) AS "q" FROM "album"
+=== nested division keeps argument order
+sql: SELECT ((("a" + $1::bigint))::double precision / NULLIF((("b" - $2::bigint))::double precision, 0)) AS "q" FROM "album"
+$1 int64 1
+$2 int64 2
+=== division where both operands render the same text
+sql: SELECT ((("a" + $1::bigint))::double precision / NULLIF((("a" + $2::bigint))::double precision, 0)) AS "q" FROM "album"
+$1 int64 1
+$2 int64 2
+=== COUNT(*)
+sql: SELECT COUNT(*) AS "count(*)" FROM "invoice"
+=== every aggregate
+sql: SELECT COUNT("invoiceid") AS "n", ((SUM("total"))::double precision) AS "sum", ((AVG("total"))::double precision) AS "avg", MIN("total") AS "min", MAX("total") AS "max" FROM "invoice"
+=== distinct aggregates
+sql: SELECT COUNT(DISTINCT "customerid") AS "customers", ((SUM(DISTINCT "total"))::double precision) AS "sum", ((AVG(DISTINCT "total"))::double precision) AS "avg" FROM "invoice"
+=== GROUP BY with HAVING and ORDER BY through select aliases
+sql: SELECT "billingcountry" AS "country", ((SUM("total"))::double precision) AS "revenue", COUNT("invoiceid") AS "invoices" FROM "invoice" GROUP BY "billingcountry" HAVING ((SUM("total"))::double precision) > $1::bigint ORDER BY ((SUM("total"))::double precision) DESC NULLS LAST, "billingcountry" ASC NULLS FIRST LIMIT $2
+$1 int64 1000
+$2 int64 10
+=== a grouped expression carrying a constant is referenced by position
+sql: SELECT ("total" + $1::bigint) AS "bucket", COUNT("invoiceid") AS "n" FROM "invoice" GROUP BY 1 ORDER BY 1 ASC NULLS FIRST
+$1 int64 100
+=== GROUP BY without selected columns groups by its keys
+sql: SELECT "billingcountry" FROM "invoice" GROUP BY "billingcountry"
+=== FIRST needs an input order SQL does not give
+refused: not supported: FIRST/LAST require a provider-declared stable input order; aggregate ORDER BY is not yet supported
+=== an aggregate in WHERE is refused
+error: where: aggregate functions are not allowed in WHERE
+=== ORDER BY without facts keeps the NULLS clause
+sql: SELECT * FROM "album" ORDER BY "albumid" ASC NULLS FIRST, "title" DESC NULLS LAST
+=== ORDER BY a NOT NULL column drops the NULLS clause
+sql: SELECT * FROM "album" ORDER BY "albumid" ASC, "albumid" DESC, "title" DESC
+=== ORDER BY a nullable column keeps the NULLS clause
+sql: SELECT * FROM "artist" ORDER BY "name" ASC NULLS FIRST, "name" DESC NULLS LAST
+=== ORDER BY an aggregate
+sql: SELECT "billingcountry", ((SUM("total"))::double precision) AS "revenue" FROM "invoice" GROUP BY "billingcountry" ORDER BY ((SUM("total"))::double precision) DESC NULLS LAST
+=== LIMIT
+sql: SELECT * FROM "album" LIMIT $1
+$1 int64 10
+=== OFFSET
+sql: SELECT * FROM "album" OFFSET $1
+$1 int64 5
+=== LIMIT and OFFSET
+sql: SELECT * FROM "album" LIMIT $1 OFFSET $2
+$1 int64 10
+$2 int64 5
+=== numbering follows the text across clauses
+sql: SELECT "g", (COUNT(*) + $1::bigint) AS "n" FROM "invoice" WHERE "a" = $2::bigint GROUP BY "g" HAVING ((SUM("t"))::double precision) > $3::bigint ORDER BY ("g" + $4::bigint) ASC NULLS FIRST LIMIT $5 OFFSET $6
+$1 int64 6
+$2 int64 1
+$3 int64 2
+$4 int64 3
+$5 int64 4
+$6 int64 5
+=== identifiers that hold quotes, question marks and spaces are quoted
+sql: SELECT "we?ird""col" AS "a?""b" FROM "tab?le""x" WHERE "we?ird""col" = $1::bigint ORDER BY "we?ird""col" ASC NULLS FIRST
+$1 int64 1
+=== names with non-ASCII capitals
+sql: SELECT "élève" AS "prénom" FROM "écoles" WHERE "élève" = $1::bigint
+$1 int64 1
+=== a name over 63 bytes is refused, never truncated
+error: from: table name: identifier is 64 bytes, over the engine limit of 63 once folded to lower case
+=== a name of 44 bytes that folds to 66 is refused in FoldLower only
+error: from: table name: identifier is 66 bytes, over the engine limit of 63 once folded to lower case
+=== a name that is a bare source identity without facts is refused
+refused: column 0: not supported: field "x" is written as the identity of its source "x", which the server reads as the whole row unless a column has that name, and no catalog facts say whether one does
+=== a name that is not a column of a known source is an error
+error: column 0: field "to_json" is not a column of source "x"
+=== subqueries run in the generic engine
+refused: not supported: subqueries run in the generic engine, not in one statement
+=== cursors are refused
+refused: not supported: cursors (startFrom, startAfter)

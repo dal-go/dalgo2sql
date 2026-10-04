@@ -1,0 +1,77 @@
+=== probe 1 in every position
+sql: SELECT ("Total" + $1) AS "bucket", ((SUM("Total"))::double precision) AS "revenue" FROM "Invoice" WHERE ("BillingCity" = $2 AND "BillingCountry" IN ($3, $4)) GROUP BY 1 HAVING ((SUM("Total"))::double precision) > $5 ORDER BY 1 ASC NULLS FIRST
+$1 string "O'Brien'; DROP TABLE \"Album\"; --"
+$2 string "O'Brien'; DROP TABLE \"Album\"; --"
+$3 string "FR"
+$4 string "O'Brien'; DROP TABLE \"Album\"; --"
+$5 string "O'Brien'; DROP TABLE \"Album\"; --"
+=== probe 2 in every position
+sql: SELECT ("Total" + $1) AS "bucket", ((SUM("Total"))::double precision) AS "revenue" FROM "Invoice" WHERE ("BillingCity" = $2 AND "BillingCountry" IN ($3, $4)) GROUP BY 1 HAVING ((SUM("Total"))::double precision) > $5 ORDER BY 1 ASC NULLS FIRST
+$1 string "x') OR 1=1 --"
+$2 string "x') OR 1=1 --"
+$3 string "FR"
+$4 string "x') OR 1=1 --"
+$5 string "x') OR 1=1 --"
+=== probe 3 in every position
+sql: SELECT ("Total" + $1) AS "bucket", ((SUM("Total"))::double precision) AS "revenue" FROM "Invoice" WHERE ("BillingCity" = $2 AND "BillingCountry" IN ($3, $4)) GROUP BY 1 HAVING ((SUM("Total"))::double precision) > $5 ORDER BY 1 ASC NULLS FIRST
+$1 string "'; SELECT pg_sleep(10); --"
+$2 string "'; SELECT pg_sleep(10); --"
+$3 string "FR"
+$4 string "'; SELECT pg_sleep(10); --"
+$5 string "'; SELECT pg_sleep(10); --"
+=== probe 4 in every position
+sql: SELECT ("Total" + $1) AS "bucket", ((SUM("Total"))::double precision) AS "revenue" FROM "Invoice" WHERE ("BillingCity" = $2 AND "BillingCountry" IN ($3, $4)) GROUP BY 1 HAVING ((SUM("Total"))::double precision) > $5 ORDER BY 1 ASC NULLS FIRST
+$1 string "$1"
+$2 string "$1"
+$3 string "FR"
+$4 string "$1"
+$5 string "$1"
+=== probe 5 in every position
+sql: SELECT ("Total" + $1) AS "bucket", ((SUM("Total"))::double precision) AS "revenue" FROM "Invoice" WHERE ("BillingCity" = $2 AND "BillingCountry" IN ($3, $4)) GROUP BY 1 HAVING ((SUM("Total"))::double precision) > $5 ORDER BY 1 ASC NULLS FIRST
+$1 string "?"
+$2 string "?"
+$3 string "FR"
+$4 string "?"
+$5 string "?"
+=== probe 6 in every position
+sql: SELECT ("Total" + $1) AS "bucket", ((SUM("Total"))::double precision) AS "revenue" FROM "Invoice" WHERE ("BillingCity" = $2 AND "BillingCountry" IN ($3, $4)) GROUP BY 1 HAVING ((SUM("Total"))::double precision) > $5 ORDER BY 1 ASC NULLS FIRST
+$1 string "\\"
+$2 string "\\"
+$3 string "FR"
+$4 string "\\"
+$5 string "\\"
+=== probe 7 in every position
+sql: SELECT ("Total" + $1) AS "bucket", ((SUM("Total"))::double precision) AS "revenue" FROM "Invoice" WHERE ("BillingCity" = $2 AND "BillingCountry" IN ($3, $4)) GROUP BY 1 HAVING ((SUM("Total"))::double precision) > $5 ORDER BY 1 ASC NULLS FIRST
+$1 string "%"
+$2 string "%"
+$3 string "FR"
+$4 string "%"
+$5 string "%"
+=== probe 8 in every position
+sql: SELECT ("Total" + $1) AS "bucket", ((SUM("Total"))::double precision) AS "revenue" FROM "Invoice" WHERE ("BillingCity" = $2 AND "BillingCountry" IN ($3, $4)) GROUP BY 1 HAVING ((SUM("Total"))::double precision) > $5 ORDER BY 1 ASC NULLS FIRST
+$1 string "\"; DROP TABLE x; --"
+$2 string "\"; DROP TABLE x; --"
+$3 string "FR"
+$4 string "\"; DROP TABLE x; --"
+$5 string "\"; DROP TABLE x; --"
+=== probe 9 in every position
+sql: SELECT ("Total" + $1) AS "bucket", ((SUM("Total"))::double precision) AS "revenue" FROM "Invoice" WHERE ("BillingCity" = $2 AND "BillingCountry" IN ($3, $4)) GROUP BY 1 HAVING ((SUM("Total"))::double precision) > $5 ORDER BY 1 ASC NULLS FIRST
+$1 string "line\nbreak\u2028"
+$2 string "line\nbreak\u2028"
+$3 string "FR"
+$4 string "line\nbreak\u2028"
+$5 string "line\nbreak\u2028"
+=== probe 10 in every position
+sql: SELECT ("Total" + $1) AS "bucket", ((SUM("Total"))::double precision) AS "revenue" FROM "Invoice" WHERE ("BillingCity" = $2 AND "BillingCountry" IN ($3, $4)) GROUP BY 1 HAVING ((SUM("Total"))::double precision) > $5 ORDER BY 1 ASC NULLS FIRST
+$1 string "nul\x00byte"
+$2 string "nul\x00byte"
+$3 string "FR"
+$4 string "nul\x00byte"
+$5 string "nul\x00byte"
+=== probe 11 in every position
+sql: SELECT ("Total" + $1) AS "bucket", ((SUM("Total"))::double precision) AS "revenue" FROM "Invoice" WHERE ("BillingCity" = $2 AND "BillingCountry" IN ($3, $4)) GROUP BY 1 HAVING ((SUM("Total"))::double precision) > $5 ORDER BY 1 ASC NULLS FIRST
+$1 string "/* c */"
+$2 string "/* c */"
+$3 string "FR"
+$4 string "/* c */"
+$5 string "/* c */"
