@@ -4,10 +4,13 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
+	"math"
 	"reflect"
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/dal-go/dalgo/dal"
 )
@@ -509,6 +512,19 @@ func compileSQLConditionWithSources(condition dal.Condition, sources map[string]
 			args = append(args, values...)
 		}
 		return "(" + strings.Join(parts, " "+string(c.Operator())+" ") + ")", args, nil
+	case dal.IsNullCondition:
+		operand, args, err := compileSQLExpressionWithSources(c.Operand(), sources, requireQualified)
+		if err != nil {
+			return "", nil, err
+		}
+		// Unary plus drops declared affinity, as for comparisons; it never
+		// turns NULL into a value or a value into NULL. IS [NOT] NULL is
+		// TRUE or FALSE for every input, so it composes with AND and OR.
+		test := "(+" + operand + " COLLATE BINARY) IS NULL"
+		if c.Negated() {
+			test = "(+" + operand + " COLLATE BINARY) IS NOT NULL"
+		}
+		return test, args, nil
 	default:
 		return "", nil, fmt.Errorf("unsupported condition %T", condition)
 	}
@@ -711,6 +727,15 @@ func rewriteSQLConditionAliases(condition dal.Condition, aliases map[string]dal.
 			children[i] = rewriteSQLConditionAliases(child, aliases)
 		}
 		return dal.NewGroupCondition(c.Operator(), children...)
+	case dal.IsNullCondition:
+		operand := c.Operand()
+		if operand != nil {
+			operand = rewriteSQLExpressionAlias(operand, aliases)
+		}
+		if c.Negated() {
+			return dal.NewIsNotNullCondition(operand)
+		}
+		return dal.NewIsNullCondition(operand)
 	default:
 		return condition
 	}
@@ -757,8 +782,19 @@ func validateSQLValue(value any) error {
 
 // emitSQL preserves the historical string-rewrite helper for compatibility.
 // Structured query execution uses compileStructuredSQL instead.
-func emitSQL(q dal.StructuredQuery) string {
-	text := q.String()
+//
+// The text it builds comes from dal.QueryString(q), which pastes names and
+// values straight into the statement and then strips every bracket pair. It is
+// therefore only safe for plain names and values, so emitSQL first runs
+// guardLegacyEmit and refuses anything it cannot prove plain, with an error
+// wrapping dal.ErrNotSupported. The caller must not execute SQL on error.
+func emitSQL(q dal.StructuredQuery) (string, error) {
+	if err := guardLegacyEmit(q); err != nil {
+		return "", err
+	}
+	// dal.QueryString reads every part through the accessors guardLegacyEmit
+	// just checked; q.String() may be a wrapper's own text.
+	text := dal.QueryString(q)
 	if wildcard, err := planWildcardProjection(q); err == nil && wildcard != nil {
 		for _, column := range q.Columns() {
 			if column.Wildcard != nil {
@@ -777,7 +813,7 @@ func emitSQL(q dal.StructuredQuery) string {
 			text = "SELECT" + text[len(top):] + fmt.Sprintf("\nLIMIT %d", limit)
 		}
 	}
-	return text
+	return text, nil
 }
 
 func stripBracketIdents(sql string) string {
@@ -794,4 +830,411 @@ func stripBracketIdents(sql string) string {
 		i++
 	}
 	return b.String()
+}
+
+// maxLegacyGuardDepth bounds the walk over nested join sources so a cyclic
+// FromSource cannot overflow the stack.
+const maxLegacyGuardDepth = 64
+
+// reLegacyWildcardMask matches a wildcard exclusion: a plain identifier in
+// which '*' may stand for any run of characters.
+var reLegacyWildcardMask = regexp.MustCompile(`^[A-Za-z_*][A-Za-z0-9_*]*$`)
+
+// legacyRefusal builds the error guardLegacyEmit returns. It names the
+// position and the reason only: the error reaches logs and clients, so a
+// caller's name, operator or value is never part of the text.
+func legacyRefusal(path, format string, args ...any) error {
+	return fmt.Errorf("%w: legacy SQL emission refused at %s: %s", dal.ErrNotSupported, path, fmt.Sprintf(format, args...))
+}
+
+// guardLegacyEmit walks every name, operator and constant that emitSQL's text
+// would contain and fails closed: any collection, schema, alias, field or
+// column-alias name that is not a plain identifier, any string constant with a
+// backslash, bracket or control character, and any node whose rendering is not
+// known to be safe is refused.
+func guardLegacyEmit(q dal.StructuredQuery) error {
+	if q == nil {
+		return legacyRefusal("query", "no query")
+	}
+	if from := q.From(); from != nil {
+		if err := guardLegacyFrom(from, "from", 0); err != nil {
+			return err
+		}
+	}
+	for i, column := range q.Columns() {
+		if err := guardLegacyColumn(column, fmt.Sprintf("columns[%d]", i)); err != nil {
+			return err
+		}
+	}
+	if where := q.Where(); where != nil {
+		if err := guardLegacyCondition(where, "where"); err != nil {
+			return err
+		}
+	}
+	for i, expression := range q.GroupBy() {
+		if err := guardLegacyExpression(expression, fmt.Sprintf("groupBy[%d]", i)); err != nil {
+			return err
+		}
+	}
+	if having := q.Having(); having != nil {
+		if err := guardLegacyCondition(having, "having"); err != nil {
+			return err
+		}
+	}
+	for i, order := range q.OrderBy() {
+		if err := guardLegacyOrder(order, fmt.Sprintf("orderBy[%d]", i)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func guardLegacyIdentifier(path, kind, name string) error {
+	if !isPlainSQLIdentifier(name) {
+		return legacyRefusal(path, "%s is not a plain identifier", kind)
+	}
+	return nil
+}
+
+// guardLegacyOptionalIdentifier accepts "" as "not set".
+func guardLegacyOptionalIdentifier(path, kind, name string) error {
+	if name == "" {
+		return nil
+	}
+	return guardLegacyIdentifier(path, kind, name)
+}
+
+func guardLegacyFrom(from dal.FromSource, path string, depth int) error {
+	if depth > maxLegacyGuardDepth {
+		return legacyRefusal(path, "join tree is nested too deeply")
+	}
+	if err := guardLegacySource(from.Base(), path+".base"); err != nil {
+		return err
+	}
+	for i, join := range from.Joins() {
+		joinPath := fmt.Sprintf("%s.joins[%d]", path, i)
+		if nested := join.From(); nested != nil {
+			if err := guardLegacyFrom(nested, joinPath+".from", depth+1); err != nil {
+				return err
+			}
+		} else if err := guardLegacySource(join.RecordsetSource, joinPath); err != nil {
+			return err
+		}
+		for j, condition := range join.On() {
+			if err := guardLegacyCondition(condition, fmt.Sprintf("%s.on[%d]", joinPath, j)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func guardLegacySource(source dal.RecordsetSource, path string) error {
+	switch s := source.(type) {
+	case dal.CollectionRef:
+		return guardLegacyCollection(s, path)
+	case *dal.CollectionRef:
+		if s == nil {
+			return legacyRefusal(path, "nil collection")
+		}
+		return guardLegacyCollection(*s, path)
+	case dal.CollectionGroupRef:
+		return guardLegacyCollectionGroup(s, path)
+	case *dal.CollectionGroupRef:
+		if s == nil {
+			return legacyRefusal(path, "nil collection group")
+		}
+		return guardLegacyCollectionGroup(*s, path)
+	default:
+		return legacyRefusal(path, "unsupported source %T", source)
+	}
+}
+
+func guardLegacyCollection(collection dal.CollectionRef, path string) error {
+	if collection.Parent() != nil {
+		return legacyRefusal(path, "parented collection is not supported")
+	}
+	if err := guardLegacyIdentifier(path, "collection name", collection.Name()); err != nil {
+		return err
+	}
+	if err := guardLegacyOptionalIdentifier(path, "schema", collection.Schema()); err != nil {
+		return err
+	}
+	return guardLegacyOptionalIdentifier(path, "alias", collection.Alias())
+}
+
+func guardLegacyCollectionGroup(group dal.CollectionGroupRef, path string) error {
+	if err := guardLegacyIdentifier(path, "collection group name", group.Name()); err != nil {
+		return err
+	}
+	return guardLegacyOptionalIdentifier(path, "alias", group.Alias())
+}
+
+func guardLegacyColumn(column dal.Column, path string) error {
+	if err := guardLegacyOptionalIdentifier(path, "column alias", column.Alias); err != nil {
+		return err
+	}
+	if wildcard := column.Wildcard; wildcard != nil {
+		if err := guardLegacyOptionalIdentifier(path, "wildcard source", wildcard.Source); err != nil {
+			return err
+		}
+		for _, name := range wildcard.Exclude {
+			if !reLegacyWildcardMask.MatchString(name) {
+				return legacyRefusal(path, "wildcard exclusion is not a plain identifier or mask")
+			}
+		}
+	}
+	if column.Expression == nil {
+		return nil // rendered as the literal NULL
+	}
+	return guardLegacyExpression(column.Expression, path)
+}
+
+func guardLegacyOrder(order dal.OrderExpression, path string) error {
+	if err := guardLegacyExpression(order.Expression(), path); err != nil {
+		return err
+	}
+	want := order.Expression().String()
+	if order.Descending() {
+		want += " DESC"
+	}
+	if order.String() != want {
+		return legacyRefusal(path, "order expression renders unexpected text")
+	}
+	return nil
+}
+
+var legacyComparisonOperators = map[dal.Operator]bool{
+	dal.Equal: true, dal.In: true, dal.NotIn: true,
+	dal.GreaterThen: true, dal.GreaterOrEqual: true, dal.LessThen: true, dal.LessOrEqual: true,
+}
+
+func guardLegacyCondition(condition dal.Condition, path string) error {
+	switch c := condition.(type) {
+	case dal.Comparison:
+		if !legacyComparisonOperators[c.Operator] {
+			return legacyRefusal(path, "comparison operator is not supported")
+		}
+		if err := guardLegacyExpression(c.Left, path+".left"); err != nil {
+			return err
+		}
+		return guardLegacyExpression(c.Right, path+".right")
+	case dal.GroupCondition:
+		if c.Operator() != dal.And && c.Operator() != dal.Or {
+			return legacyRefusal(path, "group operator is not supported")
+		}
+		for i, nested := range c.Conditions() {
+			if err := guardLegacyCondition(nested, fmt.Sprintf("%s[%d]", path, i)); err != nil {
+				return err
+			}
+		}
+		return nil
+	case dal.IsNullCondition:
+		return guardLegacyExpression(c.Operand(), path)
+	default:
+		return legacyRefusal(path, "unsupported condition %T", condition)
+	}
+}
+
+func guardLegacyExpression(expression dal.Expression, path string) error {
+	switch e := expression.(type) {
+	case dal.FieldRef:
+		if err := guardLegacyOptionalIdentifier(path, "field source", e.Source()); err != nil {
+			return err
+		}
+		return guardLegacyIdentifier(path, "field name", e.Name())
+	case dal.Constant:
+		return guardLegacyConstantValue(path, e.Value)
+	case *dal.Constant:
+		if e == nil {
+			return legacyRefusal(path, "nil constant")
+		}
+		return guardLegacyConstantValue(path, e.Value)
+	case dal.Array:
+		return guardLegacyArray(path, e.Value)
+	case dal.BinaryExpression:
+		switch e.Operator {
+		case dal.Add, dal.Subtract, dal.Multiply, dal.Divide:
+		default:
+			return legacyRefusal(path, "arithmetic operator is not supported")
+		}
+		if err := guardLegacyExpression(e.Left, path+".left"); err != nil {
+			return err
+		}
+		return guardLegacyExpression(e.Right, path+".right")
+	case dal.Param:
+		if !dal.ValidParamName(e.Name) {
+			return legacyRefusal(path, "parameter name is not valid")
+		}
+		return nil
+	case dal.AggregateFunc:
+		return guardLegacyAggregate(e, path)
+	case dal.StarExpression:
+		if !e.IsStar() || expression.String() != "*" {
+			return legacyRefusal(path, "unsupported star expression %T", expression)
+		}
+		return nil
+	default:
+		return legacyRefusal(path, "unsupported expression %T", expression)
+	}
+}
+
+// guardLegacyAggregate validates the parts of an aggregate call and checks that
+// the call renders exactly as those parts say it does.
+func guardLegacyAggregate(aggregate dal.AggregateFunc, path string) error {
+	if err := guardLegacyIdentifier(path, "function name", aggregate.FuncName()); err != nil {
+		return err
+	}
+	// The name is written into the statement as NAME(args), so it is limited
+	// to the aggregates compileSQLExpressionWithSources accepts. The core
+	// aggregation check does not look at a WHERE clause, so this is the only
+	// place that stops a caller choosing the function there.
+	switch strings.ToUpper(aggregate.FuncName()) {
+	case dal.COUNT, dal.SUM, dal.AVERAGE, dal.MIN, dal.MAX:
+	default:
+		return legacyRefusal(path, "aggregate function is not supported")
+	}
+	args := make([]string, 0, len(aggregate.FuncArgs()))
+	for i, arg := range aggregate.FuncArgs() {
+		if err := guardLegacyExpression(arg, fmt.Sprintf("%s.args[%d]", path, i)); err != nil {
+			return err
+		}
+		args = append(args, arg.String())
+	}
+	prefix := ""
+	if distinct, ok := aggregate.(dal.DistinctAggregateFunc); ok && distinct.IsDistinct() {
+		prefix = "DISTINCT "
+	}
+	if aggregate.String() != aggregate.FuncName()+"("+prefix+strings.Join(args, ", ")+")" {
+		return legacyRefusal(path, "aggregate function renders unexpected text")
+	}
+	return nil
+}
+
+// guardLegacyConstantValue checks a Constant. Constant.String() renders a
+// scalar through strconv or encoding/json, a string through quote doubling, and
+// a slice through encoding/json, so a slice must hold only checked scalars and,
+// because json turns a double quote into backslash-quote, no double quote. Only
+// an unnamed slice type is accepted: a named one may carry its own marshaller,
+// and then the text is not what was checked. A slice of bytes is refused too:
+// json renders it as one base64 string, not as the numbers the guard checked.
+func guardLegacyConstantValue(path string, value any) error {
+	if value != nil && reflect.TypeOf(value).Kind() == reflect.Slice {
+		if !isUnnamedSlice(value) {
+			return legacyRefusal(path, "constant of named slice type %T is not supported", value)
+		}
+		if reflect.TypeOf(value).Elem().Kind() == reflect.Uint8 {
+			return legacyRefusal(path, "constant of byte slice type %T is not supported", value)
+		}
+		return guardLegacySequence(path, value, legacyJSONElement)
+	}
+	return guardLegacyScalar(path, value, legacyConstantScalar)
+}
+
+// isUnnamedSlice reports whether value's type is a slice type literal such as
+// []string, not a defined type like json.RawMessage.
+func isUnnamedSlice(value any) bool {
+	t := reflect.TypeOf(value)
+	return t.Kind() == reflect.Slice && t.Name() == ""
+}
+
+func guardLegacyArray(path string, value any) error {
+	if value == nil {
+		return nil
+	}
+	if reflect.TypeOf(value).Kind() != reflect.Slice {
+		return legacyRefusal(path, "array value of type %T is not a slice", value)
+	}
+	if !isUnnamedSlice(value) {
+		return legacyRefusal(path, "array of named slice type %T is not supported", value)
+	}
+	return guardLegacySequence(path, value, legacyListElement)
+}
+
+// legacyRendering says which String() renders a scalar, because each prints
+// the same value differently.
+type legacyRendering int
+
+const (
+	// legacyConstantScalar: Constant.String() on a scalar. A string is quote
+	// doubled, anything else goes through encoding/json or strconv.
+	legacyConstantScalar legacyRendering = iota
+	// legacyJSONElement: an element of a slice in constant position, rendered
+	// by encoding/json as a whole.
+	legacyJSONElement
+	// legacyListElement: an element of Array.String(), printed by fmt.
+	legacyListElement
+)
+
+func guardLegacySequence(path string, value any, rendering legacyRendering) error {
+	slice := reflect.ValueOf(value)
+	for i := 0; i < slice.Len(); i++ {
+		if err := guardLegacyScalar(fmt.Sprintf("%s[%d]", path, i), slice.Index(i).Interface(), rendering); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func guardLegacyScalar(path string, value any, rendering legacyRendering) error {
+	switch v := value.(type) {
+	case nil, bool,
+		int, int8, int16, int32, int64,
+		uint, uint8, uint16, uint32, uint64:
+		return nil
+	case float32:
+		return guardLegacyFloat(path, float64(v))
+	case float64:
+		return guardLegacyFloat(path, v)
+	case time.Time:
+		return guardLegacyTime(path, v, rendering)
+	case string:
+		return guardLegacyString(path, v, rendering == legacyJSONElement)
+	default:
+		return legacyRefusal(path, "constant of type %T is not supported", value)
+	}
+}
+
+// guardLegacyFloat refuses NaN and the infinities: encoding/json fails on them
+// (the text would be empty) and fmt prints them as bare words.
+func guardLegacyFloat(path string, value float64) error {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return legacyRefusal(path, "number is not finite")
+	}
+	return nil
+}
+
+// guardLegacyTime accepts a time only where encoding/json renders it, and only
+// when json can render it: that text is digits and punctuation. Inside an
+// Array the element is printed by fmt, which includes the zone name, a text the
+// caller chooses.
+func guardLegacyTime(path string, value time.Time, rendering legacyRendering) error {
+	if rendering == legacyListElement {
+		return legacyRefusal(path, "time in a list is not supported")
+	}
+	if _, err := value.MarshalJSON(); err != nil {
+		return legacyRefusal(path, "time is outside the supported range")
+	}
+	return nil
+}
+
+// guardLegacyString refuses text the legacy emitter cannot carry safely: a
+// backslash (MySQL-style escapes), a bracket (stripBracketIdents removes it
+// from the whole statement), a control character, and, when the text is
+// rendered by encoding/json, a double quote and every character json writes as
+// a backslash-u escape instead of as itself (<, >, &, U+2028, U+2029 and bytes
+// that are not valid UTF-8). The error does not repeat the text.
+func guardLegacyString(path, value string, jsonRendered bool) error {
+	if jsonRendered && !utf8.ValidString(value) {
+		return legacyRefusal(path, "string constant contains a character that is not supported")
+	}
+	for _, r := range value {
+		if r == '\\' || r == '[' || r == ']' || unicode.IsControl(r) {
+			return legacyRefusal(path, "string constant contains a character that is not supported")
+		}
+		if jsonRendered && (r == '"' || r == '<' || r == '>' || r == '&' || r == '\u2028' || r == '\u2029') {
+			return legacyRefusal(path, "string constant contains a character that is not supported")
+		}
+	}
+	return nil
 }

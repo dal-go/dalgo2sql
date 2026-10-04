@@ -10,7 +10,10 @@ import (
 func TestEmitSQL_NoLimitPassesThrough(t *testing.T) {
 	q := dal.NewQueryBuilder(dal.From(dal.NewRootCollectionRef("Customer", ""))).
 		SelectIntoRecordset()
-	got := emitSQL(q)
+	got, err := emitSQL(q)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if strings.Contains(got, "TOP") {
 		t.Fatalf("emitSQL(no-limit) should not contain TOP, got %q", got)
 	}
@@ -26,7 +29,10 @@ func TestEmitSQL_LimitRewritesTopToLimit(t *testing.T) {
 	q := dal.NewQueryBuilder(dal.From(dal.NewRootCollectionRef("Customer", ""))).
 		Limit(50).
 		SelectIntoRecordset()
-	got := emitSQL(q)
+	got, err := emitSQL(q)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if strings.Contains(got, "TOP") {
 		t.Fatalf("emitSQL(limit=50) must rewrite TOP, got %q", got)
 	}
@@ -44,7 +50,10 @@ func TestEmitSQL_TextQueryArgUnused(t *testing.T) {
 	// non-zero Offset (the LIMIT branch is gated by Limit() > 0).
 	q := dal.NewQueryBuilder(dal.From(dal.NewRootCollectionRef("Customer", ""))).
 		SelectIntoRecordset()
-	got := emitSQL(q)
+	got, err := emitSQL(q)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if got == "" {
 		t.Fatal("emitSQL of empty-options query should produce SQL text")
 	}

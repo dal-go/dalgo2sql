@@ -25,13 +25,52 @@ func (t transaction) UpdateMulti(ctx context.Context, keys []*record.Key, update
 	return updateMulti(ctx, t.sqlOptions, t.tx.ExecContext, keys, updates, preconditions...)
 }
 
+// updateTarget holds the names of one update as they may be written into SQL
+// text.
+type updateTarget struct {
+	table  string
+	fields []string // one per update, in order
+	pk     string   // the primary-key column, when the recordset has exactly one
+}
+
+// renderUpdateNames returns the names an update of key by updates writes into
+// SQL text, or an error wrapping ErrUnsafeName for the first one refused.
+func renderUpdateNames(options DbOptions, key *record.Key, updates []update.Update) (updateTarget, error) {
+	// The table, the primary key that is looked up and the recordset an error
+	// names are all the recordset of the whole path joined, as for every key read
+	// and write: every segment of it must be a name that can be written.
+	table, err := options.recordsetIdentifier(key)
+	if err != nil {
+		return updateTarget{}, err
+	}
+	target := updateTarget{table: table, fields: make([]string, len(updates))}
+	for i, u := range updates {
+		if target.fields[i], err = options.sqlIdentifier(positionField, u.FieldName()); err != nil {
+			return updateTarget{}, err
+		}
+	}
+	if primaryKey := options.PrimaryKeyFieldNames(key); len(primaryKey) == 1 {
+		if target.pk, err = options.sqlIdentifier(positionPrimaryKey, primaryKey[0]); err != nil {
+			return updateTarget{}, err
+		}
+	}
+	return target, nil
+}
+
 func updateSingle(ctx context.Context, options DbOptions, execStatement statementExecutor, key *record.Key, updates []update.Update, _ ...dal.Precondition) error {
+	target, err := renderUpdateNames(options, key, updates)
+	if err != nil {
+		return err
+	}
 	qry := query{
-		text: fmt.Sprintf("UPDATE %v SET", key.Collection()),
+		text: fmt.Sprintf("UPDATE %v SET", target.table),
 	}
 	n := 1
-	for _, u := range updates {
-		qry.text += fmt.Sprintf("\n\t%v = %s", u.FieldName(), options.Placeholder.placeholder(n))
+	for i, u := range updates {
+		if i > 0 {
+			qry.text += ","
+		}
+		qry.text += fmt.Sprintf("\n\t%v = %s", target.fields[i], options.Placeholder.placeholder(n))
 		qry.args = append(qry.args, u.Value())
 		n++
 	}
@@ -40,7 +79,7 @@ func updateSingle(ctx context.Context, options DbOptions, execStatement statemen
 	case 0:
 		return fmt.Errorf("primary key is not defined for %s", getRecordsetName(key))
 	case 1:
-		qry.text += fmt.Sprintf("\n\tWHERE %v = %s", primaryKey[0], options.Placeholder.placeholder(n))
+		qry.text += fmt.Sprintf("\n\tWHERE %v = %s", target.pk, options.Placeholder.placeholder(n))
 	default:
 		return fmt.Errorf("%w: updateOperation by composite primary key is not supported yet", dal.ErrNotImplementedYet)
 	}
@@ -56,6 +95,13 @@ func updateSingle(ctx context.Context, options DbOptions, execStatement statemen
 }
 
 func updateMulti(ctx context.Context, options DbOptions, execStatement statementExecutor, keys []*record.Key, updates []update.Update, preconditions ...dal.Precondition) error {
+	// The whole batch is checked before its first statement: keys are updated
+	// one by one, outside a transaction on a database handle.
+	for i, key := range keys {
+		if _, err := renderUpdateNames(options, key, updates); err != nil {
+			return fmt.Errorf("failed to updateOperation record #%d of %d: %w", i+1, len(keys), err)
+		}
+	}
 	for i, key := range keys {
 		if err := updateSingle(ctx, options, execStatement, key, updates, preconditions...); err != nil {
 			return fmt.Errorf("failed to updateOperation record #%d of %d: %w", i+1, len(keys), err)

@@ -16,7 +16,10 @@ func TestBuildSingleRecordQuery_Map(t *testing.T) {
 		// allowing assertion of pure sorted-key ordering from the map.
 		data := map[string]any{"col_b": 42, "col_a": "x"}
 		record := dalrecord.NewRecordWithData(dalrecord.NewIncompleteKey("users", reflect.String, nil), data)
-		q := buildSingleRecordQuery(insertOperation, DbOptions{}, record)
+		q, err := buildSingleRecordQuery(insertOperation, DbOptions{}, record)
+		if err != nil {
+			t.Fatal(err)
+		}
 		const want = "INSERT INTO users(col_a, col_b) VALUES (?, ?)"
 		if q.text != want {
 			t.Errorf("unexpected SQL:\n got: %q\nwant: %q", q.text, want)
@@ -29,11 +32,14 @@ func TestBuildSingleRecordQuery_Map(t *testing.T) {
 	t.Run("insert_map_with_pk", func(t *testing.T) {
 		data := map[string]any{"Name": "John", "Age": 30}
 		record := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "id1"), data)
-		q := buildSingleRecordQuery(insertOperation, DbOptions{
+		q, err := buildSingleRecordQuery(insertOperation, DbOptions{
 			Recordsets: map[string]*Recordset{
 				"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID")}),
 			},
 		}, record)
+		if err != nil {
+			t.Fatal(err)
+		}
 		const want = "INSERT INTO users(ID, Age, Name) VALUES (?, ?, ?)"
 		if q.text != want {
 			t.Errorf("unexpected SQL:\n got: %q\nwant: %q", q.text, want)
@@ -47,11 +53,14 @@ func TestBuildSingleRecordQuery_Map(t *testing.T) {
 		// "ID" appears both as PK and as a data key; the data entry must be skipped.
 		data := map[string]any{"ID": "should-be-ignored", "Name": "John"}
 		record := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "id1"), data)
-		q := buildSingleRecordQuery(insertOperation, DbOptions{
+		q, err := buildSingleRecordQuery(insertOperation, DbOptions{
 			Recordsets: map[string]*Recordset{
 				"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID")}),
 			},
 		}, record)
+		if err != nil {
+			t.Fatal(err)
+		}
 		const want = "INSERT INTO users(ID, Name) VALUES (?, ?)"
 		if q.text != want {
 			t.Errorf("unexpected SQL:\n got: %q\nwant: %q", q.text, want)
@@ -64,11 +73,14 @@ func TestBuildSingleRecordQuery_Map(t *testing.T) {
 	t.Run("update_map_sorted_set", func(t *testing.T) {
 		data := map[string]any{"col_b": 42, "col_a": "x"}
 		record := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "id1"), data)
-		q := buildSingleRecordQuery(updateOperation, DbOptions{
+		q, err := buildSingleRecordQuery(updateOperation, DbOptions{
 			Recordsets: map[string]*Recordset{
 				"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID")}),
 			},
 		}, record)
+		if err != nil {
+			t.Fatal(err)
+		}
 		// Note: existing struct path also produces a double space after "SET ".
 		const want = "UPDATE users SET  col_a = ?, col_b = ? WHERE ID = ?"
 		if q.text != want {
@@ -87,7 +99,7 @@ func TestBuildSingleRecordQuery_Map(t *testing.T) {
 		}()
 		data := map[int]any{1: "x"}
 		record := dalrecord.NewRecordWithData(dalrecord.NewIncompleteKey("users", reflect.String, nil), data)
-		buildSingleRecordQuery(insertOperation, DbOptions{
+		_, _ = buildSingleRecordQuery(insertOperation, DbOptions{
 			Recordsets: map[string]*Recordset{
 				"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID")}),
 			},
@@ -102,7 +114,7 @@ func TestBuildSingleRecordQuery_Map(t *testing.T) {
 		}()
 		data := 42
 		record := dalrecord.NewRecordWithData(dalrecord.NewIncompleteKey("users", reflect.String, nil), &data)
-		buildSingleRecordQuery(insertOperation, DbOptions{
+		_, _ = buildSingleRecordQuery(insertOperation, DbOptions{
 			Recordsets: map[string]*Recordset{
 				"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID")}),
 			},

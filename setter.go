@@ -29,6 +29,11 @@ func (t transaction) SetMulti(ctx context.Context, records []dalrecord.Record) e
 }
 
 func setSingle(ctx context.Context, options DbOptions, record dalrecord.Record, execQuery queryExecutor, exec statementExecutor) error {
+	// The existence check below sends a statement before the write is built, so
+	// the names the write will carry are checked first.
+	if err := options.checkRecordNames(record); err != nil {
+		return err
+	}
 	key := record.Key()
 	exists, err := existsSingle(options, key, execQuery)
 	if err != nil {
@@ -40,7 +45,10 @@ func setSingle(ctx context.Context, options DbOptions, record dalrecord.Record, 
 	} else {
 		o = insertOperation
 	}
-	qry := buildSingleRecordQuery(o, options, record)
+	qry, err := buildSingleRecordQuery(o, options, record)
+	if err != nil {
+		return err
+	}
 	if _, err := exec(ctx, qry.text, qry.args...); err != nil {
 		return err
 	}
@@ -48,6 +56,13 @@ func setSingle(ctx context.Context, options DbOptions, record dalrecord.Record, 
 }
 
 func setMulti(ctx context.Context, options DbOptions, records []dalrecord.Record, execQuery queryExecutor, execStatement statementExecutor) error {
+	// The whole batch is checked before its first statement: records are set one
+	// by one, outside a transaction on a database handle.
+	for i, record := range records {
+		if err := options.checkRecordNames(record); err != nil {
+			return fmt.Errorf("failed to set record #%d of %d: %w", i+1, len(records), err)
+		}
+	}
 	// TODO(help-wanted): insertOperation of multiple rows at once as: "INSERT INTO table (colA, colB) VALUES (a1, b2), (a2, b2)"
 	for i, record := range records {
 		if err := setSingle(ctx, options, record, execQuery, execStatement); err != nil {
@@ -58,16 +73,21 @@ func setMulti(ctx context.Context, options DbOptions, records []dalrecord.Record
 }
 
 func existsSingle(options DbOptions, key *dalrecord.Key, execQuery queryExecutor) (bool, error) {
-	collection := key.Collection()
+	table, err := options.recordsetIdentifier(key)
+	if err != nil {
+		return false, err
+	}
 	pk := options.PrimaryKeyFieldNames(key)
-	var where string
-	if len(pk) == 1 {
-		where = pk[0] + " = " + options.Placeholder.placeholder(1)
-	} else {
+	if len(pk) != 1 {
 		return false, fmt.Errorf("%w: composite primary keys are not suported yet", dal.ErrNotImplementedYet)
 	}
+	pkName, err := options.sqlIdentifier(positionPrimaryKey, pk[0])
+	if err != nil {
+		return false, err
+	}
+	where := pkName + " = " + options.Placeholder.placeholder(1)
 	// `SELECT 1` is not supported by some SQL drivers so select 1st column from primary key
-	queryText := fmt.Sprintf("SELECT %s FROM %s WHERE %s", pk[0], collection, where)
+	queryText := fmt.Sprintf("SELECT %s FROM %s WHERE %s", pkName, table, where)
 	rows, err := execQuery(queryText, key.ID)
 	if err != nil {
 		return false, err

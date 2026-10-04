@@ -41,7 +41,11 @@ func (t transaction) GetMulti(ctx context.Context, records []dalrecord.Record) e
 
 func executeExists(_ context.Context, options DbOptions, key *dalrecord.Key, exec queryExecutor) (exists bool, err error) {
 	rsName := getRecordsetName(key)
-	queryText := fmt.Sprintf("SELECT 1 FROM %s WHERE ", rsName)
+	table, err := options.recordsetIdentifier(key)
+	if err != nil {
+		return false, err
+	}
+	queryText := fmt.Sprintf("SELECT 1 FROM %s WHERE ", table)
 
 	pk := options.PrimaryKeyFieldNames(key)
 	if len(pk) == 0 {
@@ -51,7 +55,11 @@ func executeExists(_ context.Context, options DbOptions, key *dalrecord.Key, exe
 		err = fmt.Errorf("%w: select by composite primary key is not supported yet", dal.ErrNotImplementedYet)
 		return
 	}
-	queryText += pk[0] + " = " + options.Placeholder.placeholder(1)
+	pkName, err := options.sqlIdentifier(positionPrimaryKey, pk[0])
+	if err != nil {
+		return false, err
+	}
+	queryText += pkName + " = " + options.Placeholder.placeholder(1)
 
 	var rows *sql.Rows
 	if rows, err = exec(queryText, key.ID); err != nil {
@@ -69,12 +77,21 @@ func executeExists(_ context.Context, options DbOptions, key *dalrecord.Key, exe
 func getSingle(_ context.Context, options DbOptions, record dalrecord.Record, exec queryExecutor) error {
 	key := record.Key()
 	rsName := getRecordsetName(key)
+	table, err := options.recordsetIdentifier(key)
+	if err != nil {
+		record.SetError(err)
+		return err
+	}
 	fields := getSelectFields(false, options, record)
-	fieldsStr := strings.Join(fields, ", ")
+	fieldsStr, err := selectList(options, fields, false)
+	if err != nil {
+		record.SetError(err)
+		return err
+	}
 	if fieldsStr == "" {
 		fieldsStr = "1"
 	}
-	queryText := fmt.Sprintf("SELECT %s FROM %s WHERE ", fieldsStr, rsName)
+	queryText := fmt.Sprintf("SELECT %s FROM %s WHERE ", fieldsStr, table)
 
 	pk := options.PrimaryKeyFieldNames(key)
 	if len(pk) == 0 {
@@ -82,7 +99,12 @@ func getSingle(_ context.Context, options DbOptions, record dalrecord.Record, ex
 	} else if len(pk) > 1 {
 		return fmt.Errorf("%w: select by composite primary key is not supported yet", dal.ErrNotImplementedYet)
 	}
-	queryText += pk[0] + " = " + options.Placeholder.placeholder(1)
+	pkName, err := options.sqlIdentifier(positionPrimaryKey, pk[0])
+	if err != nil {
+		record.SetError(err)
+		return err
+	}
+	queryText += pkName + " = " + options.Placeholder.placeholder(1)
 
 	rows, err := exec(queryText, key.ID)
 	if err != nil {
@@ -108,16 +130,27 @@ func getSingle(_ context.Context, options DbOptions, record dalrecord.Record, ex
 }
 
 func getMulti(ctx context.Context, options DbOptions, records []dalrecord.Record, exec queryExecutor) error {
-	byCollection := make(map[string][]dalrecord.Record)
+	// The whole batch is checked before its first read: the recordsets below are
+	// read one after the other in map order, so a refusal found half way would
+	// leave it to chance which of the valid ones had been sent.
 	for _, r := range records {
-		id := r.Key().Collection()
-		recs := byCollection[id]
-		byCollection[id] = append(recs, r)
+		if _, err := options.recordsetIdentifier(r.Key()); err != nil {
+			return refuseRecords(records, err)
+		}
 	}
-	for _, recs := range byCollection {
+	// Records are read together when their keys address the same recordset.
+	byRecordset := make(map[string][]dalrecord.Record)
+	for _, r := range records {
+		name := getRecordsetName(r.Key())
+		byRecordset[name] = append(byRecordset[name], r)
+	}
+	for _, recs := range byRecordset {
 		if len(recs) == 1 {
 			if err := getSingle(ctx, options, recs[0], exec); err != nil {
 				recs[0].SetError(err)
+				if errors.Is(err, ErrUnsafeName) {
+					return err
+				}
 			}
 		} else if err := getMultiFromSingleTable(ctx, options, recs, exec); err != nil {
 			return err
@@ -126,14 +159,28 @@ func getMulti(ctx context.Context, options DbOptions, records []dalrecord.Record
 	return nil
 }
 
+// refuseRecords records err on every record of a refused batch and returns it.
+func refuseRecords(records []dalrecord.Record, err error) error {
+	for _, record := range records {
+		record.SetError(err)
+	}
+	return err
+}
+
 func getMultiFromSingleTable(_ context.Context, options DbOptions, records []dalrecord.Record, exec queryExecutor) error {
 	if len(records) == 0 {
 		return nil
 	}
 	records = append(make([]dalrecord.Record, 0, len(records)), records...)
-	collection := records[0].Key().Collection()
+	// The records share the recordset their keys address, which is the table and
+	// the one the primary key is looked up in.
+	recordset := getRecordsetName(records[0].Key())
+	table, err := options.recordsetIdentifier(records[0].Key())
+	if err != nil {
+		return refuseRecords(records, err)
+	}
 
-	rs, hasRecordsetDefinition := options.Recordsets[collection]
+	rs, hasRecordsetDefinition := options.Recordsets[recordset]
 	var primaryKey []string
 	if hasRecordsetDefinition && len(rs.PrimaryKey()) > 0 {
 		for _, pk := range rs.PrimaryKey() {
@@ -142,11 +189,18 @@ func getMultiFromSingleTable(_ context.Context, options DbOptions, records []dal
 	} else if len(options.PrimaryKey) > 0 {
 		primaryKey = options.PrimaryKey
 	} else {
-		err := fmt.Errorf("%w: no primary key defined for: '%s'", dalrecord.ErrRecordNotFound, collection)
+		err := fmt.Errorf("%w: no primary key defined for: '%s'", dalrecord.ErrRecordNotFound, recordset)
 		for _, record := range records {
 			record.SetError(err)
 		}
 		return nil
+	}
+
+	pkColumns := make([]string, len(primaryKey))
+	for i, pkName := range primaryKey {
+		if pkColumns[i], err = options.sqlIdentifier(positionPrimaryKey, pkName); err != nil {
+			return refuseRecords(records, err)
+		}
 	}
 
 	// Call SetError(nil) on all records so that Data() is accessible below.
@@ -165,17 +219,18 @@ func getMultiFromSingleTable(_ context.Context, options DbOptions, records []dal
 		fields = getSelectFields(true, options, records...)
 	}
 
-	queryText := fmt.Sprintf("SELECT %v FROM %v WHERE ",
-		strings.Join(fields, ", "),
-		records[0].Key().Collection(),
-	)
+	columns, err := selectList(options, fields, true)
+	if err != nil {
+		return refuseRecords(records, err)
+	}
+	queryText := fmt.Sprintf("SELECT %v FROM %v WHERE ", columns, table)
 	args := make([]interface{}, len(records))
 	if len(records) == 1 /*len(records) == 1*/ {
 		args = []any{}
 		var pkConditions []string
 		n := 1
-		processPrimaryKey(primaryKey, records[0].Key(), func(_ int, name string, v any) {
-			pkConditions = append(pkConditions, name+" = "+options.Placeholder.placeholder(n))
+		processPrimaryKey(primaryKey, records[0].Key(), func(i int, _ string, v any) {
+			pkConditions = append(pkConditions, pkColumns[i]+" = "+options.Placeholder.placeholder(n))
 			n++
 		})
 		queryText += " " + strings.Join(pkConditions, " AND ")
@@ -183,7 +238,7 @@ func getMultiFromSingleTable(_ context.Context, options DbOptions, records []dal
 		if len(primaryKey) > 1 {
 			panic("not yet supported to query multiple records by key from recordsets with composite primary key")
 		}
-		queryText += fmt.Sprintf("%s IN (", primaryKey[0]) // TODO(help-wanted): support composite primary keys
+		queryText += fmt.Sprintf("%s IN (", pkColumns[0]) // TODO(help-wanted): support composite primary keys
 		var argPlaceholders []string
 		for i, record := range records {
 			n := i + 1
@@ -461,12 +516,11 @@ func getSelectFields(includePK bool, options DbOptions, records ...dalrecord.Rec
 		if key == nil {
 			panic("not able to determine key field(s) as a record does not reference a key")
 		}
-		collection := record.Key().Collection()
-		if strings.TrimSpace(collection) == "" {
+		if strings.TrimSpace(key.Collection()) == "" {
 			panic("record key reference an empty collection name")
 		}
 		fields = make([]string, 1, numberOfFields+1)
-		if rs, hasOptions := options.Recordsets[collection]; hasOptions {
+		if rs, hasOptions := options.Recordsets[getRecordsetName(key)]; hasOptions {
 			fields[0] = rs.PrimaryKey()[0].Name()
 		} else {
 			fields[0] = "ID"
@@ -478,4 +532,25 @@ func getSelectFields(includePK bool, options DbOptions, records ...dalrecord.Rec
 		fields = append(fields, valType.Field(i).Name)
 	}
 	return fields
+}
+
+// selectList renders the names getSelectFields returned as a SELECT list. The
+// wildcard it returns for map data is not a name and is kept as is. When
+// primaryKeyFirst is set the first name is the primary key.
+func selectList(options DbOptions, fields []string, primaryKeyFirst bool) (string, error) {
+	if len(fields) == 1 && fields[0] == "*" {
+		return "*", nil
+	}
+	rendered := make([]string, len(fields))
+	for i, name := range fields {
+		position := positionField
+		if primaryKeyFirst && i == 0 {
+			position = positionPrimaryKey
+		}
+		var err error
+		if rendered[i], err = options.sqlIdentifier(position, name); err != nil {
+			return "", err
+		}
+	}
+	return strings.Join(rendered, ", "), nil
 }

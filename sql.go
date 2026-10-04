@@ -52,15 +52,33 @@ func processPrimaryKey(primaryKey []string, key *dalrecord.Key, f func(i int, na
 	}
 }
 
-func buildSingleRecordQuery(o operation, options DbOptions, record dalrecord.Record) (query query) {
+// buildSingleRecordQuery builds the INSERT or UPDATE statement that writes
+// record. Every collection, field and primary-key name goes into the text
+// through DbOptions.sqlIdentifier; one that is refused returns an error
+// wrapping ErrUnsafeName and no statement.
+func buildSingleRecordQuery(o operation, options DbOptions, record dalrecord.Record) (q query, err error) {
 	key := record.Key()
-	collection := getRecordsetName(key)
+	collection := getRecordsetName(key) // for messages; the text carries table
+	table, err := options.recordsetIdentifier(key)
+	if err != nil {
+		return query{}, err
+	}
 	pk := options.PrimaryKeyFieldNames(key)
 	switch o {
 	case insertOperation:
-		query.text = "INSERT INTO " + collection
+		q.text = "INSERT INTO " + table
 	case updateOperation:
-		query.text = fmt.Sprintf("UPDATE %v SET ", collection)
+		q.text = fmt.Sprintf("UPDATE %v SET ", table)
+	}
+	// ident renders a name for the text. A refused name is kept in nameErr and
+	// checked before the statement is used, as the callbacks cannot return it.
+	var nameErr error
+	ident := func(position, name string) string {
+		rendered, err := options.sqlIdentifier(position, name)
+		if err != nil && nameErr == nil {
+			nameErr = err
+		}
+		return rendered
 	}
 	var cols []string
 	var argPlaceholders []string
@@ -73,28 +91,33 @@ func buildSingleRecordQuery(o operation, options DbOptions, record dalrecord.Rec
 
 	if key.ID != nil && o == insertOperation {
 		if len(pk) == 0 {
-			panic(fmt.Sprintf("record key has value but no primary key defined for: '%s'", collection))
+			return query{}, fmt.Errorf("primary key is not defined for recordset %s: the ID of the record's key has no column to be written to", collection)
 		}
-		processPrimaryKey(pk, key, func(i int, name string, v any) {
-			cols = append(cols, name)
-			query.args = append(query.args, v)
-			argPlaceholders = append(argPlaceholders, "?")
+		processPrimaryKey(pk, key, func(i int, pkName string, v any) {
+			cols = append(cols, ident(positionPrimaryKey, pkName))
+			q.args = append(q.args, v)
+			argPlaceholders = append(argPlaceholders, options.Placeholder.placeholder(len(q.args)))
 		})
+		if nameErr != nil {
+			return query{}, nameErr
+		}
 	}
 
 	setColsCount := 0
 
-	addField := func(name string, value any) {
-		if slices.Contains(pk, name) {
+	addField := func(fieldName string, value any) {
+		if slices.Contains(pk, fieldName) {
 			return
 		}
-		cols = append(cols, name)
-		query.args = append(query.args, value)
+		col := ident(positionField, fieldName)
+		cols = append(cols, col)
+		q.args = append(q.args, value)
+		placeholder := options.Placeholder.placeholder(len(q.args))
 		switch o {
 		case insertOperation:
-			argPlaceholders = append(argPlaceholders, "?")
+			argPlaceholders = append(argPlaceholders, placeholder)
 		case updateOperation:
-			argPlaceholders = append(argPlaceholders, name+" = ?")
+			argPlaceholders = append(argPlaceholders, col+" = "+placeholder)
 			setColsCount++
 		}
 	}
@@ -115,17 +138,20 @@ func buildSingleRecordQuery(o operation, options DbOptions, record dalrecord.Rec
 			names[i] = k.String()
 		}
 		sort.Strings(names)
-		for _, name := range names {
-			v := val.MapIndex(reflect.ValueOf(name))
-			addField(name, v.Interface())
+		for _, field := range names {
+			v := val.MapIndex(reflect.ValueOf(field))
+			addField(field, v.Interface())
 		}
 	default:
 		panic(fmt.Sprintf("unsupported record data kind %s for collection '%s': expected struct or map[string]any", val.Kind(), collection))
 	}
+	if nameErr != nil {
+		return query{}, nameErr
+	}
 
 	switch o {
 	case insertOperation:
-		query.text += fmt.Sprintf("(%v) VALUES (%v)",
+		q.text += fmt.Sprintf("(%v) VALUES (%v)",
 			strings.Join(cols, ", "),
 			strings.Join(argPlaceholders, ", "),
 		)
@@ -134,14 +160,15 @@ func buildSingleRecordQuery(o operation, options DbOptions, record dalrecord.Rec
 			panic(fmt.Sprintf("no fields to updateOperation for: '%s'", collection))
 		}
 		var pkConditions []string
-		processPrimaryKey(pk, key, func(i int, name string, v any) {
-			pkConditions = append(pkConditions, name+" = ?")
-			query.args = append(query.args, v)
+		processPrimaryKey(pk, key, func(i int, pkName string, v any) {
+			q.args = append(q.args, v)
+			pkConditions = append(pkConditions, ident(positionPrimaryKey, pkName)+" = "+options.Placeholder.placeholder(len(q.args)))
 		})
-		query.text += " " + strings.Join(argPlaceholders, ", ") +
+		if nameErr != nil {
+			return query{}, nameErr
+		}
+		q.text += " " + strings.Join(argPlaceholders, ", ") +
 			fmt.Sprintf(" WHERE %v", strings.Join(pkConditions, " AND "))
 	}
-	// Rewrite "?" placeholders to the dialect-specific form (e.g. "$1" for Postgres).
-	query.text = options.Placeholder.rewritePlaceholders(query.text)
-	return query
+	return q, nil
 }
