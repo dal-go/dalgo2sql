@@ -72,7 +72,9 @@ func getReaderBaseWithOptions(ctx context.Context, query dal.Query, execute exec
 		} else {
 			switch options.StructuredQueryDialect {
 			case "":
-				text = emitSQL(q)
+				if text, err = emitSQL(q); err != nil {
+					return readerBase{}, err
+				}
 			case "sqlite":
 				var err error
 				text, a, err = compileStructuredSQL(q)
