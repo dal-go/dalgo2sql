@@ -342,8 +342,10 @@ func openSQLite(t *testing.T, script string) *sql.DB {
 	return raw
 }
 
-// SQLite results are unchanged: numeric-affinity and decimal columns already
-// yield numbers, JSON columns yield text, and BLOBs stay BLOBs.
+// SQLite recordset reader results are unchanged: numeric-affinity and decimal
+// columns already yield numbers, JSON columns yield text, and BLOBs stay BLOBs.
+// The records reader changes only for a bare NUMERIC column holding a BLOB of
+// decimal text, or the texts NaN, Infinity and -Infinity.
 func TestReaders_SQLiteResultsUnchanged(t *testing.T) {
 	ctx := context.Background()
 	raw := openSQLite(t, `
@@ -351,6 +353,8 @@ func TestReaders_SQLiteResultsUnchanged(t *testing.T) {
 		INSERT INTO prices VALUES (1, 13.86, 13.86, 13.86, '{"a":1}', '{"b":2}'), (2, 7, 7, 7, '[]', '[]'), (3, NULL, NULL, NULL, NULL, NULL);
 		CREATE TABLE blobs (id INTEGER PRIMARY KEY, docb JSONB, n NUMERIC, dec DECIMAL);
 		INSERT INTO blobs VALUES (1, x'7B7D', x'3133', x'3133'), (2, x'5B5D', x'616263', x'616263');
+		CREATE TABLE texts (id INTEGER PRIMARY KEY, n NUMERIC);
+		INSERT INTO texts VALUES (1, 'abc');
 		CREATE TABLE reals (id INTEGER PRIMARY KEY, amount REAL);
 		INSERT INTO reals VALUES (1, 1.5), (2, 'abc-sentinel');`)
 
@@ -406,6 +410,31 @@ func TestReaders_SQLiteResultsUnchanged(t *testing.T) {
 		}
 		if got, want := readAllRecords(t, rr, "docb"), []any{"{}", "[]"}; !reflect.DeepEqual(got, want) {
 			t.Errorf("records reader docb: got %v, want %v", got, want)
+		}
+		// The one declared behaviour change: a bare NUMERIC column holding a BLOB
+		// of decimal text is now a float64; DECIMAL is not NUMERIC and keeps the
+		// text. Text that is not a number stays a string.
+		for column, want := range map[string][]any{
+			"n":   {float64(13), "abc"},
+			"dec": {"13", "abc"},
+		} {
+			rr, err := getRecordsReader(ctx, dal.NewTextQuery("SELECT "+column+" FROM blobs ORDER BY id", nil), raw.QueryContext)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := readAllRecords(t, rr, column); !reflect.DeepEqual(got, want) {
+				t.Errorf("records reader %s: got %v, want %v", column, got, want)
+			}
+		}
+	})
+
+	t.Run("text row in a NUMERIC column", func(t *testing.T) {
+		rr, err := getRecordsReader(ctx, dal.NewTextQuery("SELECT n FROM texts ORDER BY id", nil), raw.QueryContext)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, want := readAllRecords(t, rr, "n"), []any{"abc"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("records reader n: got %v, want %v", got, want)
 		}
 	})
 
