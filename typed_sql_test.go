@@ -607,24 +607,75 @@ func TestCompileTypedSQLQualifiersWithQuoteCharacters(t *testing.T) {
 }
 
 func TestCompileTypedSQLScanBoundedSingleSource(t *testing.T) {
-	// A bound on a lone source is rendered as the statement's own ORDER BY and
-	// LIMIT, which is how DALgo's generic join asks a relation for its rows: it
-	// sends each bounded relation as a single-source query that restates the scan
-	// while the source still carries it. Refusing that leaf would leave a
-	// dialect without a legacy emitter unable to run DALgo's generic join at all.
+	// A scan on a lone source means: take the bounded, ordered rows first, then
+	// apply the rest of the statement. One SELECT can say that only when the
+	// statement is the bounded read itself, which is the leaf query DALgo's
+	// generic join and federated executor send: the same ORDER BY as the scan and
+	// a LIMIT within it, nothing else. Every other statement over a scan-bounded
+	// source is refused (see the refusal table in typed_sql_errors_test.go).
 	scanned := dal.NewRootCollectionRef("Invoice", "i").WithScan(10, dal.Descending(typedTestField("Total")))
-	t.Run("the leaf query the generic join sends", func(t *testing.T) {
-		typedGolden{
-			query:    dal.From(scanned).NewQuery().OrderBy(scanned.ScanOrders()...).Limit(scanned.ScanLimit()).SelectColumns(),
+	orderOnly := dal.NewRootCollectionRef("Customer", "c").WithScan(0, dal.Ascending(typedTestField("Name")))
+	limitOnly := dal.NewRootCollectionRef("Invoice", "i").WithScan(10)
+	leaf := func(source dal.RecordsetSource) dal.IQueryBuilder {
+		c := source.(dal.CollectionRef)
+		return dal.From(source).NewQuery().OrderBy(c.ScanOrders()...).Limit(c.ScanLimit())
+	}
+	runTypedGoldens(t, []typedGolden{
+		{
+			name:     "the leaf query the generic join sends",
+			query:    leaf(scanned).SelectColumns(),
 			wantSQL:  `SELECT * FROM "Invoice" AS "i" ORDER BY "Total" DESC NULLS LAST LIMIT $1`,
 			wantArgs: []any{10},
-		}.run(t)
-	})
-	t.Run("a pointer source", func(t *testing.T) {
-		typedGolden{
-			query:   dal.From(typedTestPtr(scanned)).NewQuery().SelectColumns(),
+		},
+		{
+			name:     "the leaf query over a pointer source",
+			query:    dal.From(typedTestPtr(scanned)).NewQuery().OrderBy(scanned.ScanOrders()...).Limit(10).SelectColumns(),
+			wantSQL:  `SELECT * FROM "Invoice" AS "i" ORDER BY "Total" DESC NULLS LAST LIMIT $1`,
+			wantArgs: []any{10},
+		},
+		{
+			name:     "a statement limit below the scan limit",
+			query:    leaf(scanned).Limit(4).SelectColumns(),
+			wantSQL:  `SELECT * FROM "Invoice" AS "i" ORDER BY "Total" DESC NULLS LAST LIMIT $1`,
+			wantArgs: []any{4},
+		},
+		{
+			name:     "the projection stays free",
+			query:    leaf(scanned).SelectColumns(typedTestColumn(typedTestField("Total"), "")),
+			wantSQL:  `SELECT "Total" FROM "Invoice" AS "i" ORDER BY "Total" DESC NULLS LAST LIMIT $1`,
+			wantArgs: []any{10},
+		},
+		{
+			name:     "an alias that names the scan field after itself restates the same order",
+			query:    leaf(scanned).SelectColumns(typedTestColumn(typedTestField("Total"), "Total")),
+			wantSQL:  `SELECT "Total" AS "Total" FROM "Invoice" AS "i" ORDER BY "Total" DESC NULLS LAST LIMIT $1`,
+			wantArgs: []any{10},
+		},
+		{
+			name:    "a scan order without a scan limit",
+			query:   leaf(orderOnly).SelectColumns(),
+			wantSQL: `SELECT * FROM "Customer" AS "c" ORDER BY "Name" ASC NULLS FIRST`,
+		},
+		{
+			name:     "a scan order without a scan limit, under a statement limit",
+			query:    leaf(orderOnly).Limit(3).SelectColumns(),
+			wantSQL:  `SELECT * FROM "Customer" AS "c" ORDER BY "Name" ASC NULLS FIRST LIMIT $1`,
+			wantArgs: []any{3},
+		},
+		{
+			name:     "a scan limit without a scan order",
+			query:    leaf(limitOnly).SelectColumns(),
+			wantSQL:  `SELECT * FROM "Invoice" AS "i" LIMIT $1`,
+			wantArgs: []any{10},
+		},
+		{
+			// The federated executor routes a source in a named database to that
+			// database before it sends the leaf, so the compiler, which is handed
+			// the connection of that database, renders the table by its own name.
+			name:    "a lone source in a named database",
+			query:   dal.From(dal.NewDatabaseCollectionRef("db1", "", "Invoice", "i")).NewQuery().SelectColumns(),
 			wantSQL: `SELECT * FROM "Invoice" AS "i"`,
-		}.run(t)
+		},
 	})
 }
 

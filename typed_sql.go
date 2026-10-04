@@ -53,11 +53,16 @@ func typedUnsupported(format string, args ...any) error {
 // assertTypedTextIgnoresValues and assertTypedTextHasTwoShapesForTwoConstants
 // (typed_sql_property_test.go) check this for any dialect.
 //
+// Error messages follow the same rule: they quote identifiers and name the rule
+// that failed, never a constant. DALgo's grouping validation words its message
+// with the query's own expressions, so it is replaced (errTypedInvalidAggregation);
+// an error a dialect returns is the dialect's to keep clean (see typedDialect).
+//
 // Anything the engine cannot run faithfully returns an error matching
 // dal.ErrNotSupported rather than an approximation: an unrecognised node, a
-// source option the statement cannot honour (see validateTypedJoinSources), a
-// reference the server could not match. DALgo's generic engine remains the place
-// for those queries.
+// source option the statement cannot honour (see validateTypedJoinSources and
+// validateTypedScanRestated), a reference the server could not match. DALgo's
+// generic engine remains the place for those queries.
 func compileTypedSQL(q dal.StructuredQuery, dialect typedDialect, facts typedCatalogFacts) (string, []any, error) {
 	if dialect == nil {
 		return "", nil, errors.New("typed SQL compiler requires a dialect")
@@ -84,6 +89,8 @@ func compileTypedSQL(q dal.StructuredQuery, dialect typedDialect, facts typedCat
 		if err := validateTypedJoinSources(q.From(), "from"); err != nil {
 			return "", nil, err
 		}
+	} else if err := validateTypedScanRestated(q); err != nil {
+		return "", nil, err
 	}
 	c := &typedCompiler{dialect: dialect, facts: facts}
 	text, args, err := c.query(q)
@@ -102,9 +109,17 @@ func compileTypedSQL(q dal.StructuredQuery, dialect typedDialect, facts typedCat
 	return text, args, nil
 }
 
+// errTypedInvalidAggregation is the whole of what the compiler says when DALgo's
+// grouping validation rejects a query. That validation words its message with the
+// query's own expressions, constants included (selected expression "(a +
+// 'secret')" is neither aggregated nor present in GROUP BY), and a server logs
+// compile errors, so the message is dropped and the rule that failed is named.
+var errTypedInvalidAggregation = errors.New("invalid aggregation: every selected, HAVING and ORDER BY expression must be an aggregate, a GROUP BY expression or a select alias, " +
+	"select aliases must be unique and aggregates may not nest; the detail is left out because it would quote the query's constants")
+
 func validateTypedAggregation(q dal.StructuredQuery, dialect typedDialect) error {
-	if err := dal.ValidateAggregation(q); err != nil {
-		return fmt.Errorf("invalid aggregation: %w", err)
+	if dal.ValidateAggregation(q) != nil {
+		return errTypedInvalidAggregation
 	}
 	plan, err := dal.PlanAggregation(q, dialect.capabilities())
 	if err != nil {
@@ -137,12 +152,8 @@ func validateTypedJoins(from dal.FromSource) error {
 // rendering either as the whole local table would join rows the generic join
 // never sees. Returning ErrNotSupported sends the query to the generic join.
 //
-// The same options on a lone source are accepted, because they change nothing
-// there: the generic join sends each bounded relation to its adapter as a
-// single-source query that restates the scan as ORDER BY and LIMIT while the
-// source still carries it, so rendering the table with the statement's own
-// ORDER BY and LIMIT is exactly the bounded read. Refusing that query would
-// leave a dialect with no other emitter unable to run the generic join at all.
+// A lone source is different, and validateTypedScanRestated decides what a
+// scan-bounded one compiles to.
 //
 // Join algorithm hints (JoinedSource.Algorithms) are not read: they are
 // preferences, DALgo's native join contract lets the engine choose its own plan
@@ -166,6 +177,73 @@ func validateTypedJoinSources(from dal.FromSource, path string) error {
 		}
 	}
 	return nil
+}
+
+// validateTypedScanRestated decides what a statement over one scan-bounded
+// source (CollectionRef.WithScan: an order and a row limit) compiles to. A scan
+// means: take the ordered, bounded rows first, then apply the rest of the
+// statement to them. A SELECT over the table can say that only when the
+// statement is the bounded read itself, which is the leaf query DALgo builds for
+// a bounded relation (dal/join_execute.go, dal/federated_query.go,
+// dal/federated_stream.go): the scan restated as ORDER BY and LIMIT, with no
+// filter, grouping or offset. Anything else would be rendered over the whole
+// table (a WHERE would filter before the bound, not after it), so it returns
+// ErrNotSupported and DALgo's generic engine runs it.
+//
+// The statement restates the scan when ORDER BY equals the scan's orders item
+// by item (after select aliases are resolved, as the compiled text resolves
+// them), in the same direction, and, if the scan has a limit, the statement's
+// LIMIT is set and no larger. The projection is free: a projection after a limit
+// reads the same rows. A statement limit below the scan's is the federated
+// executor's own tightening and is accepted.
+//
+// Database() is not checked. A lone source in a named database is right only
+// because the federated executor already routed the leaf to that database's
+// connection, which the compiler cannot verify: it renders the table by its own
+// name. SQL-04 must give the compiler the connection's own database name so it
+// can compare.
+func validateTypedScanRestated(q dal.StructuredQuery) error {
+	collection, err := typedCollection(q.From().Base())
+	if err != nil || (collection.ScanLimit() == 0 && len(collection.ScanOrders()) == 0) {
+		return nil // no scan; typedCompiler.table refuses a source it cannot render
+	}
+	refuse := func(why string) error {
+		return typedUnsupported("from: a scan-bounded source compiles only when the statement restates its scan: %s", why)
+	}
+	switch {
+	case q.Where() != nil:
+		return refuse("WHERE filters after the scan, not before it")
+	case dal.HasAggregation(q):
+		return refuse("aggregation runs over the scanned rows, not the table")
+	case q.Offset() != 0:
+		return refuse("OFFSET skips rows of the scan")
+	case collection.ScanLimit() > 0 && (q.Limit() == 0 || q.Limit() > collection.ScanLimit()):
+		return refuse("LIMIT is missing or larger than the scan limit")
+	}
+	scanOrders, orders := collection.ScanOrders(), q.OrderBy()
+	if len(orders) != len(scanOrders) {
+		return refuse("ORDER BY differs from the scan order")
+	}
+	aliases := typedAliases(q.Columns())
+	for i, order := range orders {
+		rewriter := typedAliasRewriter{aliases: aliases}
+		resolved := rewriter.expression(order.Expression())
+		if order.Descending() != scanOrders[i].Descending() || !typedSameExpression(resolved, scanOrders[i].Expression()) {
+			return refuse("ORDER BY differs from the scan order")
+		}
+	}
+	return nil
+}
+
+// typedAliases maps each select alias to the expression it names.
+func typedAliases(columns []dal.Column) map[string]dal.Expression {
+	aliases := make(map[string]dal.Expression, len(columns))
+	for _, column := range columns {
+		if column.Alias != "" {
+			aliases[column.Alias] = column.Expression
+		}
+	}
+	return aliases
 }
 
 // typedCompiler carries the state of one compileTypedSQL call.
@@ -221,12 +299,7 @@ func (c *typedCompiler) query(q dal.StructuredQuery) (string, []any, error) {
 	if err != nil {
 		return "", nil, err
 	}
-	aliases := make(map[string]dal.Expression, len(columns))
-	for _, column := range columns {
-		if column.Alias != "" {
-			aliases[column.Alias] = column.Expression
-		}
-	}
+	aliases := typedAliases(columns)
 
 	var text strings.Builder
 	var args []any
@@ -904,6 +977,9 @@ func (c *typedCompiler) binary(expression dal.BinaryExpression) (string, []any, 
 	}
 	args := slices.Concat(leftArgs, rightArgs)
 	if expression.Operator == dal.Divide {
+		if err := c.checkDivideOrder(left, right); err != nil {
+			return "", nil, err
+		}
 		quotient := c.dialect.divide(left, right)
 		if err := c.checkFragment(quotient, 0, left, right); err != nil {
 			return "", nil, err
@@ -911,6 +987,33 @@ func (c *typedCompiler) binary(expression dal.BinaryExpression) (string, []any, 
 		return quotient, args, nil
 	}
 	return "(" + left + " " + string(expression.Operator) + " " + right + ")", args, nil
+}
+
+// typedProbeLeft and typedProbeRight are two operands that differ in text, carry
+// one marker each, and neither holds the other. They never reach a statement;
+// checkDivideOrder hands them to the dialect.
+const (
+	typedProbeLeft  = "(? + 0)"
+	typedProbeRight = "(0 + ?)"
+)
+
+// checkDivideOrder closes the one gap in operand rule 1. checkTypedFragment sees
+// text, so when both operands of a division carry a marker and render as the same
+// text, as in (a + 1) / (a + 2), a dialect that wrote the right operand first
+// would pass it and the statement would compute the inverse quotient. For that
+// case the compiler asks the dialect to divide two probe operands that differ and
+// checks the order on them. An operand without a marker carries no argument, so
+// a division with one is not probed and the dialect keeps its freedom to repeat
+// or move it.
+func (c *typedCompiler) checkDivideOrder(left, right string) error {
+	quote := c.dialect.placeholderStyle().IdentQuote
+	if countTypedMarkers(left, quote) == 0 || countTypedMarkers(right, quote) == 0 {
+		return nil
+	}
+	if err := c.checkFragment(c.dialect.divide(typedProbeLeft, typedProbeRight), 0, typedProbeLeft, typedProbeRight); err != nil {
+		return fmt.Errorf("divide, asked to divide two different operands that carry a value: %w", err)
+	}
+	return nil
 }
 
 func (c *typedCompiler) condition(condition dal.Condition) (string, []any, error) {

@@ -2,14 +2,24 @@ package dalgo2sql
 
 import (
 	"fmt"
+	"math"
 	"math/rand/v2"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/dal-go/dalgo/dal"
 )
+
+// typedProofReporter is what a proof needs of a *testing.T. A test can pass its
+// own reporter to run a proof against a dialect that must fail it, and read the
+// failure instead of failing itself.
+type typedProofReporter interface {
+	Helper()
+	Fatalf(format string, args ...any)
+}
 
 // typedDraw is one random assignment of values to every constant position of
 // typedPropertyQuery. Types are fixed per position because a dialect may type a
@@ -24,28 +34,85 @@ type typedDraw struct {
 	limit, offset  int
 }
 
-// A marker that cannot occur in the compiler's own text, plus characters that
-// would matter if a value were ever spliced into SQL.
+// typedValuePrefix starts every hostile string the draws build. It cannot occur
+// in the compiler's own text, so finding it in the SQL means a value was written
+// into it.
+const typedValuePrefix = "§value-"
+
+// typedHostileAlphabet holds characters that would matter if a value were ever
+// spliced into SQL.
 const typedHostileAlphabet = `'"?$;-\()` + "\n"
 
+// drawTypedValues draws every constant of typedPropertyQuery. The Go type stays
+// fixed per position, because a dialect may type a placeholder by the Go type of
+// its value; the values themselves are drawn from every class a dialect could
+// wrongly tell apart by content: integers that are zero, negative, small and
+// beyond 32 bits; floats that are whole, zero, negative zero, negative and
+// fractional; strings that are empty, digits only, date-looking, and hostile.
+// NaN stays out: reflect.DeepEqual on the arguments would fail on it.
 func drawTypedValues(r *rand.Rand) typedDraw {
-	text := func() string {
+	hostile := func() string {
 		var b strings.Builder
-		b.WriteString("§value-")
+		b.WriteString(typedValuePrefix)
 		for range r.IntN(12) {
 			b.WriteByte(typedHostileAlphabet[r.IntN(len(typedHostileAlphabet))])
 			b.WriteByte(byte('a' + r.IntN(26)))
 		}
 		return b.String()
 	}
+	integer := func() int {
+		switch r.IntN(6) {
+		case 0:
+			return 0
+		case 1:
+			return r.IntN(1 << 30)
+		case 2:
+			return -r.IntN(1 << 30)
+		case 3:
+			return int(r.Int64()) // beyond 32 bits
+		case 4:
+			return -int(r.Int64())
+		}
+		return r.IntN(5)
+	}
+	float := func() float64 {
+		switch r.IntN(7) {
+		case 0:
+			return 0
+		case 1:
+			return math.Copysign(0, -1)
+		case 2:
+			return float64(r.IntN(1000)) // whole
+		case 3:
+			return -float64(r.IntN(1000)) - 1 // negative whole
+		case 4:
+			return float64(r.Int64()) // whole, beyond 32 bits
+		case 5:
+			return r.Float64() // a fraction
+		}
+		return r.NormFloat64() * 1e6
+	}
+	text := func() string {
+		switch r.IntN(6) {
+		case 0:
+			return ""
+		case 1:
+			return strconv.Itoa(r.IntN(1000000)) // digits only
+		case 2:
+			return time.Unix(r.Int64N(4e9), 0).UTC().Format("2006-01-02")
+		case 3:
+			return time.Unix(r.Int64N(4e9), 0).UTC().Format(time.RFC3339)
+		}
+		return hostile()
+	}
 	blob := make([]byte, r.IntN(8))
 	for i := range blob {
 		blob[i] = byte(r.IntN(256))
 	}
 	return typedDraw{
-		i1: r.IntN(1 << 30), i2: -r.IntN(1 << 30), i3: r.IntN(5), i4: r.IntN(1 << 20),
-		f1: r.NormFloat64() * 1e6, f2: r.Float64(),
-		s1: text(), s2: text(), s3: text(),
+		i1: integer(), i2: integer(), i3: integer(), i4: integer(),
+		f1: float(), f2: float(),
+		s1: hostile(), s2: text(), s3: text(),
 		flag:   r.IntN(2) == 0,
 		stamp:  time.Unix(r.Int64N(4e9), r.Int64N(1e9)).UTC(),
 		blob:   blob,
@@ -79,7 +146,7 @@ func typedPropertyQuery(d typedDraw) dal.StructuredQuery {
 }
 
 // typedBoundArgument is the argument dialect sends beside the text for value.
-func typedBoundArgument(t *testing.T, dialect typedDialect, value any) any {
+func typedBoundArgument(t typedProofReporter, dialect typedDialect, value any) any {
 	t.Helper()
 	_, arg, err := dialect.bind(value)
 	if err != nil {
@@ -90,7 +157,7 @@ func typedBoundArgument(t *testing.T, dialect typedDialect, value any) any {
 
 // wantArgs lists the arguments typedPropertyQuery binds, in text order, as
 // dialect spells them.
-func (d typedDraw) wantArgs(t *testing.T, dialect typedDialect) []any {
+func (d typedDraw) wantArgs(t typedProofReporter, dialect typedDialect) []any {
 	t.Helper()
 	bound := func(value any) any { return typedBoundArgument(t, dialect, value) }
 	_, page := dialect.limitOffset(d.limit, d.offset)
@@ -106,7 +173,7 @@ func (d typedDraw) wantArgs(t *testing.T, dialect typedDialect) []any {
 // by a byte. It takes the dialect, so the PostgreSQL dialect runs the same draws
 // as the fake one; a dialect that typed a placeholder by the content of a value
 // (as opposed to its Go type) fails here.
-func assertTypedTextIgnoresValues(t *testing.T, dialect typedDialect) {
+func assertTypedTextIgnoresValues(t typedProofReporter, dialect typedDialect) {
 	t.Helper()
 	style := dialect.placeholderStyle()
 	r := rand.New(rand.NewPCG(20261004, 7))
@@ -126,7 +193,9 @@ func assertTypedTextIgnoresValues(t *testing.T, dialect typedDialect) {
 			t.Fatalf("draw %d: args = %#v, want %#v", i, args, want)
 		}
 		for _, value := range []string{draw.s1, draw.s2, draw.s3} {
-			if strings.Contains(text, value) {
+			// Digit-only and date-looking strings can occur in the text for their own
+			// sake (a placeholder number); the hostile ones carry the prefix.
+			if strings.HasPrefix(value, typedValuePrefix) && strings.Contains(text, value) {
 				t.Fatalf("draw %d: value %q reached the SQL text %q", i, value, text)
 			}
 		}
@@ -149,7 +218,7 @@ func assertTypedTextIgnoresValues(t *testing.T, dialect typedDialect) {
 // fixed strings, "ORDER BY 2" when the constants are equal and the inline bound
 // expression when they are not. Each constant is drawn independently, from a
 // range small enough to meet equality often.
-func assertTypedTextHasTwoShapesForTwoConstants(t *testing.T, dialect typedDialect) {
+func assertTypedTextHasTwoShapesForTwoConstants(t typedProofReporter, dialect typedDialect) {
 	t.Helper()
 	compile := func(selected, ordered int) (string, []any) {
 		q := typedTestFrom("Album", "").NewQuery().
@@ -279,5 +348,111 @@ func TestCompileTypedSQLListLengthAndZeroLimitChangeStructureNotValues(t *testin
 	}
 	if a, b := page(5, 9), page(0, 9); a == b {
 		t.Fatalf("a zero limit compiled to the same text %q", a)
+	}
+}
+
+// typedProofRecorder stands in for a *testing.T: it keeps the first failure a
+// proof reports and stops the proof, as t.Fatalf does.
+type typedProofRecorder struct{ failure string }
+
+type typedProofStopped struct{}
+
+func (r *typedProofRecorder) Helper() {}
+
+func (r *typedProofRecorder) Fatalf(format string, args ...any) {
+	r.failure = fmt.Sprintf(format, args...)
+	panic(typedProofStopped{})
+}
+
+// failureOfTypedProof runs proof and returns the failure it reported, or "" when
+// it passed.
+func failureOfTypedProof(proof func(typedProofReporter)) (failure string) {
+	recorder := &typedProofRecorder{}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			if _, stopped := recovered.(typedProofStopped); !stopped {
+				panic(recovered)
+			}
+			failure = recorder.failure
+		}
+	}()
+	proof(recorder)
+	return ""
+}
+
+// TestCompileTypedSQLPropertyCatchesADialectThatTypesByContent is the proof of the
+// proof: each dialect below picks its cast from what a value holds, the mistake
+// the contract names (bigint for a whole number, numeric for a fraction), and the
+// draws must contain a pair of values that tells each of them apart. The honest
+// dialect passes the same proof (TestCompileTypedSQLTextDoesNotDependOnValues).
+func TestCompileTypedSQLPropertyCatchesADialectThatTypesByContent(t *testing.T) {
+	isDigits := func(s string) bool {
+		_, err := strconv.ParseUint(s, 10, 64)
+		return err == nil && !strings.HasPrefix(s, "+")
+	}
+	cases := map[string]func(value any) string{
+		"bigint for a whole float, numeric for a fraction": func(value any) string {
+			if f, ok := value.(float64); ok {
+				if f == math.Trunc(f) {
+					return "?::bigint"
+				}
+				return "?::numeric"
+			}
+			return ""
+		},
+		"smallint for an integer zero": func(value any) string {
+			if n, ok := value.(int); ok && n == 0 {
+				return "?::smallint"
+			}
+			return ""
+		},
+		"integer for an integer that fits 32 bits": func(value any) string {
+			if n, ok := value.(int); ok && n >= math.MinInt32 && n <= math.MaxInt32 {
+				return "?::integer"
+			}
+			return ""
+		},
+		"smallint for a negative integer": func(value any) string {
+			if n, ok := value.(int); ok && n < 0 {
+				return "?::smallint"
+			}
+			return ""
+		},
+		"bigint for a string of digits": func(value any) string {
+			if s, ok := value.(string); ok && isDigits(s) {
+				return "?::bigint"
+			}
+			return ""
+		},
+		"date for a string that looks like a date": func(value any) string {
+			if s, ok := value.(string); ok && len(s) >= 10 {
+				if _, err := time.Parse("2006-01-02", s[:10]); err == nil {
+					return "?::date"
+				}
+			}
+			return ""
+		},
+		"text for the empty string": func(value any) string {
+			if s, ok := value.(string); ok && s == "" {
+				return "?::text"
+			}
+			return ""
+		},
+	}
+	for name, pick := range cases {
+		t.Run(name, func(t *testing.T) {
+			honest := newFakeTypedDialect()
+			dialect := newFakeTypedDialect()
+			dialect.bindOverride = func(value any) (string, any, error) {
+				if marker := pick(value); marker != "" {
+					return marker, value, nil
+				}
+				return honest.bind(value)
+			}
+			failure := failureOfTypedProof(func(r typedProofReporter) { assertTypedTextIgnoresValues(r, dialect) })
+			if !strings.Contains(failure, "changed the SQL text") {
+				t.Fatalf("assertTypedTextIgnoresValues reported %q for a dialect that types by content, want it to fail on the changed text", failure)
+			}
+		})
 	}
 }

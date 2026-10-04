@@ -41,7 +41,14 @@ import (
 //     writes divide's right operand before its left, or repeats one, keeps the
 //     marker count right and binds values to the wrong positions. An operand
 //     without a marker carries no argument and may be repeated, moved or
-//     wrapped freely.
+//     wrapped freely. The check reads text, and two operands with the same text
+//     cannot be told apart by it, as in (a + 1) / (a + 2). So whenever both
+//     operands of a division carry a marker, the compiler also calls divide
+//     once with two different probe operands that carry one marker each and
+//     applies the check to that fragment. divide must therefore be a function
+//     of its two operand texts alone; it is called more than once per
+//     statement. aggregateResult and orderItem take one operand, so they have
+//     no order to get wrong.
 //   - Operand rule 2, no literal and no comment (checked): a fragment is
 //     quoted identifiers, keywords, punctuation and the marker, never a string
 //     literal and never a comment. The numbering pass understands quoted
@@ -50,6 +57,8 @@ import (
 //   - Fragments that stand for an expression (divide, aggregateResult) must be
 //     self-delimiting, that is wrapped in parentheses or a function call, so
 //     the compiler can place them next to any operator.
+//   - An error a dialect returns must not quote a value: the compiler passes it
+//     on, and a server logs it. Name the type or the rule, never the content.
 //
 // The interface stays unexported until three dialects exist.
 type typedDialect interface {

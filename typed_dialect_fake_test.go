@@ -23,6 +23,7 @@ type fakeTypedDialect struct {
 	// contract in typed_dialect.go.
 	quoteOverride       func(string) (string, error)
 	bindMarkers         string
+	bindOverride        func(value any) (marker string, arg any, err error)
 	divideOverride      func(left, right string) string
 	aggregateOverride   func(function, aggregate string) string
 	orderItemOverride   func(expression string, descending, notNull bool) string
@@ -74,6 +75,9 @@ type fakeTypedFailingValuer struct{}
 func (fakeTypedFailingValuer) Value() (driver.Value, error) { return nil, nil }
 
 func (d *fakeTypedDialect) bind(value any) (string, any, error) {
+	if d.bindOverride != nil {
+		return d.bindOverride(value)
+	}
 	kind, err := typedKindOf(value)
 	if err != nil {
 		return "", nil, err

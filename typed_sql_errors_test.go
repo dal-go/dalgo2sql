@@ -38,6 +38,12 @@ func TestCompileTypedSQLRefusesUnsupportedNodesWithErrNotSupported(t *testing.T)
 	joinedTo := func(base dal.RecordsetSource, joined dal.RecordsetSource) dal.StructuredQuery {
 		return dal.From(base).Join(dal.NewJoinedSource(joined, dal.JoinInner, customerJoin)).NewQuery().SelectColumns(typedTestColumn(typedTestQualified("c", "Name"), ""))
 	}
+	// leafOf is the one statement over a scan-bounded source that compiles: the
+	// scan restated as ORDER BY and LIMIT. Each refusal below changes one thing.
+	leafOf := func(source dal.CollectionRef) dal.IQueryBuilder {
+		return dal.From(source).NewQuery().OrderBy(source.ScanOrders()...).Limit(source.ScanLimit())
+	}
+	const restated = "a scan-bounded source compiles only when the statement restates its scan"
 
 	cases := []struct {
 		name     string
@@ -125,6 +131,32 @@ func TestCompileTypedSQLRefusesUnsupportedNodesWithErrNotSupported(t *testing.T)
 		},
 		{"named-database base source in a join", joinedTo(dal.NewDatabaseCollectionRef("db1", "", "Invoice", "i"), plainCustomer), nil, "from: join_plan: a source in a named database"},
 		{"named-database joined source", joinedTo(dal.NewRootCollectionRef("Invoice", "i"), dal.NewDatabaseCollectionRef("db2", "", "Customer", "c")), nil, "from.joins[0].from: join_plan: a source in a named database"},
+		// A scan on a lone source is "take the bounded rows, then run the rest".
+		// One SELECT says that only for the leaf query that restates the scan
+		// (typed_sql_test.go), so each of these, which would otherwise be rendered
+		// over the whole table, is refused.
+		{"scan with nothing restated", dal.From(scanned).NewQuery().SelectColumns(), nil, restated},
+		{"scan on a pointer source with nothing restated", dal.From(typedTestPtr(scanned)).NewQuery().SelectColumns(), nil, restated},
+		{"scan limit with nothing restated", dal.From(scanLimitOnly).NewQuery().SelectColumns(), nil, "LIMIT"},
+		{"scan order without a limit, nothing restated", dal.From(scanOrderOnly).NewQuery().SelectColumns(), nil, "ORDER BY"},
+		{"scan order without a limit, with a WHERE", leafOf(scanOrderOnly).Where(typedTestEq(typedTestField("Country"), "FR")).SelectColumns(), nil, "WHERE"},
+		{"scan with a WHERE", leafOf(scanned).Where(typedTestEq(typedTestField("BillingCountry"), "FR")).SelectColumns(), nil, "WHERE"},
+		{"scan with a different ORDER BY", dal.From(scanned).NewQuery().OrderBy(dal.Ascending(typedTestField("Name"))).Limit(10).SelectColumns(), nil, "ORDER BY"},
+		{"scan with the same field in the other direction", dal.From(scanned).NewQuery().OrderBy(dal.Ascending(typedTestField("Total"))).Limit(10).SelectColumns(), nil, "ORDER BY"},
+		{"scan with the same field under another source qualifier", dal.From(scanned).NewQuery().OrderBy(dal.Descending(typedTestQualified("i", "Total"))).Limit(10).SelectColumns(), nil, "ORDER BY"},
+		{"scan with a further ORDER BY item", dal.From(scanned).NewQuery().OrderBy(dal.Descending(typedTestField("Total")), dal.Ascending(typedTestField("Name"))).Limit(10).SelectColumns(), nil, "ORDER BY"},
+		{"scan limit with an ORDER BY the scan did not ask for", dal.From(scanLimitOnly).NewQuery().OrderBy(dal.Ascending(typedTestField("Total"))).Limit(10).SelectColumns(), nil, "ORDER BY"},
+		{
+			// ORDER BY Total reads the output column here, which is Price * 2, so the
+			// statement no longer sorts the scan's own column.
+			"scan whose ORDER BY names an output alias of another expression",
+			leafOf(scanned).SelectColumns(typedTestColumn(dal.Binary(typedTestField("Price"), dal.Multiply, typedTestConst(2)), "Total")),
+			nil, "ORDER BY",
+		},
+		{"scan with a larger LIMIT", leafOf(scanned).Limit(11).SelectColumns(), nil, "LIMIT"},
+		{"scan with an OFFSET", leafOf(scanned).Offset(1).SelectColumns(), nil, "OFFSET"},
+		{"scan with an aggregate", dal.From(scanned).NewQuery().Limit(10).SelectColumns(dal.CountAs(typedTestField("InvoiceId"), "n")), nil, "aggregation"},
+		{"scan with a GROUP BY", leafOf(scanned).GroupBy(typedTestField("Total")).SelectColumns(), nil, "aggregation"},
 		{"the document identity has no column to read", album().SelectColumns(typedTestColumn(dal.DocumentID(), "")), nil, "dal.DocumentID()"},
 		{"the document identity in WHERE", album().Where(dal.NewComparison(dal.DocumentID(), dal.Equal, typedTestConst("x"))).SelectColumns(), nil, "dal.DocumentID()"},
 		{"the document identity in ORDER BY", album().OrderBy(dal.Ascending(dal.DocumentID())).SelectColumns(), nil, "dal.DocumentID()"},
@@ -200,6 +232,39 @@ func TestCompileTypedSQLRejectsInvalidQueriesWithoutClaimingUnsupported(t *testi
 	}
 }
 
+// TestCompileTypedSQLErrorsCarryNoConstant: DALgo's grouping validation writes the
+// query's own expressions into its message, constants included. A server logs
+// compile errors, so the compiler reports the rule that failed and drops that
+// text; no value reaches the SQL text or an error message.
+func TestCompileTypedSQLErrorsCarryNoConstant(t *testing.T) {
+	album := func() dal.IQueryBuilder { return typedTestFrom("Album", "").NewQuery() }
+	cases := []struct {
+		name  string
+		query dal.StructuredQuery
+	}{
+		{
+			"a selected expression that is not grouped",
+			album().GroupBy(typedTestField("a")).SelectColumns(
+				typedTestColumn(dal.Binary(typedTestField("a"), dal.Add, typedTestConst("hunter2-secret")), "x")),
+		},
+		{
+			"an IN list in HAVING, which core cannot match to a group key",
+			album().GroupBy(typedTestField("a")).
+				Having(dal.NewComparison(typedTestField("a"), dal.In, dal.NewArray([]string{"hunter2-secret", "other-secret"}))).
+				SelectColumns(typedTestColumn(typedTestField("a"), "")),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			expectTypedInvalid(t, tc.query, nil, typedCatalogFacts{}, "invalid aggregation")
+			_, _, err := compileTypedSQL(tc.query, newFakeTypedDialect(), typedCatalogFacts{})
+			if strings.Contains(err.Error(), "secret") {
+				t.Fatalf("error %q carries a constant of the query", err)
+			}
+		})
+	}
+}
+
 func TestCompileTypedSQLWithoutDialect(t *testing.T) {
 	text, args, err := compileTypedSQL(typedTestFrom("Album", "").NewQuery().SelectColumns(), nil, typedCatalogFacts{})
 	if err == nil || !strings.Contains(err.Error(), "requires a dialect") || text != "" || args != nil {
@@ -265,6 +330,11 @@ func TestCompileTypedSQLRefusesADialectThatBreaksTheOperandRules(t *testing.T) {
 	dividedValues := album().SelectColumns(typedTestColumn(dal.Binary(
 		dal.Binary(typedTestField("a"), dal.Add, typedTestConst(1)), dal.Divide,
 		dal.Binary(typedTestField("b"), dal.Subtract, typedTestConst(2))), "r"))
+	// (a + 1) / (a + 2): both operands carry a value and render as the same text,
+	// ("a" + ?::bigint), so no search of the fragment can tell which is which.
+	dividedSameText := album().SelectColumns(typedTestColumn(dal.Binary(
+		dal.Binary(typedTestField("a"), dal.Add, typedTestConst(1)), dal.Divide,
+		dal.Binary(typedTestField("a"), dal.Add, typedTestConst(2))), "r"))
 	// a / b: neither operand carries a value.
 	dividedFields := album().SelectColumns(typedTestColumn(dal.Binary(typedTestField("a"), dal.Divide, typedTestField("b")), "r"))
 	sumOfProduct := album().SelectColumns(dal.SumAs(dal.Binary(typedTestField("a"), dal.Multiply, typedTestConst(2)), "s"))
@@ -284,6 +354,13 @@ func TestCompileTypedSQLRefusesADialectThatBreaksTheOperandRules(t *testing.T) {
 				d.divideOverride = func(left, right string) string { return "(" + right + " / " + left + ")" }
 			},
 			dividedValues, "verbatim and in argument order",
+		},
+		{
+			"divide renders the right operand before the left, both written the same",
+			func(d *fakeTypedDialect) {
+				d.divideOverride = func(left, right string) string { return "(" + right + " / " + left + ")" }
+			},
+			dividedSameText, "verbatim and in argument order",
 		},
 		{
 			"divide renders the left operand twice",
@@ -422,6 +499,21 @@ func TestCompileTypedSQLRefusesADialectThatBreaksTheOperandRules(t *testing.T) {
 			dialect: dialect,
 			query:   dividedFields,
 			wantSQL: `SELECT (CASE WHEN "b" = 0 THEN NULL ELSE "a" / "b" END) AS "r" FROM "Album"`,
+		}.run(t)
+	})
+	t.Run("a dialect may repeat the operand that carries no value beside one that does", func(t *testing.T) {
+		// (a + 1) / b: the probe is for two operands that both carry a value, so the
+		// CASE form is not asked to repeat a marker it may not repeat.
+		dialect := newFakeTypedDialect()
+		dialect.divideOverride = func(left, right string) string {
+			return "(CASE WHEN " + right + " = 0 THEN NULL ELSE " + left + " / " + right + " END)"
+		}
+		typedGolden{
+			dialect: dialect,
+			query: album().SelectColumns(typedTestColumn(dal.Binary(
+				dal.Binary(typedTestField("a"), dal.Add, typedTestConst(1)), dal.Divide, typedTestField("b")), "r")),
+			wantSQL:  `SELECT (CASE WHEN "b" = 0 THEN NULL ELSE ("a" + $1::bigint) / "b" END) AS "r" FROM "Album"`,
+			wantArgs: []any{1},
 		}.run(t)
 	})
 	t.Run("a dialect that wraps operands without changing them is accepted", func(t *testing.T) {

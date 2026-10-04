@@ -108,6 +108,11 @@ func countTypedMarkers(text string, quote byte) int {
 // two operands would keep the count right and bind values to the wrong places.
 // An operand without a marker carries no argument, so it may be repeated, moved
 // or rewritten freely.
+//
+// The check sees text only. Two operands with the same text (the quotient
+// (a + 1) / (a + 2) renders both as ("a" + ?::bigint)) are indistinguishable to
+// it, so a swap of them passes. The one fragment with two operands that can meet
+// that case is divide, and checkDivideOrder probes it with operands that differ.
 func checkTypedFragment(fragment string, quote byte, own int, operands ...string) error {
 	want := own
 	for _, operand := range operands {
