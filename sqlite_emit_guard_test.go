@@ -328,7 +328,7 @@ func TestEmitSQLGuardValueTypes(t *testing.T) {
 			t.Errorf("constant %T refused: %v", v, err)
 		}
 	}
-	ints := []any{[]int{1, 2}, []float64{1.5}, []byte("abc"), []any{nil, true, "s"}}
+	ints := []any{[]int{1, 2}, []float64{1.5}, []any{nil, true, "s"}, []string{"a b", "ü"}}
 	for _, v := range ints {
 		q := guardQuery(baseFrom(), func(b dal.IQueryBuilder) dal.IQueryBuilder { return b.WhereInArrayField("a", v) })
 		if _, err := emitSQL(q); err != nil {
@@ -358,8 +358,48 @@ func TestEmitSQLGuardValueTypes(t *testing.T) {
 			t.Errorf("array %T accepted: %v", v, err)
 		}
 	}
-	// Array.Value forms that String() renders safely.
-	for _, v := range []any{nil, []string{}, []int{1}, []any{nil, 1, "x"}} {
+	// Array.Value forms that String() renders safely. A []byte is accepted here
+	// because fmt prints its numbers; in constant position json would render it
+	// as base64 text.
+	for _, v := range []any{nil, []string{}, []int{1}, []any{nil, 1, "x"}, []byte("abc")} {
+		q := guardQuery(baseFrom(), func(b dal.IQueryBuilder) dal.IQueryBuilder {
+			return b.Where(dal.NewComparison(dal.Field("a"), dal.In, dal.Array{Value: v}))
+		})
+		if _, err := emitSQL(q); err != nil {
+			t.Errorf("array %T refused: %v", v, err)
+		}
+	}
+}
+
+// TestEmitSQLGuardRefusesJSONRenderingMismatch pins the slices in constant
+// position whose encoding/json text differs from the values the guard checked:
+// a []byte becomes a base64 string, and <, >, &, U+2028, U+2029 and invalid
+// UTF-8 become backslash-u escapes. Array position prints through fmt, so the
+// same strings are accepted there.
+func TestEmitSQLGuardRefusesJSONRenderingMismatch(t *testing.T) {
+	refused := []any{
+		[]byte("abc"), []uint8(nil), []string{"a<b"}, []string{"a>b"}, []any{"a&b"},
+		[]string{"a\u2028b"}, []string{"a\u2029b"}, []string{"a\xffb"},
+	}
+	for _, v := range refused {
+		q := guardQuery(baseFrom(), func(b dal.IQueryBuilder) dal.IQueryBuilder {
+			return b.Where(dal.NewComparison(dal.Field("a"), dal.Equal, dal.Constant{Value: v}))
+		})
+		if _, err := emitSQL(q); !errors.Is(err, dal.ErrNotSupported) {
+			t.Errorf("constant %T %q accepted: %v", v, v, err)
+		}
+	}
+	// A scalar string is quote doubled, not rendered by json, so these are fine.
+	for _, s := range []string{"a<b", "a>b", "a&b", "a\u2028b", "a\xffb"} {
+		q := guardQuery(baseFrom(), func(b dal.IQueryBuilder) dal.IQueryBuilder {
+			return b.Where(dal.NewComparison(dal.Field("a"), dal.Equal, dal.Constant{Value: s}))
+		})
+		if _, err := emitSQL(q); err != nil {
+			t.Errorf("scalar constant %q refused: %v", s, err)
+		}
+	}
+	// In an Array the elements are printed by fmt: no escape appears.
+	for _, v := range []any{[]string{"a<b"}, []any{"a&b"}} {
 		q := guardQuery(baseFrom(), func(b dal.IQueryBuilder) dal.IQueryBuilder {
 			return b.Where(dal.NewComparison(dal.Field("a"), dal.In, dal.Array{Value: v}))
 		})

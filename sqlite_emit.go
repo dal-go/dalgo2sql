@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/dal-go/dalgo/dal"
 )
@@ -760,8 +761,8 @@ func validateSQLValue(value any) error {
 // emitSQL preserves the historical string-rewrite helper for compatibility.
 // Structured query execution uses compileStructuredSQL instead.
 //
-// The text it builds comes from q.String(), which pastes names and values
-// straight into the statement and then strips every bracket pair. It is
+// The text it builds comes from dal.QueryString(q), which pastes names and
+// values straight into the statement and then strips every bracket pair. It is
 // therefore only safe for plain names and values, so emitSQL first runs
 // guardLegacyEmit and refuses anything it cannot prove plain, with an error
 // wrapping dal.ErrNotSupported. The caller must not execute SQL on error.
@@ -1093,11 +1094,15 @@ func guardLegacyAggregate(aggregate dal.AggregateFunc, path string) error {
 // a slice through encoding/json, so a slice must hold only checked scalars and,
 // because json turns a double quote into backslash-quote, no double quote. Only
 // an unnamed slice type is accepted: a named one may carry its own marshaller,
-// and then the text is not what was checked.
+// and then the text is not what was checked. A slice of bytes is refused too:
+// json renders it as one base64 string, not as the numbers the guard checked.
 func guardLegacyConstantValue(path string, value any) error {
 	if value != nil && reflect.TypeOf(value).Kind() == reflect.Slice {
 		if !isUnnamedSlice(value) {
 			return legacyRefusal(path, "constant of named slice type %T is not supported", value)
+		}
+		if reflect.TypeOf(value).Elem().Kind() == reflect.Uint8 {
+			return legacyRefusal(path, "constant of byte slice type %T is not supported", value)
 		}
 		return guardLegacySequence(path, value, legacyJSONElement)
 	}
@@ -1194,10 +1199,18 @@ func guardLegacyTime(path string, value time.Time, rendering legacyRendering) er
 // guardLegacyString refuses text the legacy emitter cannot carry safely: a
 // backslash (MySQL-style escapes), a bracket (stripBracketIdents removes it
 // from the whole statement), a control character, and, when the text is
-// rendered by encoding/json, a double quote. The error does not repeat the text.
+// rendered by encoding/json, a double quote and every character json writes as
+// a backslash-u escape instead of as itself (<, >, &, U+2028, U+2029 and bytes
+// that are not valid UTF-8). The error does not repeat the text.
 func guardLegacyString(path, value string, jsonRendered bool) error {
+	if jsonRendered && !utf8.ValidString(value) {
+		return legacyRefusal(path, "string constant contains a character that is not supported")
+	}
 	for _, r := range value {
-		if r == '\\' || r == '[' || r == ']' || unicode.IsControl(r) || (jsonRendered && r == '"') {
+		if r == '\\' || r == '[' || r == ']' || unicode.IsControl(r) {
+			return legacyRefusal(path, "string constant contains a character that is not supported")
+		}
+		if jsonRendered && (r == '"' || r == '<' || r == '>' || r == '&' || r == '\u2028' || r == '\u2029') {
 			return legacyRefusal(path, "string constant contains a character that is not supported")
 		}
 	}
