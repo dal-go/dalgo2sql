@@ -1,0 +1,30 @@
+=== chinook-nested.dtql.yaml
+sql: SELECT "i"."InvoiceId" AS "invoice_id", "c"."FirstName" AS "customer", "e"."FirstName" AS "employee" FROM "main"."Invoice" AS "i" INNER JOIN ("main"."Customer" AS "c" LEFT JOIN "main"."Employee" AS "e" ON ("c"."SupportRepId" = "e"."EmployeeId")) ON ("i"."CustomerId" = "c"."CustomerId") WHERE "c"."CustomerId" >= $1::bigint ORDER BY "i"."InvoiceId" DESC LIMIT $2
+$1 int64 10
+$2 int64 10
+=== chinook-hinted.dtql.yaml
+sql: SELECT "i"."InvoiceId" AS "invoice_id", "c"."FirstName" AS "customer", "e"."FirstName" AS "employee" FROM "main"."Invoice" AS "i" INNER JOIN ("main"."Customer" AS "c" LEFT JOIN "main"."Employee" AS "e" ON ("c"."SupportRepId" = "e"."EmployeeId")) ON ("i"."CustomerId" = "c"."CustomerId") LEFT JOIN "main"."Customer" AS "c2" ON ("i"."CustomerId" = "c2"."CustomerId") WHERE "c"."CustomerId" >= $1::bigint ORDER BY "i"."InvoiceId" DESC LIMIT $2
+$1 int64 10
+$2 int64 10
+=== chinook-wildcard.dtql.yaml
+refused: not supported: wildcard projection must precede explicit columns
+=== inner join
+sql: SELECT "a"."Title", "r"."Name" AS "artist" FROM "Album" AS "a" INNER JOIN "Artist" AS "r" ON ("a"."ArtistId" = "r"."ArtistId")
+=== left join with two key pairs, then a default join type
+sql: SELECT "e"."FirstName" AS "rep" FROM "Customer" AS "c" LEFT JOIN "Employee" AS "e" ON ("c"."SupportRepId" = "e"."EmployeeId" AND "c"."FirstName" = "e"."FirstName") INNER JOIN "Invoice" AS "i" ON ("c"."CustomerId" = "i"."CustomerId")
+=== ORDER BY on the preserved and on the nullable side of a left join
+sql: SELECT * FROM "Album" AS "a" LEFT JOIN "Artist" AS "r" ON ("a"."ArtistId" = "r"."ArtistId") ORDER BY "a"."AlbumId" ASC, "r"."ArtistId" ASC NULLS FIRST
+=== aggregation over a join
+sql: SELECT "c"."Country" AS "country", ((SUM("i"."Total"))::double precision) AS "revenue" FROM "Invoice" AS "i" INNER JOIN "Customer" AS "c" ON ("i"."CustomerId" = "c"."CustomerId") GROUP BY "c"."Country" HAVING ((SUM("i"."Total"))::double precision) > $1::bigint ORDER BY ((SUM("i"."Total"))::double precision) DESC NULLS LAST LIMIT $2
+$1 int64 1000
+$2 int64 10
+=== key types that differ are refused before the server sees them
+refused: not supported: from.joins[0].on[0]: join_plan: key types differ ("integer" against "text")
+=== a join key that is not a column is an error
+error: from.joins[0].on[0].right: field "to_json" is not a column of source "r"
+=== a join without facts is not type checked
+sql: SELECT * FROM "Album" AS "a" INNER JOIN "Artist" AS "r" ON ("a"."ArtistId" = "r"."Name")
+=== a right join is refused
+refused: not supported: join_type at from.joins[0].type: unsupported join type "RIGHT"
+=== a scan-bounded source needs the generic engine
+refused: not supported: from: join_plan: a scan-bounded source needs the generic engine

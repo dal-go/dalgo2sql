@@ -82,8 +82,10 @@ import (
 //     lookup, which folds the query's name with typedCatalogFacts.Fold and matches
 //     a column only when the catalog's own name equals the result: Fold must be
 //     the case rule quoteIdent applies, a catalog column whose name is not its own
-//     folded form is never matched, and a select-all that would have to write one
-//     is refused, because the statement could not name that column. In GROUP BY a
+//     folded form is never matched, and a select-all over a source that lists one is
+//     refused, even when its exclusions leave that column out, because the check
+//     runs on every catalog column before the exclusions apply and a statement
+//     could not name that column. In GROUP BY a
 //     bare name is an input column before it is an output, and HAVING cannot see
 //     outputs at all, so both write the input column as it is, under any case
 //     rule. A dialect for an engine that reads a select alias before an input
@@ -149,7 +151,17 @@ type typedDialect interface {
 	capabilities() dal.QueryCapabilities
 
 	// catalogFacts reads, with one catalog lookup, the facts compileTypedSQL
-	// needs about the sources of a query. The reader calls it before compiling.
+	// needs about the sources of a query. The reader calls it before compiling,
+	// with typedQuerySources(q.From()): the sources as the query spells them.
+	// The facts it returns are keyed by that spelling, folded with the facts'
+	// Fold and schema included, because that is the key the compiler looks a
+	// source up by: an unqualified source has an empty Schema whatever schema the
+	// server resolves it to, and a source the server does not resolve is absent.
+	// The lookup must describe the relation the statement will read, so it
+	// resolves the very text the statement writes for the source, on the same
+	// connection or transaction. Sources lists every column a statement may read
+	// (see the name-resolution rules above). The PostgreSQL dialect
+	// (dialect_postgres.go) documents how it does this.
 	catalogFacts(ctx context.Context, execute executeQueryFunc, sources []typedSourceName) (typedCatalogFacts, error)
 
 	// window is reserved for window functions. DTQL has none today and the

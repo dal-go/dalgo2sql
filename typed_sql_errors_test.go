@@ -290,6 +290,12 @@ func TestCompileTypedSQLRefusesUnsupportedNodesWithErrNotSupported(t *testing.T)
 		t.Run(tc.name, func(t *testing.T) {
 			expectTypedUnsupported(t, tc.query, tc.dialect, typedCatalogFacts{}, tc.fragment)
 		})
+		// A case written for the folding fake holds for the dialect that ships.
+		if tc.dialect == folding {
+			t.Run(tc.name+" (PostgreSQL FoldLower)", func(t *testing.T) {
+				expectTypedUnsupported(t, tc.query, newPostgresDialect(postgresFoldLower), typedCatalogFacts{}, tc.fragment)
+			})
+		}
 	}
 }
 
@@ -714,6 +720,19 @@ func TestCompileTypedSQLCheckedJoinKeyTypes(t *testing.T) {
 			}
 		})
 	}
+	// The type check runs when the facts know both sides of a key. With the facts of
+	// one source only, a pair of different types is accepted: the other side is
+	// unknown, so nothing is compared (leftKnown && rightKnown in joinOn).
+	for _, only := range []string{"Album", "Artist"} {
+		t.Run("accepts a key whose other side the facts do not know ("+only+" only)", func(t *testing.T) {
+			oneSided := typedCatalogFacts{Sources: map[typedSourceName]typedSourceFacts{
+				{Name: only}: facts.Sources[typedSourceName{Name: only}],
+			}}
+			if _, _, err := compileTypedSQL(join("ArtistId", "Name"), newFakeTypedDialect(), oneSided); err != nil {
+				t.Fatalf("compileTypedSQL() error = %v", err)
+			}
+		})
+	}
 	refused := []struct{ name, album, artist string }{
 		{"number against text", "ArtistId", "Name"},
 		{"two different non-scalar types", "Guid", "Doc"},
@@ -891,6 +910,11 @@ func TestCompileTypedSQLRefusesAWholeRowNameWithoutFacts(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			expectTypedUnsupported(t, tc.query, tc.dialect, typedCatalogFacts{}, tc.fragment)
 		})
+		if tc.dialect == folding {
+			t.Run(tc.name+" (PostgreSQL FoldLower)", func(t *testing.T) {
+				expectTypedUnsupported(t, tc.query, newPostgresDialect(postgresFoldLower), typedCatalogFacts{}, tc.fragment)
+			})
+		}
 	}
 }
 
@@ -960,5 +984,15 @@ func TestCompileTypedSQLRefusesANameThatIsNotAColumnOfAKnownSource(t *testing.T)
 		t.Run(tc.name, func(t *testing.T) {
 			expectTypedInvalid(t, tc.query, tc.dialect, tc.facts, tc.fragment)
 		})
+		// The facts of the real dialect carry its own Fold, which must be the rule its
+		// quoteIdent applies (TestPostgresDialectFoldIsTheFoldQuoteIdentApplies).
+		if tc.dialect == folding {
+			t.Run(tc.name+" (PostgreSQL FoldLower)", func(t *testing.T) {
+				postgres := newPostgresDialect(postgresFoldLower)
+				facts := tc.facts
+				facts.Fold = postgresTestFolding(t, postgres).Fold
+				expectTypedInvalid(t, tc.query, postgres, facts, tc.fragment)
+			})
+		}
 	}
 }

@@ -34,20 +34,47 @@ inputs to REAL for parity with DALgo's generic `float64` fallback. FIRST/LAST
 are deliberately not advertised until DALgo models aggregate-local ordering;
 using unspecified SQLite row order would not be deterministic.
 
-## Legacy text path (no dialect, no native compiler)
+## Which path compiles a structured query
+
+A structured DALgo query reaches SQL by one of three paths, and which one is
+decided by the engine, not by the query.
+
+- **SQLite** (`DbOptions.StructuredQueryDialect: "sqlite"`) uses the SQLite
+  structured emitter, `compileStructuredSQL`, described above. It is built around
+  SQLite's dynamic typing and has its own path; the typed compiler does not touch
+  it.
+- **PostgreSQL** uses the typed SQL compiler, not the legacy emitter.
+  `compileTypedSQL(query, dialect, facts)` renders one `SELECT` for a statically
+  typed engine, `newPostgresDialect(mode)` supplies PostgreSQL's spelling, and
+  `dialect.catalogFacts` reads the `facts` (every column of each source, their type
+  categories and NOT NULL flags) with one catalog query. Every constant is a bound
+  argument and every name goes through the dialect's quoting, so no value is
+  written into the statement text. The two identifier modes are exact (names as the
+  query spells them, for databases created with quoted mixed-case names) and fold
+  to lower case (for databases created by dalgo2postgres, which stores lower-case
+  names). A query the compiler cannot run faithfully in one statement is refused
+  with an error matching `dal.ErrNotSupported`, which is the signal for DALgo's
+  generic engine; it is never handed to the legacy emitter. The exact SQL and
+  arguments of every supported shape are in `testdata/postgres`. The compiler and
+  the dialect are in the package but `DbOptions` does not select them yet:
+  `StructuredQueryDialect: "postgres"` is refused as an unsupported dialect until
+  the readers dispatch to the typed compiler.
+- **No dialect, no native compiler** uses the legacy text emitter, described next.
+  PostgreSQL is not meant to be served by it; a PostgreSQL source stays on it only
+  until it is opened with the dialect above.
+
+### Legacy text path
 
 A source opened with no `StructuredQueryDialect` and no
 `NativeStructuredQueryCompiler` renders structured queries through the legacy
 text emitter. That is every such source, among them datatug-cli SQLite sources
 opened without the `sqlite` dialect and openvaultdb-go's PostgreSQL and MySQL
-mounts. The emitter pastes names and values straight into the statement, so it
-fails closed: a name or value it cannot prove plain (brackets, backslashes,
+mounts today. The emitter pastes names and values straight into the statement, so
+it fails closed: a name or value it cannot prove plain (brackets, backslashes,
 control characters, quotes inside JSON-rendered slices, `<`, `>`, `&`, U+2028,
 U+2029, invalid UTF-8, a `[]byte` constant, named slice types, non-finite
 numbers, times outside the JSON range) gets an error wrapping
-`dal.ErrNotSupported`, and no SQL is executed. The PostgreSQL and MySQL mounts
-stay on this guarded path until the PostgreSQL adapter work gives them a native
-compiler.
+`dal.ErrNotSupported`, and no SQL is executed.
 
 ## NUMERIC result values
 

@@ -1,0 +1,99 @@
+=== int
+sql: SELECT * FROM "Album" WHERE "Title" = $1::bigint
+$1 int64 7
+=== negative int
+sql: SELECT * FROM "Album" WHERE "Title" = $1::bigint
+$1 int64 -7
+=== zero
+sql: SELECT * FROM "Album" WHERE "Title" = $1::bigint
+$1 int64 0
+=== int8
+sql: SELECT * FROM "Album" WHERE "Title" = $1::bigint
+$1 int64 -8
+=== int64 maximum
+sql: SELECT * FROM "Album" WHERE "Title" = $1::bigint
+$1 int64 9223372036854775807
+=== int64 minimum
+sql: SELECT * FROM "Album" WHERE "Title" = $1::bigint
+$1 int64 -9223372036854775808
+=== uint8
+sql: SELECT * FROM "Album" WHERE "Title" = $1::numeric
+$1 string "8"
+=== uint64 above bigint
+sql: SELECT * FROM "Album" WHERE "Title" = $1::numeric
+$1 string "18446744073709551615"
+=== float64 fraction
+sql: SELECT * FROM "Album" WHERE "Title" = $1::numeric
+$1 string "0.5"
+=== float64 whole
+sql: SELECT * FROM "Album" WHERE "Title" = $1::numeric
+$1 string "5"
+=== float64 shortest text
+sql: SELECT * FROM "Album" WHERE "Title" = $1::numeric
+$1 string "0.1"
+=== float64 negative zero
+sql: SELECT * FROM "Album" WHERE "Title" = $1::numeric
+$1 string "-0"
+=== float64 large
+sql: SELECT * FROM "Album" WHERE "Title" = $1::numeric
+$1 string "1000000000000000000000"
+=== float64 tiny
+sql: SELECT * FROM "Album" WHERE "Title" = $1::numeric
+$1 string "0.0000001"
+=== float32 keeps its own shortest text
+sql: SELECT * FROM "Album" WHERE "Title" = $1::numeric
+$1 string "0.1"
+=== NaN
+sql: SELECT * FROM "Album" WHERE "Title" = $1::numeric
+$1 string "NaN"
+=== positive infinity
+sql: SELECT * FROM "Album" WHERE "Title" = $1::numeric
+$1 string "Infinity"
+=== negative infinity
+sql: SELECT * FROM "Album" WHERE "Title" = $1::numeric
+$1 string "-Infinity"
+=== string stays untyped
+sql: SELECT * FROM "Album" WHERE "Title" = $1
+$1 string "Ada Lovelace"
+=== empty string
+sql: SELECT * FROM "Album" WHERE "Title" = $1
+$1 string ""
+=== a string of digits is still a string
+sql: SELECT * FROM "Album" WHERE "Title" = $1
+$1 string "42"
+=== a string that looks like a date is read by the server
+sql: SELECT * FROM "Album" WHERE "Title" = $1
+$1 string "2026-10-04"
+=== bool true
+sql: SELECT * FROM "Album" WHERE "Title" = $1::boolean
+$1 bool true
+=== bool false
+sql: SELECT * FROM "Album" WHERE "Title" = $1::boolean
+$1 bool false
+=== time in UTC
+sql: SELECT * FROM "Album" WHERE "Title" = $1::timestamptz
+$1 time.Time 2026-10-04T12:30:15Z
+=== time keeps its instant under another zone
+sql: SELECT * FROM "Album" WHERE "Title" = $1::timestamptz
+$1 time.Time 2026-10-04T12:30:15.123456789+02:00
+=== bytes
+sql: SELECT * FROM "Album" WHERE "Title" = $1::bytea
+$1 []byte 0001fe
+=== empty bytes
+sql: SELECT * FROM "Album" WHERE "Title" = $1::bytea
+$1 []byte (empty)
+=== nil is an untyped NULL in an ordering comparison
+sql: SELECT * FROM "Album" WHERE "AlbumId" < $1
+$1 nil
+=== a type DALgo cannot hold is refused
+refused: where: not supported: SQL value type struct {}
+=== mixed constants in an IN list
+sql: SELECT * FROM "Album" WHERE "AlbumId" IN ($1::bigint, $2::numeric, $3::numeric, $4, $5::boolean, $6::timestamptz, $7::bytea, $8)
+$1 int64 1
+$2 string "2.5"
+$3 string "3"
+$4 string "four"
+$5 bool true
+$6 time.Time 2026-10-04T12:30:15Z
+$7 []byte 78
+$8 nil

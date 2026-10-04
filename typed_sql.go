@@ -422,7 +422,11 @@ func (c *typedCompiler) expandWildcard(wildcard *wildcardProjectionPlan) ([]type
 	for _, column := range source.Columns {
 		// The statement writes the dialect's folded name, so a column whose own name
 		// is not that name cannot be listed, and writing the folded one would return
-		// another column, or the same one twice.
+		// another column, or the same one twice. The check is on every column of the
+		// source, before the exclusions are applied: a select-all over a source that
+		// lists such a column is refused even when it excludes that column, which
+		// keeps the rule simple and never writes a statement over a catalog the
+		// dialect cannot spell.
 		if !c.facts.addressable(column.Name) {
 			return nil, typedUnsupported("a wildcard projection cannot list catalog column %q: the dialect writes its name in another form", column.Name)
 		}
@@ -1014,7 +1018,12 @@ func (c *typedCompiler) field(field dal.FieldRef, sources map[string]typedSource
 func (c *typedCompiler) checkNamesAColumn(field dal.FieldRef, written string, source typedSource) error {
 	if _, known := c.facts.source(source.table); known {
 		if _, ok := c.facts.column(source.table, field.Name()); !ok {
-			return fmt.Errorf("field %q is not a column of source %s in the catalog facts; the server would read the name as the row of the source or as a function of it", field.Name(), source.quoted)
+			// The message says what is true of the table. Why the compiler refuses
+			// instead of leaving it to the server (which would read the name as the
+			// row or as a function of it, not report a missing column) is the reason
+			// given above, and it belongs in this comment, not in an error a caller
+			// sees.
+			return fmt.Errorf("field %q is not a column of source %s", field.Name(), source.quoted)
 		}
 		return nil
 	}
