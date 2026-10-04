@@ -28,6 +28,16 @@ func TestCompileTypedSQLRefusesUnsupportedNodesWithErrNotSupported(t *testing.T)
 	noGroupBy := newFakeTypedDialect()
 	noGroupBy.caps.GroupBy = false
 	parent := record.NewKeyWithID("Parent", "p1")
+	bucket := dal.Binary(typedTestField("Total"), dal.Add, typedTestConst(1))
+	bucketColumns := []dal.Column{typedTestColumn(bucket, "bucket"), typedTestColumn(dal.NewAggregate(dal.COUNT, false, dal.Star()), "n")}
+	scanned := dal.NewRootCollectionRef("Invoice", "i").WithScan(10, dal.Descending(typedTestField("Total")))
+	scanLimitOnly := dal.NewRootCollectionRef("Invoice", "i").WithScan(10)
+	scanOrderOnly := dal.NewRootCollectionRef("Customer", "c").WithScan(0, dal.Ascending(typedTestField("Name")))
+	plainCustomer := dal.NewRootCollectionRef("Customer", "c")
+	customerJoin := typedTestJoinOn("i", "CustomerId", "c", "CustomerId")
+	joinedTo := func(base dal.RecordsetSource, joined dal.RecordsetSource) dal.StructuredQuery {
+		return dal.From(base).Join(dal.NewJoinedSource(joined, dal.JoinInner, customerJoin)).NewQuery().SelectColumns(typedTestColumn(typedTestQualified("c", "Name"), ""))
+	}
 
 	cases := []struct {
 		name     string
@@ -78,6 +88,61 @@ func TestCompileTypedSQLRefusesUnsupportedNodesWithErrNotSupported(t *testing.T)
 				Having(dal.NewComparison(typedTestField("bucket"), dal.GreaterThen, typedTestConst(2))).
 				SelectColumns(typedTestColumn(dal.Binary(typedTestField("a"), dal.Add, typedTestConst(1)), "bucket"), dal.CountAs(typedTestField("a"), "n")),
 			nil, "grouped expression",
+		},
+		{
+			"ORDER BY over a grouped alias nested in a larger expression",
+			album().GroupBy(bucket).
+				OrderBy(dal.Ascending(dal.Binary(typedTestField("bucket"), dal.Multiply, typedTestConst(2)))).
+				SelectColumns(bucketColumns...),
+			nil, "ORDER BY refers to \"bucket\"",
+		},
+		{
+			"ORDER BY over a grouped alias added to an aggregate",
+			album().GroupBy(bucket).
+				OrderBy(dal.Ascending(dal.Binary(typedTestField("bucket"), dal.Add, typedTestField("n")))).
+				SelectColumns(bucketColumns...),
+			nil, "ORDER BY refers to \"bucket\"",
+		},
+		{
+			"ORDER BY nesting a grouped alias after an item that is fine",
+			album().GroupBy(bucket).
+				OrderBy(dal.Ascending(typedTestField("bucket")), dal.Ascending(dal.Binary(typedTestField("bucket"), dal.Multiply, typedTestConst(2)))).
+				SelectColumns(bucketColumns...),
+			nil, "orderBy 1",
+		},
+		{"scan-bounded base source in a join", joinedTo(scanned, plainCustomer), nil, "from: join_plan: a scan-bounded source"},
+		{"scan limit alone on the base source of a join", joinedTo(scanLimitOnly, plainCustomer), nil, "scan-bounded"},
+		{"scan order alone on a joined source", joinedTo(dal.NewRootCollectionRef("Invoice", "i"), scanOrderOnly), nil, "from.joins[0].from: join_plan: a scan-bounded source"},
+		{"scan-bounded pointer source in a join", joinedTo(typedTestPtr(scanned), plainCustomer), nil, "scan-bounded"},
+		{
+			"scan-bounded source inside a nested join subtree",
+			dal.From(dal.NewRootCollectionRef("Invoice", "i")).Join(
+				dal.NewJoinedFrom(dal.From(dal.NewRootCollectionRef("Customer", "c")).Join(
+					dal.NewJoinedSource(dal.NewRootCollectionRef("Employee", "e").WithScan(5), dal.JoinLeft, typedTestJoinOn("c", "SupportRepId", "e", "EmployeeId")),
+				), dal.JoinInner, customerJoin),
+			).NewQuery().SelectColumns(typedTestColumn(typedTestQualified("c", "Name"), "")),
+			nil, "from.joins[0].from.joins[0].from: join_plan: a scan-bounded source",
+		},
+		{"named-database base source in a join", joinedTo(dal.NewDatabaseCollectionRef("db1", "", "Invoice", "i"), plainCustomer), nil, "from: join_plan: a source in a named database"},
+		{"named-database joined source", joinedTo(dal.NewRootCollectionRef("Invoice", "i"), dal.NewDatabaseCollectionRef("db2", "", "Customer", "c")), nil, "from.joins[0].from: join_plan: a source in a named database"},
+		{"the document identity has no column to read", album().SelectColumns(typedTestColumn(dal.DocumentID(), "")), nil, "dal.DocumentID()"},
+		{"the document identity in WHERE", album().Where(dal.NewComparison(dal.DocumentID(), dal.Equal, typedTestConst("x"))).SelectColumns(), nil, "dal.DocumentID()"},
+		{"the document identity in ORDER BY", album().OrderBy(dal.Ascending(dal.DocumentID())).SelectColumns(), nil, "dal.DocumentID()"},
+		{
+			"two IN lists that together bind too many values",
+			album().Where(dal.NewGroupCondition(dal.And,
+				dal.NewComparison(typedTestField("a"), dal.In, dal.NewArray(make([]int, 40000))),
+				dal.NewComparison(typedTestField("b"), dal.In, dal.NewArray(make([]int, 40000))),
+			)).SelectColumns(),
+			nil, "binds 80000 values",
+		},
+		{
+			"an IN list at the limit plus one more constant",
+			album().Where(dal.NewGroupCondition(dal.And,
+				dal.NewComparison(typedTestField("a"), dal.In, dal.NewArray(make([]int, typedMaxArguments))),
+				typedTestEq(typedTestField("b"), 1),
+			)).SelectColumns(),
+			nil, "binds 65536 values",
 		},
 	}
 	for _, tc := range cases {
@@ -189,6 +254,207 @@ func TestCompileTypedSQLCatchesADialectThatBreaksTheMarkerContract(t *testing.T)
 			t.Fatalf("error = %v, want the dialect's error", err)
 		}
 	})
+}
+
+// TestCompileTypedSQLRefusesADialectThatBreaksTheOperandRules proves the two
+// rules numbered in the typedDialect contract. Both leave the marker count right,
+// so the final count check alone passes them and binds values to wrong places.
+func TestCompileTypedSQLRefusesADialectThatBreaksTheOperandRules(t *testing.T) {
+	album := func() dal.IQueryBuilder { return typedTestFrom("Album", "").NewQuery() }
+	// (a + 1) / (b - 2): both operands carry a value.
+	dividedValues := album().SelectColumns(typedTestColumn(dal.Binary(
+		dal.Binary(typedTestField("a"), dal.Add, typedTestConst(1)), dal.Divide,
+		dal.Binary(typedTestField("b"), dal.Subtract, typedTestConst(2))), "r"))
+	// a / b: neither operand carries a value.
+	dividedFields := album().SelectColumns(typedTestColumn(dal.Binary(typedTestField("a"), dal.Divide, typedTestField("b")), "r"))
+	sumOfProduct := album().SelectColumns(dal.SumAs(dal.Binary(typedTestField("a"), dal.Multiply, typedTestConst(2)), "s"))
+	orderedByValue := album().OrderBy(dal.Ascending(dal.Binary(typedTestField("a"), dal.Add, typedTestConst(1)))).SelectColumns()
+	inEmpty := album().Where(dal.NewComparison(typedTestField("a"), dal.In, dal.NewArray([]int{}))).SelectColumns()
+	limited := album().Limit(5).SelectColumns()
+
+	cases := []struct {
+		name     string
+		break_   func(*fakeTypedDialect)
+		query    dal.StructuredQuery
+		fragment string
+	}{
+		{
+			"divide renders the right operand before the left",
+			func(d *fakeTypedDialect) {
+				d.divideOverride = func(left, right string) string { return "(" + right + " / " + left + ")" }
+			},
+			dividedValues, "verbatim and in argument order",
+		},
+		{
+			"divide renders the left operand twice",
+			func(d *fakeTypedDialect) {
+				d.divideOverride = func(left, right string) string { return "(" + left + " / " + right + " + " + left + ")" }
+			},
+			dividedValues, "the dialect wrote",
+		},
+		{
+			"divide drops the right operand",
+			func(d *fakeTypedDialect) {
+				d.divideOverride = func(left, right string) string { return "(" + left + ")" }
+			},
+			dividedValues, "the dialect wrote",
+		},
+		{
+			"divide rewrites an operand that carries a value",
+			func(d *fakeTypedDialect) {
+				d.divideOverride = func(left, right string) string {
+					return "(" + strings.Replace(left, "?::bigint", "?", 1) + " / " + right + ")"
+				}
+			},
+			dividedValues, "verbatim and in argument order",
+		},
+		{
+			"aggregateResult renders the aggregate twice",
+			func(d *fakeTypedDialect) {
+				d.aggregateOverride = func(function, aggregate string) string { return "(" + aggregate + " + " + aggregate + ")" }
+			},
+			sumOfProduct, "the dialect wrote",
+		},
+		{
+			"aggregateResult rewrites the aggregate",
+			func(d *fakeTypedDialect) {
+				d.aggregateOverride = func(function, aggregate string) string { return strings.ToLower(aggregate) }
+			},
+			sumOfProduct, "verbatim and in argument order",
+		},
+		{
+			"orderItem renders the expression twice",
+			func(d *fakeTypedDialect) {
+				d.orderItemOverride = func(expression string, descending, notNull bool) string { return expression + ", " + expression }
+			},
+			orderedByValue, "the dialect wrote",
+		},
+		{
+			"emptyIn writes a marker",
+			func(d *fakeTypedDialect) { d.emptyInOverride = func(bool) string { return "(? IS NULL)" } },
+			inEmpty, "the dialect wrote",
+		},
+		{
+			"limitOffset writes fewer markers than arguments",
+			func(d *fakeTypedDialect) {
+				d.limitOffsetOverride = func(limit, offset int) (string, []any) { return "LIMIT ?", []any{limit, offset} }
+			},
+			limited, "the dialect wrote",
+		},
+		{
+			"orderItem rewrites the expression it was given",
+			func(d *fakeTypedDialect) {
+				d.orderItemOverride = func(expression string, descending, notNull bool) string {
+					return strings.Replace(expression, "?::bigint", "?", 1) + " ASC"
+				}
+			},
+			orderedByValue, "verbatim and in argument order",
+		},
+		{
+			"bind writes two markers for one value",
+			func(d *fakeTypedDialect) { d.bindMarkers = "? + ?" },
+			orderedByValue, "the dialect wrote 2 placeholders where 1 belong",
+		},
+		{
+			"divide adds a string literal that holds a marker",
+			func(d *fakeTypedDialect) {
+				d.divideOverride = func(left, right string) string { return "(" + left + " / " + right + " + '?')" }
+			},
+			dividedFields, "the dialect wrote",
+		},
+		{
+			"divide adds a string literal",
+			func(d *fakeTypedDialect) {
+				d.divideOverride = func(left, right string) string { return "(" + left + " / " + right + " + 'x')" }
+			},
+			dividedFields, "string literal",
+		},
+		{
+			"divide adds a line comment",
+			func(d *fakeTypedDialect) {
+				d.divideOverride = func(left, right string) string { return "(" + left + " / " + right + ") -- x" }
+			},
+			dividedFields, "comment",
+		},
+		{
+			"divide adds a block comment",
+			func(d *fakeTypedDialect) {
+				d.divideOverride = func(left, right string) string { return "(" + left + " / " + right + ") /* x */" }
+			},
+			dividedFields, "comment",
+		},
+		{
+			"orderItem adds a string literal",
+			func(d *fakeTypedDialect) {
+				d.orderItemOverride = func(expression string, descending, notNull bool) string { return expression + " ASC, 'x'" }
+			},
+			orderedByValue, "string literal",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dialect := newFakeTypedDialect()
+			tc.break_(dialect)
+			text, args, err := compileTypedSQL(tc.query, dialect, typedCatalogFacts{})
+			if err == nil {
+				t.Fatalf("compileTypedSQL() = %q, %v; want the dialect refused", text, args)
+			}
+			if errors.Is(err, dal.ErrNotSupported) {
+				t.Fatalf("error %q is a dialect fault, not a query the engine declines", err)
+			}
+			if text != "" || args != nil {
+				t.Fatalf("a refused query must return no SQL, got %q %v", text, args)
+			}
+			if !strings.Contains(err.Error(), tc.fragment) {
+				t.Fatalf("error %q does not mention %q", err, tc.fragment)
+			}
+		})
+	}
+
+	// Rule 1 binds only operands that carry a value; one that does not may be
+	// repeated, which a CASE form of divide does.
+	t.Run("a dialect may repeat or move an operand that carries no value", func(t *testing.T) {
+		dialect := newFakeTypedDialect()
+		dialect.divideOverride = func(left, right string) string {
+			return "(CASE WHEN " + right + " = 0 THEN NULL ELSE " + left + " / " + right + " END)"
+		}
+		typedGolden{
+			dialect: dialect,
+			query:   dividedFields,
+			wantSQL: `SELECT (CASE WHEN "b" = 0 THEN NULL ELSE "a" / "b" END) AS "r" FROM "Album"`,
+		}.run(t)
+	})
+	t.Run("a dialect that wraps operands without changing them is accepted", func(t *testing.T) {
+		typedGolden{
+			query:    dividedValues,
+			wantSQL:  `SELECT (CAST(("a" + $1::bigint) AS double precision) / NULLIF(CAST(("b" - $2::bigint) AS double precision), 0)) AS "r" FROM "Album"`,
+			wantArgs: []any{1, 2},
+		}.run(t)
+	})
+}
+
+// TestCompileTypedSQLCatchesFaultsWhoseMarkerCountsCancel shows why each fragment
+// is checked where it is written and not only by the final count: emptyIn gains a
+// marker and limitOffset loses one, so the totals match the arguments and the
+// numbering pass alone would accept a statement that binds the LIMIT value to
+// the marker emptyIn invented.
+func TestCompileTypedSQLCatchesFaultsWhoseMarkerCountsCancel(t *testing.T) {
+	q := typedTestFrom("Album", "").NewQuery().
+		Where(dal.NewComparison(typedTestField("a"), dal.In, dal.NewArray([]int{}))).
+		Limit(5).SelectColumns()
+	dialect := newFakeTypedDialect()
+	dialect.emptyInOverride = func(bool) string { return "(? IS NULL)" }
+	dialect.limitOffsetOverride = func(limit, offset int) (string, []any) { return "LIMIT 5", []any{limit} }
+
+	// Without the per-fragment checks this text passes the final count.
+	text := `SELECT * FROM "Album" WHERE (? IS NULL) LIMIT 5`
+	if _, err := numberTypedPlaceholders(text, dialect.placeholderStyle(), 1); err != nil {
+		t.Fatalf("the cancelling faults were meant to pass the final count, got %v", err)
+	}
+	gotText, gotArgs, err := compileTypedSQL(q, dialect, typedCatalogFacts{})
+	if err == nil || !strings.Contains(err.Error(), "the dialect wrote") || gotText != "" || gotArgs != nil {
+		t.Fatalf("compileTypedSQL() = %q, %v, %v; want a refusal naming the faulty fragment", gotText, gotArgs, err)
+	}
 }
 
 func TestCompileTypedSQLCheckedJoinKeyTypes(t *testing.T) {

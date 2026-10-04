@@ -18,9 +18,16 @@ type fakeTypedDialect struct {
 	style      typedPlaceholderStyle
 	caps       dal.QueryCapabilities
 	identLimit int
-	// quoteOverride and bindMarkers let a test make the dialect misbehave.
-	quoteOverride func(string) (string, error)
-	bindMarkers   string
+	// quoteOverride, bindMarkers and the *Override hooks let a test make the
+	// dialect misbehave, to prove the compiler refuses a dialect that breaks the
+	// contract in typed_dialect.go.
+	quoteOverride       func(string) (string, error)
+	bindMarkers         string
+	divideOverride      func(left, right string) string
+	aggregateOverride   func(function, aggregate string) string
+	orderItemOverride   func(expression string, descending, notNull bool) string
+	emptyInOverride     func(negated bool) string
+	limitOffsetOverride func(limit, offset int) (string, []any)
 }
 
 func newFakeTypedDialect() *fakeTypedDialect {
@@ -93,6 +100,9 @@ func (d *fakeTypedDialect) bind(value any) (string, any, error) {
 }
 
 func (d *fakeTypedDialect) limitOffset(limit, offset int) (string, []any) {
+	if d.limitOffsetOverride != nil {
+		return d.limitOffsetOverride(limit, offset)
+	}
 	switch {
 	case limit > 0 && offset > 0:
 		return "LIMIT ? OFFSET ?", []any{limit, offset}
@@ -105,6 +115,9 @@ func (d *fakeTypedDialect) limitOffset(limit, offset int) (string, []any) {
 }
 
 func (d *fakeTypedDialect) orderItem(expression string, descending, notNull bool) string {
+	if d.orderItemOverride != nil {
+		return d.orderItemOverride(expression, descending, notNull)
+	}
 	switch {
 	case notNull && descending:
 		return expression + " DESC"
@@ -117,10 +130,16 @@ func (d *fakeTypedDialect) orderItem(expression string, descending, notNull bool
 }
 
 func (d *fakeTypedDialect) divide(left, right string) string {
+	if d.divideOverride != nil {
+		return d.divideOverride(left, right)
+	}
 	return "(CAST(" + left + " AS double precision) / NULLIF(CAST(" + right + " AS double precision), 0))"
 }
 
 func (d *fakeTypedDialect) aggregateResult(function, aggregate string) string {
+	if d.aggregateOverride != nil {
+		return d.aggregateOverride(function, aggregate)
+	}
 	if function == dal.SUM || function == dal.AVERAGE {
 		return "CAST(" + aggregate + " AS double precision)"
 	}
@@ -128,6 +147,9 @@ func (d *fakeTypedDialect) aggregateResult(function, aggregate string) string {
 }
 
 func (d *fakeTypedDialect) emptyIn(negated bool) string {
+	if d.emptyInOverride != nil {
+		return d.emptyInOverride(negated)
+	}
 	if negated {
 		return "TRUE"
 	}

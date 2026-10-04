@@ -16,13 +16,37 @@ import (
 // (PostgreSQL first; MySQL, SQL Server and Oracle later). compileTypedSQL owns
 // the walk over the query; the dialect owns every engine-specific word.
 //
-// The contract that keeps the compiler safe:
+// The contract that keeps the compiler safe. The compiler checks every rule
+// marked (checked) on each fragment a dialect returns and refuses the statement
+// when one is broken, so a faulty dialect fails loudly instead of binding a
+// value to the wrong place.
 //
-//   - Nothing a dialect returns may depend on a value. Values travel only as
-//     bound arguments, so the SQL text is the same whatever the caller's
-//     constants are.
+//   - Nothing a dialect returns may depend on the content of a value. Values
+//     travel only as bound arguments, so the SQL text is the same whatever the
+//     caller's constants are. bind may type its marker by the Go type of the
+//     value (typedKindOf), never by what the value holds: not "bigint for a
+//     whole number and numeric for a fraction" read from the number, but one cast
+//     per type. assertTypedTextIgnoresValues (typed_sql_property_test.go) takes
+//     a dialect and is the test every dialect must pass.
 //   - Every placeholder a dialect writes is the neutral marker "?". The
 //     compiler numbers the markers once, at the end, with placeholderStyle.
+//     bind and limitOffset write exactly one marker per argument they return;
+//     every other method writes none of its own (checked).
+//   - Operand rule 1, count and order (checked): divide, aggregateResult and
+//     orderItem receive operands already rendered as SQL text. The compiler
+//     appends the operands' arguments in the order it passes them, and the
+//     numbering pass gives the nth marker of the final text the nth argument.
+//     So an operand that carries a marker must be written verbatim, exactly
+//     once, and the operands in the order they were passed. A dialect that
+//     writes divide's right operand before its left, or repeats one, keeps the
+//     marker count right and binds values to the wrong positions. An operand
+//     without a marker carries no argument and may be repeated, moved or
+//     wrapped freely.
+//   - Operand rule 2, no literal and no comment (checked): a fragment is
+//     quoted identifiers, keywords, punctuation and the marker, never a string
+//     literal and never a comment. The numbering pass understands quoted
+//     identifiers only, so a "?" inside a literal or a comment would be
+//     numbered as a parameter. Write constants with bind.
 //   - Fragments that stand for an expression (divide, aggregateResult) must be
 //     self-delimiting, that is wrapped in parentheses or a function call, so
 //     the compiler can place them next to any operator.

@@ -1,6 +1,7 @@
 package dalgo2sql
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -315,6 +316,46 @@ func TestCompileTypedSQLAggregates(t *testing.T) {
 			wantArgs: []any{"FR"},
 		},
 		{
+			name: "a constant inside an aggregate argument is bound",
+			query: invoice().SelectColumns(
+				dal.SumAs(dal.Binary(typedTestField("B"), dal.Multiply, typedTestConst(2)), "s"),
+				dal.CountAs(typedTestField("B"), "c"),
+			),
+			wantSQL:  `SELECT CAST(SUM(("B" * $1::bigint)) AS double precision) AS "s", COUNT("B") AS "c" FROM "Invoice"`,
+			wantArgs: []any{2},
+		},
+		{
+			name: "an aggregate argument carrying a constant is rewritten in HAVING and ORDER BY",
+			query: invoice().
+				GroupBy(typedTestField("Country")).
+				Having(dal.NewComparison(typedTestField("s"), dal.GreaterThen, typedTestConst(5))).
+				OrderBy(dal.Descending(typedTestField("s"))).
+				SelectColumns(typedTestColumn(typedTestField("Country"), ""), dal.SumAs(dal.Binary(typedTestField("B"), dal.Multiply, typedTestConst(2)), "s")),
+			wantSQL: `SELECT "Country", CAST(SUM(("B" * $1::bigint)) AS double precision) AS "s" FROM "Invoice" GROUP BY "Country" ` +
+				`HAVING CAST(SUM(("B" * $2::bigint)) AS double precision) > $3::bigint ORDER BY 2 DESC NULLS LAST`,
+			wantArgs: []any{2, 2, 5},
+		},
+		{
+			name: "an aggregate alias carrying a constant, nested in ORDER BY, stays inline",
+			query: invoice().
+				GroupBy(typedTestField("Country")).
+				OrderBy(dal.Ascending(dal.Binary(typedTestField("n"), dal.Multiply, typedTestConst(2)))).
+				SelectColumns(typedTestColumn(typedTestField("Country"), ""), typedTestColumn(dal.Binary(dal.Count().Expression, dal.Add, typedTestConst(1)), "n")),
+			wantSQL: `SELECT "Country", (COUNT(*) + $1::bigint) AS "n" FROM "Invoice" GROUP BY "Country" ` +
+				`ORDER BY ((COUNT(*) + $2::bigint) * $3::bigint) ASC NULLS FIRST`,
+			wantArgs: []any{1, 1, 2},
+		},
+		{
+			name: "a grouped alias by ordinal does not stop a later item carrying its own constant",
+			query: invoice().
+				GroupBy(dal.Binary(typedTestField("Total"), dal.Add, typedTestConst(1))).
+				OrderBy(dal.Ascending(typedTestField("bucket")), dal.Descending(dal.Binary(typedTestField("n"), dal.Multiply, typedTestConst(2)))).
+				SelectColumns(typedTestColumn(dal.Binary(typedTestField("Total"), dal.Add, typedTestConst(1)), "bucket"), typedTestColumn(dal.Count().Expression, "n")),
+			wantSQL: `SELECT ("Total" + $1::bigint) AS "bucket", COUNT(*) AS "n" FROM "Invoice" GROUP BY 1 ` +
+				`ORDER BY 1 ASC NULLS FIRST, (COUNT(*) * $2::bigint) DESC NULLS LAST`,
+			wantArgs: []any{1, 2},
+		},
+		{
 			name: "having over an aggregate alias that carries a constant is fine",
 			query: invoice().
 				Having(dal.NewComparison(typedTestField("total"), dal.GreaterThen, typedTestConst(1))).
@@ -402,6 +443,13 @@ func TestCompileTypedSQLOrderBy(t *testing.T) {
 				SelectColumns(typedTestColumn(typedTestField("Title"), ""), typedTestColumn(dal.Binary(typedTestField("AlbumId"), dal.Add, typedTestConst(1)), "shifted")),
 			wantSQL:  `SELECT "Title", ("AlbumId" + $1::bigint) AS "shifted" FROM "Album" ORDER BY 2 ASC NULLS FIRST`,
 			wantArgs: []any{1},
+		},
+		{
+			name: "an alias selecting a constant-carrying expression, nested in ORDER BY of an ungrouped query, is bound inline",
+			query: album().OrderBy(dal.Descending(dal.Binary(typedTestField("shifted"), dal.Multiply, typedTestConst(2)))).
+				SelectColumns(typedTestColumn(typedTestField("Title"), ""), typedTestColumn(dal.Binary(typedTestField("AlbumId"), dal.Add, typedTestConst(1)), "shifted")),
+			wantSQL:  `SELECT "Title", ("AlbumId" + $1::bigint) AS "shifted" FROM "Album" ORDER BY (("AlbumId" + $2::bigint) * $3::bigint) DESC NULLS LAST`,
+			wantArgs: []any{1, 1, 2},
 		},
 		{
 			name:     "an unselected expression carrying a constant is bound inline",
@@ -496,6 +544,108 @@ func TestCompileTypedSQLHostileValueNeverReachesTheText(t *testing.T) {
 	}
 	if len(args) != 1 || args[0] != hostile {
 		t.Fatalf("args = %#v, want the hostile value as the only argument", args)
+	}
+}
+
+func TestCompileTypedSQLLaunchJourneyStatement(t *testing.T) {
+	// The launch journey in one statement: a join, WHERE, GROUP BY, HAVING and
+	// ORDER BY through select aliases, LIMIT and OFFSET, every field qualified,
+	// and values numbered across clauses in text order.
+	invoices := dal.NewRootCollectionRef("Invoice", "i")
+	customers := dal.NewRootCollectionRef("Customer", "c")
+	q := dal.From(invoices).Join(
+		dal.NewJoinedSource(customers, dal.JoinInner, typedTestJoinOn("i", "CustomerId", "c", "CustomerId")),
+	).NewQuery().
+		Where(dal.NewGroupCondition(dal.And,
+			typedTestEq(typedTestQualified("i", "BillingCountry"), "FR"),
+			dal.NewComparison(typedTestQualified("i", "Total"), dal.GreaterThen, typedTestConst(9.5)),
+		)).
+		GroupBy(typedTestQualified("c", "Country")).
+		Having(dal.NewComparison(typedTestField("revenue"), dal.GreaterThen, typedTestConst(1000))).
+		OrderBy(dal.Descending(typedTestField("revenue")), dal.Ascending(typedTestField("country"))).
+		Limit(10).Offset(5).
+		SelectColumns(
+			typedTestColumn(typedTestQualified("c", "Country"), "country"),
+			dal.SumAs(typedTestQualified("i", "Total"), "revenue"),
+			dal.CountAs(typedTestQualified("i", "InvoiceId"), "invoices"),
+		)
+	typedGolden{
+		query: q,
+		wantSQL: `SELECT "c"."Country" AS "country", CAST(SUM("i"."Total") AS double precision) AS "revenue", COUNT("i"."InvoiceId") AS "invoices" ` +
+			`FROM "Invoice" AS "i" INNER JOIN "Customer" AS "c" ON ("i"."CustomerId" = "c"."CustomerId") ` +
+			`WHERE ("i"."BillingCountry" = $1 AND "i"."Total" > $2::numeric) GROUP BY "c"."Country" ` +
+			`HAVING CAST(SUM("i"."Total") AS double precision) > $3::bigint ` +
+			`ORDER BY CAST(SUM("i"."Total") AS double precision) DESC NULLS LAST, "c"."Country" ASC NULLS FIRST LIMIT $4 OFFSET $5`,
+		wantArgs: []any{"FR", 9.5, 1000, 10, 5},
+	}.run(t)
+}
+
+func TestCompileTypedSQLQualifiersWithQuoteCharacters(t *testing.T) {
+	// A source alias or schema that holds the quote character or the placeholder
+	// character is quoted wherever it qualifies a field, and numbering skips it.
+	t.Run("single source", func(t *testing.T) {
+		typedGolden{
+			query: dal.From(dal.NewQualifiedRootCollectionRef(`sch"ema`, `ta?ble`, `a"l?`)).NewQuery().
+				Where(typedTestEq(typedTestQualified(`a"l?`, `x"?`), 1)).
+				SelectColumns(typedTestColumn(typedTestQualified(`a"l?`, `x"?`), "")),
+			wantSQL:  `SELECT "a""l?"."x""?" FROM "sch""ema"."ta?ble" AS "a""l?" WHERE "a""l?"."x""?" = $1::bigint`,
+			wantArgs: []any{1},
+		}.run(t)
+	})
+	t.Run("join", func(t *testing.T) {
+		typedGolden{
+			query: dal.From(dal.NewQualifiedRootCollectionRef(`s"1`, "Album", `a"?`)).Join(
+				dal.NewJoinedSource(dal.NewQualifiedRootCollectionRef(`s?2`, "Artist", `r"?"`), dal.JoinLeft, typedTestJoinOn(`a"?`, "ArtistId", `r"?"`, "ArtistId")),
+			).NewQuery().
+				Where(typedTestEq(typedTestQualified(`r"?"`, "Name"), "x")).
+				SelectColumns(typedTestColumn(typedTestQualified(`a"?`, "Title"), "")),
+			wantSQL: `SELECT "a""?"."Title" FROM "s""1"."Album" AS "a""?" LEFT JOIN "s?2"."Artist" AS "r""?""" ON ("a""?"."ArtistId" = "r""?"""."ArtistId") ` +
+				`WHERE "r""?"""."Name" = $1`,
+			wantArgs: []any{"x"},
+		}.run(t)
+	})
+}
+
+func TestCompileTypedSQLScanBoundedSingleSource(t *testing.T) {
+	// A bound on a lone source is rendered as the statement's own ORDER BY and
+	// LIMIT, which is how DALgo's generic join asks a relation for its rows: it
+	// sends each bounded relation as a single-source query that restates the scan
+	// while the source still carries it. Refusing that leaf would leave a
+	// dialect without a legacy emitter unable to run DALgo's generic join at all.
+	scanned := dal.NewRootCollectionRef("Invoice", "i").WithScan(10, dal.Descending(typedTestField("Total")))
+	t.Run("the leaf query the generic join sends", func(t *testing.T) {
+		typedGolden{
+			query:    dal.From(scanned).NewQuery().OrderBy(scanned.ScanOrders()...).Limit(scanned.ScanLimit()).SelectColumns(),
+			wantSQL:  `SELECT * FROM "Invoice" AS "i" ORDER BY "Total" DESC NULLS LAST LIMIT $1`,
+			wantArgs: []any{10},
+		}.run(t)
+	})
+	t.Run("a pointer source", func(t *testing.T) {
+		typedGolden{
+			query:   dal.From(typedTestPtr(scanned)).NewQuery().SelectColumns(),
+			wantSQL: `SELECT * FROM "Invoice" AS "i"`,
+		}.run(t)
+	})
+}
+
+func TestCompileTypedSQLIdentityFields(t *testing.T) {
+	// dal.ID names a real column and is rendered as one; dal.DocumentID has no
+	// column of its own and is refused (see the unsupported-node table).
+	typedGolden{
+		query:    typedTestFrom("Album", "").NewQuery().Where(dal.ID("AlbumId", 7)).SelectColumns(),
+		wantSQL:  `SELECT * FROM "Album" WHERE "AlbumId" = $1::bigint`,
+		wantArgs: []any{7},
+	}.run(t)
+}
+
+func TestCompileTypedSQLArgumentLimitIsPerStatement(t *testing.T) {
+	// Exactly the limit is accepted; the refusal tests cover one more.
+	q := typedTestFrom("Album", "").NewQuery().
+		Where(dal.NewComparison(typedTestField("a"), dal.In, dal.NewArray(make([]int, typedMaxArguments)))).
+		SelectColumns()
+	text, args, err := compileTypedSQL(q, newFakeTypedDialect(), typedCatalogFacts{})
+	if err != nil || len(args) != typedMaxArguments || !strings.HasSuffix(text, "$65535::bigint)") {
+		t.Fatalf("compileTypedSQL() with %d values: %d args, error %v", typedMaxArguments, len(args), err)
 	}
 }
 

@@ -1,19 +1,23 @@
 package dalgo2sql
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"reflect"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/dal-go/dalgo/dal"
 )
 
-// typedMaxArguments bounds the values one statement may bind. PostgreSQL's wire
-// protocol counts parameters in 16 bits; no other engine allows more.
+// typedMaxArguments bounds the values one statement may bind, counted over the
+// whole statement. PostgreSQL's wire protocol counts parameters in 16 bits; no
+// other engine allows more.
 const typedMaxArguments = 65535
 
 // typedUnsupported builds an error matching dal.ErrNotSupported. Callers use it
@@ -29,10 +33,31 @@ func typedUnsupported(format string, args ...any) error {
 // reads no database, and facts carries everything it knows about the catalog.
 //
 // Every value is a bound argument and every identifier goes through
-// dialect.quoteIdent, so the returned text depends on the shape of the query
-// and never on the values in it. Anything the engine cannot run faithfully
-// returns an error matching dal.ErrNotSupported rather than an approximation;
-// DALgo's generic engine remains the place for those queries.
+// dialect.quoteIdent, so no byte of a value reaches the text. The text still
+// depends on the shape of the query, and on exactly these facts about its
+// values, each of which picks between fixed fragments and writes no content:
+//
+//   - a nil constant on the right of == renders IS NULL instead of a marker;
+//   - the length of an IN or NOT IN list sets how many markers it writes, and an
+//     empty list renders the dialect's emptyIn constant;
+//   - a zero limit or a zero offset leaves its clause out;
+//   - whether a GROUP BY or ORDER BY expression that carries a constant is the
+//     same expression as a selected one (same shape, and constants of the same
+//     kind and content, see typedSameConstant) picks the select-list position or
+//     the inline bound expression, so two constants that are equal or not choose
+//     between two fixed fragments;
+//   - the Go type of a constant picks the cast the dialect writes beside its
+//     marker (dialect.bind), never its content.
+//
+// Catalog facts, not values, decide wildcard expansion and the NULLS clause.
+// assertTypedTextIgnoresValues and assertTypedTextHasTwoShapesForTwoConstants
+// (typed_sql_property_test.go) check this for any dialect.
+//
+// Anything the engine cannot run faithfully returns an error matching
+// dal.ErrNotSupported rather than an approximation: an unrecognised node, a
+// source option the statement cannot honour (see validateTypedJoinSources), a
+// reference the server could not match. DALgo's generic engine remains the place
+// for those queries.
 func compileTypedSQL(q dal.StructuredQuery, dialect typedDialect, facts typedCatalogFacts) (string, []any, error) {
 	if dialect == nil {
 		return "", nil, errors.New("typed SQL compiler requires a dialect")
@@ -56,11 +81,19 @@ func compileTypedSQL(q dal.StructuredQuery, dialect typedDialect, facts typedCat
 		if err := validateTypedJoins(q.From()); err != nil {
 			return "", nil, err
 		}
+		if err := validateTypedJoinSources(q.From(), "from"); err != nil {
+			return "", nil, err
+		}
 	}
 	c := &typedCompiler{dialect: dialect, facts: facts}
 	text, args, err := c.query(q)
 	if err != nil {
 		return "", nil, err
+	}
+	// The bound is on the statement, not on one IN list: lists and constants add
+	// up, and the driver would fail the whole statement past the limit.
+	if len(args) > typedMaxArguments {
+		return "", nil, typedUnsupported("the statement binds %d values, over the %d one statement may bind", len(args), typedMaxArguments)
 	}
 	text, err = numberTypedPlaceholders(text, dialect.placeholderStyle(), len(args))
 	if err != nil {
@@ -95,6 +128,44 @@ func validateTypedJoins(from dal.FromSource) error {
 		return fmt.Errorf("%w: %w", dal.ErrNotSupported, err)
 	}
 	return err
+}
+
+// validateTypedJoinSources refuses, in a statement with joins, the source
+// options a single SQL join cannot honour. DALgo's generic join applies a
+// source's scan (CollectionRef.WithScan: an order and a row limit taken before
+// the relation joins) and reads a source in a named database from that database;
+// rendering either as the whole local table would join rows the generic join
+// never sees. Returning ErrNotSupported sends the query to the generic join.
+//
+// The same options on a lone source are accepted, because they change nothing
+// there: the generic join sends each bounded relation to its adapter as a
+// single-source query that restates the scan as ORDER BY and LIMIT while the
+// source still carries it, so rendering the table with the statement's own
+// ORDER BY and LIMIT is exactly the bounded read. Refusing that query would
+// leave a dialect with no other emitter unable to run the generic join at all.
+//
+// Join algorithm hints (JoinedSource.Algorithms) are not read: they are
+// preferences, DALgo's native join contract lets the engine choose its own plan
+// (dal.NativeJoinProvider), and the server picks the algorithm.
+func validateTypedJoinSources(from dal.FromSource, path string) error {
+	if collection, err := typedCollection(from.Base()); err == nil {
+		if collection.ScanLimit() > 0 || len(collection.ScanOrders()) != 0 {
+			return typedUnsupported("%s: join_plan: a scan-bounded source needs the generic engine", path)
+		}
+		if collection.Database() != "" {
+			return typedUnsupported("%s: join_plan: a source in a named database needs the generic engine", path)
+		}
+	}
+	for i, join := range from.Joins() {
+		child := join.From()
+		if child == nil {
+			child = dal.From(join.RecordsetSource)
+		}
+		if err := validateTypedJoinSources(child, fmt.Sprintf("%s.joins[%d].from", path, i)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // typedCompiler carries the state of one compileTypedSQL call.
@@ -175,9 +246,12 @@ func (c *typedCompiler) query(q dal.StructuredQuery) (string, []any, error) {
 		func() (string, []any, error) { return c.where(q.Where()) },
 		func() (string, []any, error) { return c.groupBy(q.GroupBy(), items) },
 		func() (string, []any, error) { return c.having(q.Having(), aliases) },
-		func() (string, []any, error) { return c.orderBy(q.OrderBy(), items, aliases) },
+		func() (string, []any, error) { return c.orderBy(q.OrderBy(), items, aliases, len(q.GroupBy()) != 0) },
 		func() (string, []any, error) {
 			clause, limitArgs := c.dialect.limitOffset(q.Limit(), q.Offset())
+			if err := c.checkFragment(clause, len(limitArgs)); err != nil {
+				return "", nil, err
+			}
 			if clause == "" {
 				return "", nil, nil
 			}
@@ -325,20 +399,37 @@ func (c *typedCompiler) having(condition dal.Condition, aliases map[string]dal.E
 	return " HAVING " + sql, args, nil
 }
 
-func (c *typedCompiler) orderBy(orders []dal.OrderExpression, items []typedSelectItem, aliases map[string]dal.Expression) (string, []any, error) {
+// orderBy renders ORDER BY, rewriting select aliases to their expressions as
+// having does. grouped says the statement has a GROUP BY.
+//
+// An item that is a whole alias of a grouped expression carrying a constant is
+// referenced by position (see byExpression). The same alias nested in a larger
+// expression has no position to refer to, and bound inline it would be a fresh
+// parameter that the server cannot match to GROUP BY, so it is refused as HAVING
+// refuses it. Without a GROUP BY the inline form is valid and stays.
+func (c *typedCompiler) orderBy(orders []dal.OrderExpression, items []typedSelectItem, aliases map[string]dal.Expression, grouped bool) (string, []any, error) {
 	if len(orders) == 0 {
 		return "", nil, nil
 	}
-	rewriter := typedAliasRewriter{aliases: aliases}
 	parts := make([]string, len(orders))
 	var args []any
 	for i, order := range orders {
+		// One rewriter per item: what an earlier item resolved must not make a
+		// later, unrelated item look like it refers to a grouped constant.
+		rewriter := typedAliasRewriter{aliases: aliases}
 		expression := rewriter.expression(order.Expression())
 		sql, values, err := c.byExpression(expression, items)
 		if err != nil {
 			return "", nil, fmt.Errorf("orderBy %d: %w", i, err)
 		}
-		parts[i] = c.dialect.orderItem(sql, order.Descending(), c.notNull(expression))
+		if grouped && rewriter.groupedConstant != "" && len(values) != 0 {
+			return "", nil, fmt.Errorf("orderBy %d: %w", i, typedUnsupported("ORDER BY refers to %q, a grouped expression carrying a constant that the server cannot match to GROUP BY", rewriter.groupedConstant))
+		}
+		item := c.dialect.orderItem(sql, order.Descending(), c.notNull(expression))
+		if err := c.checkFragment(item, 0, sql); err != nil {
+			return "", nil, fmt.Errorf("orderBy %d: %w", i, err)
+		}
+		parts[i] = item
 		args = append(args, values...)
 	}
 	return " ORDER BY " + strings.Join(parts, ", "), args, nil
@@ -368,16 +459,92 @@ func (c *typedCompiler) byExpression(expression dal.Expression, items []typedSel
 	return sql, args, nil
 }
 
-// typedOrdinal returns the 1-based position of the selected expression whose
-// text equals target's, the same equality DALgo's aggregation validation uses.
+// typedOrdinal returns the 1-based position of the selected expression that is
+// target. Sameness is structural (typedSameExpression), not by text: DALgo's
+// aggregation validation compares expressions by String(), which is empty for
+// every infinity and NaN and identical for every driver.Valuer without exported
+// fields, so two different constants can share a text, and a match by text
+// would order or group by the selected expression instead of the written one.
 func typedOrdinal(items []typedSelectItem, target dal.Expression) (int, bool) {
-	key := target.String()
 	for i, item := range items {
-		if item.expression != nil && item.expression.String() == key {
+		if item.expression != nil && typedSameExpression(item.expression, target) {
 			return i + 1, true
 		}
 	}
 	return 0, false
+}
+
+// typedSameExpression walks two expressions in parallel and reports whether they
+// are the same: the same fields, operators and aggregate calls, and constants
+// that are the same by typedSameConstant. A node the compiler cannot render is
+// never the same as anything.
+func typedSameExpression(a, b dal.Expression) bool {
+	switch x := a.(type) {
+	case dal.FieldRef:
+		y, ok := b.(dal.FieldRef)
+		return ok && x.Equal(y)
+	case dal.Constant:
+		y, ok := b.(dal.Constant)
+		return ok && typedSameConstant(x.Value, y.Value)
+	case dal.BinaryExpression:
+		y, ok := b.(dal.BinaryExpression)
+		return ok && x.Operator == y.Operator && typedSameExpression(x.Left, y.Left) && typedSameExpression(x.Right, y.Right)
+	case dal.AggregateFunc:
+		y, ok := b.(dal.AggregateFunc)
+		if !ok || !strings.EqualFold(x.FuncName(), y.FuncName()) || typedIsDistinct(x) != typedIsDistinct(y) || len(x.FuncArgs()) != len(y.FuncArgs()) {
+			return false
+		}
+		for i, argument := range x.FuncArgs() {
+			if !typedSameExpression(argument, y.FuncArgs()[i]) {
+				return false
+			}
+		}
+		return true
+	case dal.StarExpression:
+		y, ok := b.(dal.StarExpression)
+		return ok && x.IsStar() == y.IsStar()
+	}
+	return false
+}
+
+func typedIsDistinct(function dal.AggregateFunc) bool {
+	d, ok := function.(dal.DistinctAggregateFunc)
+	return ok && d.IsDistinct()
+}
+
+// typedSameConstant reports whether two constants bind the same value: the same
+// kind (typedKindOf) and the same content. The Go type inside a kind does not
+// count, because a dialect types a placeholder by kind only, so int8(5) and
+// int64(5) are one constant; NaN equals NaN, because both bind NaN; and two
+// instants are the same whatever their zone. A value the compiler refuses is
+// never the same as anything.
+func typedSameConstant(a, b any) bool {
+	kindA, errA := typedKindOf(a)
+	kindB, errB := typedKindOf(b)
+	if errA != nil || errB != nil || kindA != kindB {
+		return false
+	}
+	valueA, valueB := reflect.ValueOf(a), reflect.ValueOf(b)
+	switch kindA {
+	case typedValueNull:
+		return true
+	case typedValueInteger:
+		return valueA.Int() == valueB.Int()
+	case typedValueUnsigned:
+		return valueA.Uint() == valueB.Uint()
+	case typedValueFloat:
+		floatA, floatB := valueA.Float(), valueB.Float()
+		return floatA == floatB || (math.IsNaN(floatA) && math.IsNaN(floatB))
+	case typedValueText:
+		return valueA.String() == valueB.String()
+	case typedValueBool:
+		return valueA.Bool() == valueB.Bool()
+	case typedValueBytes:
+		return bytes.Equal(valueA.Bytes(), valueB.Bytes())
+	case typedValueTime:
+		return a.(time.Time).Equal(b.(time.Time))
+	}
+	return reflect.DeepEqual(a, b) // a driver.Valuer: its fields are all there is to compare
 }
 
 // notNull reports whether expression is a column the catalog says is NOT NULL
@@ -415,6 +582,7 @@ type typedRelation struct {
 // compiler: a subtree starts with an empty visible scope, and a nested ON that
 // names an alias outside its subtree is refused because a parenthesised JOIN
 // cannot represent it. outer lists the identities visible around this subtree.
+// Join algorithm hints are not read (see validateTypedJoinSources).
 func (c *typedCompiler) relation(from dal.FromSource, path string, outer map[string]struct{}) (typedRelation, error) {
 	text, source, err := c.table(from.Base())
 	if err != nil {
@@ -608,6 +776,13 @@ func typedQuerySources(from dal.FromSource) []typedSourceName {
 // field renders a field reference. Inside a JOIN every field must name its
 // source; elsewhere an unqualified field belongs to the single FROM source.
 func (c *typedCompiler) field(field dal.FieldRef, sources map[string]typedSource, requireQualified bool) (string, error) {
+	// dal.DocumentID() names the record's identity, which adapters map to their
+	// own identity field. The compiler has no mapping yet, and rendering it as a
+	// column called __name__ would read a column that does not exist. dal.ID(name,
+	// value) is a different field: it names a real column and is rendered as one.
+	if field.IsID() && field.Name() == dal.DocumentID().Name() {
+		return "", typedUnsupported("dal.DocumentID() has no column; mapping it to the primary key is not implemented")
+	}
 	name, err := c.quote(field.Name())
 	if err != nil {
 		return "", err
@@ -648,7 +823,16 @@ func (c *typedCompiler) bind(value any) (string, []any, error) {
 	if err != nil {
 		return "", nil, err
 	}
+	if err := c.checkFragment(marker, 1); err != nil {
+		return "", nil, err
+	}
 	return marker, []any{arg}, nil
+}
+
+// checkFragment applies operand rule 1 of the typedDialect contract (see
+// checkTypedFragment) to one fragment the dialect wrote.
+func (c *typedCompiler) checkFragment(fragment string, own int, operands ...string) error {
+	return checkTypedFragment(fragment, c.dialect.placeholderStyle().IdentQuote, own, operands...)
 }
 
 func (c *typedCompiler) expr(expression dal.Expression) (string, []any, error) {
@@ -696,7 +880,12 @@ func (c *typedCompiler) aggregate(function dal.AggregateFunc) (string, []any, er
 	if d, ok := function.(dal.DistinctAggregateFunc); ok && d.IsDistinct() {
 		distinct = "DISTINCT "
 	}
-	return c.dialect.aggregateResult(name, name+"("+distinct+argument+")"), args, nil
+	call := name + "(" + distinct + argument + ")"
+	result := c.dialect.aggregateResult(name, call)
+	if err := c.checkFragment(result, 0, call); err != nil {
+		return "", nil, err
+	}
+	return result, args, nil
 }
 
 func (c *typedCompiler) binary(expression dal.BinaryExpression) (string, []any, error) {
@@ -715,7 +904,11 @@ func (c *typedCompiler) binary(expression dal.BinaryExpression) (string, []any, 
 	}
 	args := slices.Concat(leftArgs, rightArgs)
 	if expression.Operator == dal.Divide {
-		return c.dialect.divide(left, right), args, nil
+		quotient := c.dialect.divide(left, right)
+		if err := c.checkFragment(quotient, 0, left, right); err != nil {
+			return "", nil, err
+		}
+		return quotient, args, nil
 	}
 	return "(" + left + " " + string(expression.Operator) + " " + right + ")", args, nil
 }
@@ -784,7 +977,11 @@ func (c *typedCompiler) membership(left string, leftArgs []any, comparison dal.C
 	}
 	negated := comparison.Operator == dal.NotIn
 	if len(values) == 0 {
-		return c.dialect.emptyIn(negated), nil, nil
+		constant := c.dialect.emptyIn(negated)
+		if err := c.checkFragment(constant, 0); err != nil {
+			return "", nil, err
+		}
+		return constant, nil, nil
 	}
 	if len(values) > typedMaxArguments {
 		return "", nil, typedUnsupported("an IN list of %d values is too many to bind", len(values))
