@@ -17,8 +17,25 @@ type DbOptions struct {
 	// SQLite, MySQL, and most other drivers.  Set to PlaceholderDollar
 	// for PostgreSQL, which requires "$1", "$2", … positional markers.
 	Placeholder PlaceholderDialect
-	// StructuredQueryDialect opts structured reads into safe dialect-specific
-	// compilation. Empty preserves legacy emission; "sqlite" is supported.
+	// StructuredQueryDialect names the SQL dialect whose identifier quoting has
+	// been reviewed. Empty preserves legacy emission; "sqlite" is supported. It
+	// decides two things:
+	//
+	//   - Structured reads: "sqlite" opts them into safe dialect-specific
+	//     compilation.
+	//   - The collection, field and primary-key names of every key read and write
+	//     (Exists, Get, GetMulti, Insert, Set, SetMulti, Update, UpdateMulti,
+	//     Delete, DeleteMulti): with "sqlite" a name is written quoted, and only an
+	//     empty name, a control character, invalid UTF-8 or more than 255 bytes is
+	//     refused; with an empty or any other value a name must be a plain
+	//     identifier (letters, digits and underscores, not starting with a digit,
+	//     at most 255 bytes), or the call fails with ErrUnsafeName and sends no
+	//     statement.
+	//
+	// A name that carries its own quoting ("Order Details" with the quote
+	// characters, [Order Details]) is no longer a quoted identifier: with "sqlite"
+	// it is one literal name, quote characters included, and finds no table, so
+	// pass the bare name; with no dialect it is refused.
 	StructuredQueryDialect string
 	// NativeJoinHintTranslator optionally translates validated DALgo JOIN
 	// algorithm preferences into trusted, dialect-owned SQL fragments. The
