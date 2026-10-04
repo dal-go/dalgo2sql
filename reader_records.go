@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/dal-go/dalgo/dal"
 	dalrecord "github.com/dal-go/record"
@@ -82,6 +84,57 @@ type recordsReader struct {
 	validateFinite      bool
 }
 
+// decimalText matches the text PostgreSQL prints for a finite NUMERIC: an
+// optional sign and decimal digits with an optional fraction, no exponent.
+var decimalText = regexp.MustCompile(`^[+-]?([0-9]+\.?[0-9]*|\.[0-9]+)$`)
+
+// normalizeValueByDatabaseType turns the text a PostgreSQL driver delivers for
+// a NUMERIC column into a float64. pgx reports float64 as the scan type of
+// NUMERIC but delivers a string.
+//
+//   - NUMERIC delivered as string or []byte becomes float64 when the text is
+//     decimal text, or exactly NaN, Infinity or -Infinity (PostgreSQL's
+//     spellings). Any other text, and decimal text outside the float64 range,
+//     is kept as a string.
+//   - Every other type name (DECIMAL, which is MySQL's, included), every other
+//     value and nil are returned unchanged. JSON and JSONB need no handling here:
+//     the records reader already stores []byte as string, and a string-typed
+//     recordset column converts []byte.
+//
+// Callers choose where this applies: the recordset reader calls it only for a
+// float64-typed column, so a value is never turned into a Go type the column
+// cannot hold.
+//
+// A float64 holds about 15 significant digits exactly. Longer NUMERIC values,
+// such as a NUMERIC(20,0) key, are rounded, so distinct values can compare
+// equal. A NUMERIC NaN or infinity in a plain SELECT becomes a non-finite
+// float64, which encoding/json refuses to marshal; aggregate queries reject it.
+func normalizeValueByDatabaseType(databaseTypeName string, value any) any {
+	if !strings.EqualFold(databaseTypeName, "NUMERIC") {
+		return value
+	}
+	var text string
+	switch v := value.(type) {
+	case string:
+		text = v
+	case []byte:
+		text = string(v)
+	default:
+		return value
+	}
+	switch text {
+	case "NaN", "Infinity", "-Infinity":
+	default:
+		if !decimalText.MatchString(text) {
+			return text
+		}
+	}
+	if number, err := strconv.ParseFloat(text, 64); err == nil {
+		return number
+	}
+	return text
+}
+
 func selectsIdentityField(columns []dal.Column, name string) bool {
 	for _, column := range columns {
 		if column.Wildcard != nil {
@@ -142,7 +195,7 @@ func (r recordsReader) Next() (record dalrecord.Record, err error) {
 			return nil, err
 		}
 		for i, n := range r.colNames {
-			v := values[i]
+			v := normalizeValueByDatabaseType(r.colTypes[i].DatabaseTypeName(), values[i])
 			if r.validateFinite {
 				if number, ok := v.(float64); ok && (math.IsNaN(number) || math.IsInf(number, 0)) {
 					return nil, fmt.Errorf("non-finite aggregate result in column %q", n)
