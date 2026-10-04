@@ -53,15 +53,17 @@ func typedUnsupported(format string, args ...any) error {
 // assertTypedTextIgnoresValues and assertTypedTextHasTwoShapesForTwoConstants
 // (typed_sql_property_test.go) check this for any dialect.
 //
-// Error messages follow the same rule: they quote identifiers and name the rule
-// that failed, never a constant. DALgo's grouping validation words its message
-// with the query's own expressions, so it is replaced (errTypedInvalidAggregation);
-// an error a dialect returns is the dialect's to keep clean (see typedDialect).
+// Error messages follow the same rule: they quote identifiers and name what was
+// refused, never a constant. DALgo's aggregation validation words its message
+// with the query's own expressions, so it is replaced by a fixed message that
+// points at dal.ValidateAggregation (errTypedInvalidAggregation); an error a
+// dialect returns is the dialect's to keep clean (see typedDialect).
 //
 // Anything the engine cannot run faithfully returns an error matching
 // dal.ErrNotSupported rather than an approximation: an unrecognised node, a
-// source option the statement cannot honour (see validateTypedJoinSources and
-// validateTypedScanRestated), a reference the server could not match. DALgo's
+// query option the statement cannot honour (the DTQL money option, a source's
+// scan or database: see validateTypedJoinSources and validateTypedScanRestated),
+// a reference the server could not match (typedCheckOrderByName). DALgo's
 // generic engine remains the place for those queries.
 func compileTypedSQL(q dal.StructuredQuery, dialect typedDialect, facts typedCatalogFacts) (string, []any, error) {
 	if dialect == nil {
@@ -75,6 +77,13 @@ func compileTypedSQL(q dal.StructuredQuery, dialect typedDialect, facts typedCat
 	}
 	if dal.HasSubquery(q) {
 		return "", nil, typedUnsupported("subqueries run in the generic engine, not in one statement")
+	}
+	// A DTQL query can ask for exact decimal results (dtql/query.go, Money()).
+	// DALgo computes those in its federated engine, in decimal text with half-even
+	// rounding; the statement would compute SUM, AVG and division in double
+	// precision, so honouring the option here would be approximating it.
+	if m, ok := q.(interface{ Money() *dal.MoneyConfig }); ok && m.Money() != nil {
+		return "", nil, typedUnsupported("the money option (exact decimal results) is computed by DALgo's federated engine, not in one statement")
 	}
 	if q.Limit() < 0 || q.Offset() < 0 {
 		return "", nil, errors.New("limit and offset must be non-negative")
@@ -109,13 +118,17 @@ func compileTypedSQL(q dal.StructuredQuery, dialect typedDialect, facts typedCat
 	return text, args, nil
 }
 
-// errTypedInvalidAggregation is the whole of what the compiler says when DALgo's
-// grouping validation rejects a query. That validation words its message with the
-// query's own expressions, constants included (selected expression "(a +
+// errTypedInvalidAggregation is the whole of what the compiler says when
+// dal.ValidateAggregation rejects a query. That validation words its message with
+// the query's own expressions, constants included (selected expression "(a +
 // 'secret')" is neither aggregated nor present in GROUP BY), and a server logs
-// compile errors, so the message is dropped and the rule that failed is named.
-var errTypedInvalidAggregation = errors.New("invalid aggregation: every selected, HAVING and ORDER BY expression must be an aggregate, a GROUP BY expression or a select alias, " +
-	"select aliases must be unique and aggregates may not nest; the detail is left out because it would quote the query's constants")
+// compile errors, so the message is dropped. It rejects for more reasons than
+// grouping (SUM(*), COUNT(DISTINCT *), DISTINCT on MIN or MAX, a wildcard in an
+// aggregate select, an unsupported aggregate or condition, a nil expression), so
+// the replacement does not say which rule failed; it points at the validator,
+// which the caller can run on the query to be told.
+var errTypedInvalidAggregation = errors.New("invalid aggregation: the query breaks DALgo's aggregation rules (grouping of selected, HAVING and ORDER BY expressions, alias uniqueness, or an aggregate form DALgo does not accept); " +
+	"dal.ValidateAggregation(q) names the rule, and its text is left out here because it can quote the query's constants")
 
 func validateTypedAggregation(q dal.StructuredQuery, dialect typedDialect) error {
 	if dal.ValidateAggregation(q) != nil {
@@ -191,11 +204,18 @@ func validateTypedJoinSources(from dal.FromSource, path string) error {
 // ErrNotSupported and DALgo's generic engine runs it.
 //
 // The statement restates the scan when ORDER BY equals the scan's orders item
-// by item (after select aliases are resolved, as the compiled text resolves
-// them), in the same direction, and, if the scan has a limit, the statement's
-// LIMIT is set and no larger. The projection is free: a projection after a limit
-// reads the same rows. A statement limit below the scan's is the federated
-// executor's own tightening and is accepted.
+// by item (after select aliases are resolved, as orderBy resolves them), in the
+// same direction, and, if the scan has a limit, the statement's LIMIT is set and
+// no larger. The projection is free: a projection after a limit reads the same
+// rows. A statement limit below the scan's is the federated executor's own
+// tightening and is accepted.
+//
+// What is compared is the expression orderBy writes, which the server reads as
+// that expression only if no select-list output shares a bare written name with
+// it. This check cannot see that, because it runs before the select list is
+// rendered; typedCheckOrderByName runs on the same item when the statement is
+// compiled and refuses such a statement, so a statement that passes both sorts by
+// the scan's own column.
 //
 // Database() is not checked. A lone source in a named database is right only
 // because the federated executor already routed the leaf to that database's
@@ -277,6 +297,10 @@ type typedSelectItem struct {
 	expression dal.Expression
 	sql        string
 	args       []any
+	// name is the output column name the server gives the item: the alias, else
+	// the column's own name, else the text the compiler wrote after AS. It is empty
+	// for the bare "*", whose outputs are the input columns themselves.
+	name string
 }
 
 // query assembles the statement. FROM is rendered first because it fixes which
@@ -389,7 +413,7 @@ func (c *typedCompiler) expandWildcard(wildcard *wildcardProjectionPlan) ([]type
 		if err != nil {
 			return nil, err
 		}
-		items = append(items, typedSelectItem{expression: dal.NewFieldRef("", column.Name), sql: quoted})
+		items = append(items, typedSelectItem{expression: dal.NewFieldRef("", column.Name), sql: quoted, name: column.Name})
 	}
 	return items, nil
 }
@@ -406,7 +430,8 @@ func (c *typedCompiler) selectItem(column dal.Column) (typedSelectItem, error) {
 	item := typedSelectItem{expression: column.Expression, sql: sql, args: args}
 	name := column.Alias
 	if name == "" {
-		if _, isField := column.Expression.(dal.FieldRef); isField {
+		if field, isField := column.Expression.(dal.FieldRef); isField {
+			item.name = field.Name()
 			return item, nil
 		}
 		if len(args) != 0 {
@@ -419,6 +444,7 @@ func (c *typedCompiler) selectItem(column dal.Column) (typedSelectItem, error) {
 		return typedSelectItem{}, err
 	}
 	item.sql += " AS " + quoted
+	item.name = name
 	return item, nil
 }
 
@@ -480,6 +506,10 @@ func (c *typedCompiler) having(condition dal.Condition, aliases map[string]dal.E
 // expression has no position to refer to, and bound inline it would be a fresh
 // parameter that the server cannot match to GROUP BY, so it is refused as HAVING
 // refuses it. Without a GROUP BY the inline form is valid and stays.
+//
+// An item that rewrites to a bare column name is checked by
+// typedCheckOrderByName: the server reads a bare ORDER BY name as a select-list
+// output first, so the written name must not be one.
 func (c *typedCompiler) orderBy(orders []dal.OrderExpression, items []typedSelectItem, aliases map[string]dal.Expression, grouped bool) (string, []any, error) {
 	if len(orders) == 0 {
 		return "", nil, nil
@@ -495,6 +525,9 @@ func (c *typedCompiler) orderBy(orders []dal.OrderExpression, items []typedSelec
 		if err != nil {
 			return "", nil, fmt.Errorf("orderBy %d: %w", i, err)
 		}
+		if err := typedCheckOrderByName(expression, items); err != nil {
+			return "", nil, fmt.Errorf("orderBy %d: %w", i, err)
+		}
 		if grouped && rewriter.groupedConstant != "" && len(values) != 0 {
 			return "", nil, fmt.Errorf("orderBy %d: %w", i, typedUnsupported("ORDER BY refers to %q, a grouped expression carrying a constant that the server cannot match to GROUP BY", rewriter.groupedConstant))
 		}
@@ -506,6 +539,42 @@ func (c *typedCompiler) orderBy(orders []dal.OrderExpression, items []typedSelec
 		args = append(args, values...)
 	}
 	return " ORDER BY " + strings.Join(parts, ", "), args, nil
+}
+
+// typedCheckOrderByName refuses an ORDER BY item whose written form is a bare
+// column name that the server would read as a select-list output of that name
+// when that output is another expression. PostgreSQL matches a name that stands
+// alone in ORDER BY against output columns first and against input columns only
+// when none has the name; a qualified name, and a name inside an expression, are
+// always input columns. Select aliases are rewritten to the aliased expression
+// (typedAliasRewriter), so `SELECT Total AS a, Name AS Total ORDER BY a` would be
+// written ORDER BY "Total" and sort by Name, and, in a grouped query,
+// `SELECT a AS x, COUNT(b) AS a GROUP BY a ORDER BY x` would sort by the count
+// where DALgo sorts by the group key. Every output of that name must be the
+// column itself, so any other one, not just the first, refuses the item.
+//
+// The name an output has is typedSelectItem.name, so an unaliased expression,
+// which the compiler names by its text, counts too. A qualified field cannot be
+// captured, and a join statement writes no bare name (c.expr refuses it first),
+// so a source on the item or on the output needs no comparison here.
+//
+// The refusal sends the query to DALgo's generic engine. Writing the column
+// qualified by the base source would keep it native; refusing is the narrower
+// change, and the shape is rare.
+func typedCheckOrderByName(expression dal.Expression, items []typedSelectItem) error {
+	field, ok := expression.(dal.FieldRef)
+	if !ok || field.Source() != "" {
+		return nil
+	}
+	for _, item := range items {
+		if item.name != field.Name() {
+			continue
+		}
+		if output, isField := item.expression.(dal.FieldRef); !isField || output.Name() != field.Name() {
+			return typedUnsupported("ORDER BY resolves to column %q, which the server reads as the select-list output of that name, a different expression", field.Name())
+		}
+	}
+	return nil
 }
 
 // byExpression compiles a GROUP BY or ORDER BY expression.
@@ -999,12 +1068,18 @@ const (
 
 // checkDivideOrder closes the one gap in operand rule 1. checkTypedFragment sees
 // text, so when both operands of a division carry a marker and render as the same
-// text, as in (a + 1) / (a + 2), a dialect that wrote the right operand first
-// would pass it and the statement would compute the inverse quotient. For that
-// case the compiler asks the dialect to divide two probe operands that differ and
-// checks the order on them. An operand without a marker carries no argument, so
-// a division with one is not probed and the dialect keeps its freedom to repeat
-// or move it.
+// text, as in (a + 1) / (a + 2), it cannot tell which operand is which. A dialect
+// that places the right operand before the left, in a form whose value depends on
+// the position such as (1.0 / right * left), would pass: the fragment is
+// byte-identical to the correct (1.0 / left * right), the arguments stay in order,
+// the first marker takes the left operand's value, and the statement computes the
+// inverse quotient. (A plain (right / left) writes the same bytes as (left /
+// right) for equal texts and does no harm there, but the probe refuses it too,
+// because divide must be a function of its operand texts alone.) For this case the
+// compiler asks the dialect to divide two probe operands that differ and checks
+// the order on them. An operand without a marker carries no argument, so a
+// division with one is not probed and the dialect keeps its freedom to repeat or
+// move it.
 func (c *typedCompiler) checkDivideOrder(left, right string) error {
 	quote := c.dialect.placeholderStyle().IdentQuote
 	if countTypedMarkers(left, quote) == 0 || countTypedMarkers(right, quote) == 0 {

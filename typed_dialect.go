@@ -59,6 +59,15 @@ import (
 //     the compiler can place them next to any operator.
 //   - An error a dialect returns must not quote a value: the compiler passes it
 //     on, and a server logs it. Name the type or the rule, never the content.
+//   - Name resolution (an assumption of the compiler, not checked): a statement
+//     over one source writes bare column names, and the compiler relies on the
+//     PostgreSQL reading of them. A bare name that stands alone in ORDER BY is a
+//     select-list output first, so the compiler refuses an ORDER BY item whose
+//     written name another output shares (typedCheckOrderByName). In GROUP BY a
+//     bare name is an input column before it is an output, and HAVING cannot see
+//     outputs at all, so both write the input column as it is. A dialect for an
+//     engine that reads a select alias before an input column in GROUP BY or
+//     HAVING needs that check extended before it is added.
 //
 // The interface stays unexported until three dialects exist.
 type typedDialect interface {

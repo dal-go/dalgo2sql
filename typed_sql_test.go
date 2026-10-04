@@ -466,6 +466,93 @@ func TestCompileTypedSQLOrderBy(t *testing.T) {
 	})
 }
 
+// TestCompileTypedSQLBareNamesAreReadAsInputColumns covers every place the
+// compiler writes a bare, unqualified name into ORDER BY, GROUP BY or HAVING,
+// where the server could read it as an output column (a select alias) instead of
+// the input column DALgo means. PostgreSQL's rules, from its SELECT reference:
+//
+//   - ORDER BY: a name that stands alone is matched against output columns first,
+//     and only then against input columns; inside an expression it is an input
+//     column. So a bare ORDER BY name is the one place a capture can happen, and
+//     orderBy refuses it (typed_sql_errors_test.go has the refusals). What is
+//     safe is pinned here: a bare name no output column shares, one every
+//     same-named output column agrees with, a qualified name, and a name nested
+//     in an expression.
+//   - GROUP BY: "in case of ambiguity, a GROUP BY name will be interpreted as an
+//     input-column name rather than an output column name". DALgo groups by the
+//     input expression, so the bare name is already the right reading; and when no
+//     input column has the name, the only output it can reach is one the validation
+//     required to be grouped as well, so the partition is the same. The compiler
+//     never rewrites a GROUP BY name to an alias.
+//   - HAVING: output names are not visible to HAVING at all, so a bare name is an
+//     input column.
+func TestCompileTypedSQLBareNamesAreReadAsInputColumns(t *testing.T) {
+	invoice := func() dal.IQueryBuilder { return typedTestFrom("Invoice", "").NewQuery() }
+	runTypedGoldens(t, []typedGolden{
+		{
+			name: "ORDER BY alias of a column no other output shares its name with",
+			query: invoice().OrderBy(dal.Descending(typedTestField("a"))).
+				SelectColumns(typedTestColumn(typedTestField("Total"), "a"), typedTestColumn(typedTestField("Name"), "n")),
+			wantSQL: `SELECT "Total" AS "a", "Name" AS "n" FROM "Invoice" ORDER BY "Total" DESC NULLS LAST`,
+		},
+		{
+			name: "ORDER BY alias of a column that is also selected under its own name",
+			query: invoice().OrderBy(dal.Ascending(typedTestField("a"))).
+				SelectColumns(typedTestColumn(typedTestField("Total"), "a"), typedTestColumn(typedTestField("Total"), "")),
+			wantSQL: `SELECT "Total" AS "a", "Total" FROM "Invoice" ORDER BY "Total" ASC NULLS FIRST`,
+		},
+		{
+			name: "ORDER BY a selected column under its own name",
+			query: invoice().OrderBy(dal.Ascending(typedTestField("Total"))).
+				SelectColumns(typedTestColumn(typedTestField("Total"), ""), typedTestColumn(typedTestField("Name"), "a")),
+			wantSQL: `SELECT "Total", "Name" AS "a" FROM "Invoice" ORDER BY "Total" ASC NULLS FIRST`,
+		},
+		{
+			// Qualified, the name is never an output column, whatever the select list says.
+			name: "ORDER BY a qualified name that another select alias reuses",
+			query: typedTestFrom("Invoice", "i").NewQuery().OrderBy(dal.Ascending(typedTestQualified("i", "Total"))).
+				SelectColumns(typedTestColumn(typedTestField("Name"), "Total")),
+			wantSQL: `SELECT "Name" AS "Total" FROM "Invoice" AS "i" ORDER BY "i"."Total" ASC NULLS FIRST`,
+		},
+		{
+			// Inside an expression a name is an input column, so the capture the bare
+			// form would suffer cannot happen and the query stays native.
+			name: "ORDER BY alias nested in an expression, when another select alias reuses the column's name",
+			query: invoice().OrderBy(dal.Ascending(dal.Binary(typedTestField("a"), dal.Add, typedTestConst(1)))).
+				SelectColumns(typedTestColumn(typedTestField("Total"), "a"), typedTestColumn(typedTestField("Name"), "Total")),
+			wantSQL:  `SELECT "Total" AS "a", "Name" AS "Total" FROM "Invoice" ORDER BY ("Total" + $1::bigint) ASC NULLS FIRST`,
+			wantArgs: []any{1},
+		},
+		{
+			// In a join every name is qualified, so an alias resolves to a qualified column.
+			name: "ORDER BY alias in a join, when another select alias reuses the column's name",
+			query: typedTestFrom("Invoice", "i").Join(
+				dal.NewJoinedSource(dal.NewRootCollectionRef("Customer", "c"), dal.JoinInner, typedTestJoinOn("i", "CustomerId", "c", "CustomerId")),
+			).NewQuery().OrderBy(dal.Ascending(typedTestField("a"))).
+				SelectColumns(typedTestColumn(typedTestQualified("i", "Total"), "a"), typedTestColumn(typedTestQualified("c", "Name"), "Total")),
+			wantSQL: `SELECT "i"."Total" AS "a", "c"."Name" AS "Total" FROM "Invoice" AS "i" INNER JOIN "Customer" AS "c" ON ("i"."CustomerId" = "c"."CustomerId") ` +
+				`ORDER BY "i"."Total" ASC NULLS FIRST`,
+		},
+		{
+			// The group key a is an input column, which GROUP BY prefers to the output
+			// COUNT(b) AS a; the statement groups by the column, as DALgo does.
+			name: "GROUP BY a column that another select alias reuses",
+			query: invoice().GroupBy(typedTestField("a")).
+				SelectColumns(typedTestColumn(typedTestField("a"), "x"), dal.CountAs(typedTestField("b"), "a")),
+			wantSQL: `SELECT "a" AS "x", COUNT("b") AS "a" FROM "Invoice" GROUP BY "a"`,
+		},
+		{
+			// HAVING cannot see the output a, so the rewritten bare "a" is the group key.
+			name: "HAVING alias of a group key, when another select alias reuses the key's name",
+			query: invoice().GroupBy(typedTestField("a")).
+				Having(dal.NewComparison(typedTestField("x"), dal.GreaterThen, typedTestConst(1))).
+				SelectColumns(typedTestColumn(typedTestField("a"), "x"), dal.CountAs(typedTestField("b"), "a")),
+			wantSQL:  `SELECT "a" AS "x", COUNT("b") AS "a" FROM "Invoice" GROUP BY "a" HAVING "a" > $1::bigint`,
+			wantArgs: []any{1},
+		},
+	})
+}
+
 func TestCompileTypedSQLArithmetic(t *testing.T) {
 	album := func(expression dal.Expression) dal.StructuredQuery {
 		return typedTestFrom("Album", "").NewQuery().SelectColumns(typedTestColumn(expression, "r"))
@@ -677,6 +764,14 @@ func TestCompileTypedSQLScanBoundedSingleSource(t *testing.T) {
 			wantSQL: `SELECT * FROM "Invoice" AS "i"`,
 		},
 	})
+}
+
+func TestCompileTypedSQLQueryTypeThatCanCarryMoneyButCarriesNone(t *testing.T) {
+	// The refusal table has the query that does carry the option.
+	typedGolden{
+		query:   typedMoneyQuery{StructuredQuery: typedTestFrom("Album", "").NewQuery().SelectColumns()},
+		wantSQL: `SELECT * FROM "Album"`,
+	}.run(t)
 }
 
 func TestCompileTypedSQLIdentityFields(t *testing.T) {

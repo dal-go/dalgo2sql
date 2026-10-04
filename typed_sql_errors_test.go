@@ -13,6 +13,15 @@ type fakeTypedCondition struct{}
 
 func (fakeTypedCondition) String() string { return "fake" }
 
+// typedMoneyQuery is a query that carries the DTQL money option, as the query
+// dtql.Deserialize returns does (dtql/query.go in DALgo).
+type typedMoneyQuery struct {
+	dal.StructuredQuery
+	money *dal.MoneyConfig
+}
+
+func (q typedMoneyQuery) Money() *dal.MoneyConfig { return q.money }
+
 func TestCompileTypedSQLRefusesUnsupportedNodesWithErrNotSupported(t *testing.T) {
 	album := func() dal.IQueryBuilder { return typedTestFrom("Album", "").NewQuery() }
 	whereBy := func(c dal.Condition) dal.StructuredQuery { return album().Where(c).SelectColumns() }
@@ -116,6 +125,45 @@ func TestCompileTypedSQLRefusesUnsupportedNodesWithErrNotSupported(t *testing.T)
 				SelectColumns(bucketColumns...),
 			nil, "orderBy 1",
 		},
+		// PostgreSQL reads a bare ORDER BY name as an output column first. An alias
+		// that resolves to a bare column is therefore written as that column only
+		// when no select-list output of that name is another expression; otherwise
+		// the server would sort by the other output.
+		{
+			"ORDER BY alias that resolves to a column another select alias reuses",
+			album().OrderBy(dal.Descending(typedTestField("a"))).
+				SelectColumns(typedTestColumn(typedTestField("Total"), "a"), typedTestColumn(typedTestField("Name"), "Total")),
+			nil, `ORDER BY resolves to column "Total"`,
+		},
+		{
+			"grouped ORDER BY alias of a group key that another select alias reuses",
+			album().GroupBy(typedTestField("a")).OrderBy(dal.Ascending(typedTestField("x"))).
+				SelectColumns(typedTestColumn(typedTestField("a"), "x"), dal.CountAs(typedTestField("b"), "a")),
+			nil, `ORDER BY resolves to column "a"`,
+		},
+		{
+			// Total DESC is the scan, so the statement looks like the leaf query, but
+			// the server would sort by Name, the output named Total.
+			"scan whose ORDER BY alias resolves to the scan column that another alias reuses",
+			dal.From(scanned).NewQuery().OrderBy(dal.Descending(typedTestField("a"))).Limit(10).
+				SelectColumns(typedTestColumn(typedTestField("Total"), "a"), typedTestColumn(typedTestField("Name"), "Total")),
+			nil, `ORDER BY resolves to column "Total"`,
+		},
+		{
+			"ORDER BY alias resolving to a column when a later output of that name differs from an earlier one that matches",
+			album().OrderBy(dal.Ascending(typedTestField("a"))).
+				SelectColumns(typedTestColumn(typedTestField("Total"), "a"), typedTestColumn(typedTestField("Total"), ""), typedTestColumn(typedTestField("Name"), "Total")),
+			nil, `ORDER BY resolves to column "Total"`,
+		},
+		{
+			// An unaliased expression is named by its text (the compiler writes AS
+			// "(a + b)"), so a column called that is captured the same way.
+			"ORDER BY a column named like an unaliased select expression",
+			album().OrderBy(dal.Ascending(typedTestField("(a + b)"))).
+				SelectColumns(typedTestColumn(dal.Binary(typedTestField("a"), dal.Add, typedTestField("b")), "")),
+			nil, `ORDER BY resolves to column "(a + b)"`,
+		},
+		{"query carrying a DTQL money option", typedMoneyQuery{StructuredQuery: album().SelectColumns(), money: &dal.MoneyConfig{MinorUnitScale: 2, DivisionScale: 4, Rounding: "halfEven"}}, nil, "money"},
 		{"scan-bounded base source in a join", joinedTo(scanned, plainCustomer), nil, "from: join_plan: a scan-bounded source"},
 		{"scan limit alone on the base source of a join", joinedTo(scanLimitOnly, plainCustomer), nil, "scan-bounded"},
 		{"scan order alone on a joined source", joinedTo(dal.NewRootCollectionRef("Invoice", "i"), scanOrderOnly), nil, "from.joins[0].from: join_plan: a scan-bounded source"},
@@ -198,6 +246,10 @@ func TestCompileTypedSQLRejectsInvalidQueriesWithoutClaimingUnsupported(t *testi
 		{"negative limit", album().Limit(-1).SelectColumns(), nil, "non-negative"},
 		{"negative offset", album().Offset(-1).SelectColumns(), nil, "non-negative"},
 		{"ungrouped column", album().GroupBy(typedTestField("a")).SelectColumns(typedTestColumn(typedTestField("b"), "")), nil, "invalid aggregation"},
+		// dal.ValidateAggregation rejects for more reasons than grouping, so the
+		// message must not claim which rule a query broke; it points at the validator.
+		{"SUM of a star, which breaks no grouping rule", album().SelectColumns(typedTestColumn(dal.NewAggregate(dal.SUM, false, dal.Star()), "s")), nil, "dal.ValidateAggregation"},
+		{"an ungrouped column points at the validator as well", album().GroupBy(typedTestField("a")).SelectColumns(typedTestColumn(typedTestField("b"), "")), nil, "dal.ValidateAggregation"},
 		{"empty join ON", typedTestFrom("Album", "a").Join(dal.NewJoinedSource(dal.NewRootCollectionRef("Artist", "r"), dal.JoinInner)).NewQuery().SelectColumns(), nil, "join_shape"},
 		{"unknown source", album().SelectColumns(typedTestColumn(typedTestQualified("zzz", "a"), "")), nil, "unknown source"},
 		{"empty field name", album().SelectColumns(typedTestColumn(typedTestField(""), "")), nil, "empty"},
@@ -234,8 +286,10 @@ func TestCompileTypedSQLRejectsInvalidQueriesWithoutClaimingUnsupported(t *testi
 
 // TestCompileTypedSQLErrorsCarryNoConstant: DALgo's grouping validation writes the
 // query's own expressions into its message, constants included. A server logs
-// compile errors, so the compiler reports the rule that failed and drops that
-// text; no value reaches the SQL text or an error message.
+// compile errors, so the compiler drops that text and points at
+// dal.ValidateAggregation instead (it does not say which rule failed: the
+// validation rejects for more reasons than grouping); no value reaches the SQL
+// text or an error message.
 func TestCompileTypedSQLErrorsCarryNoConstant(t *testing.T) {
 	album := func() dal.IQueryBuilder { return typedTestFrom("Album", "").NewQuery() }
 	cases := []struct {
@@ -332,6 +386,9 @@ func TestCompileTypedSQLRefusesADialectThatBreaksTheOperandRules(t *testing.T) {
 		dal.Binary(typedTestField("b"), dal.Subtract, typedTestConst(2))), "r"))
 	// (a + 1) / (a + 2): both operands carry a value and render as the same text,
 	// ("a" + ?::bigint), so no search of the fragment can tell which is which.
+	// Only a fragment whose value depends on the position, such as
+	// (1.0 / right * left), computes the inverse quotient from the swap; a plain
+	// (right / left) writes the same bytes as (left / right) here.
 	dividedSameText := album().SelectColumns(typedTestColumn(dal.Binary(
 		dal.Binary(typedTestField("a"), dal.Add, typedTestConst(1)), dal.Divide,
 		dal.Binary(typedTestField("a"), dal.Add, typedTestConst(2))), "r"))
@@ -356,7 +413,21 @@ func TestCompileTypedSQLRefusesADialectThatBreaksTheOperandRules(t *testing.T) {
 			dividedValues, "verbatim and in argument order",
 		},
 		{
-			"divide renders the right operand before the left, both written the same",
+			// With the operands written the same, (1.0 / right * left) is byte-identical
+			// to (1.0 / left * right) and the arguments stay [1 2], so only the probe
+			// can see that the first marker would take the left operand's value and
+			// the statement would compute (a + 2) / (a + 1).
+			"divide places the right operand before the left in a form that depends on position, both written the same",
+			func(d *fakeTypedDialect) {
+				d.divideOverride = func(left, right string) string { return "(1.0 / " + right + " * " + left + ")" }
+			},
+			dividedSameText, "verbatim and in argument order",
+		},
+		{
+			// Harmless on this query (the bytes equal the correct fragment), but the
+			// compiler cannot know that without the operands' text alone deciding it:
+			// divide must be a function of its operand texts, so the swap is refused.
+			"divide swaps the operands, both written the same",
 			func(d *fakeTypedDialect) {
 				d.divideOverride = func(left, right string) string { return "(" + right + " / " + left + ")" }
 			},
