@@ -141,8 +141,10 @@ var decimalText = regexp.MustCompile(`^[+-]?([0-9]+\.?[0-9]*|\.[0-9]+)$`)
 //     recordset column converts []byte.
 //
 // Callers choose where this applies: the recordset reader calls it only for a
-// float64-typed column, so a value is never turned into a Go type the column
-// cannot hold.
+// float64-typed column; text that is not a number comes back as a string and
+// the reader returns an error for it. With lib/pq the recordset reader keeps
+// NUMERIC as []byte (the column is typed []byte from the interface scan type),
+// so only the records reader converts.
 //
 // A float64 holds about 15 significant digits exactly. Longer NUMERIC values,
 // such as a NUMERIC(20,0) key, are rounded, so distinct values can compare

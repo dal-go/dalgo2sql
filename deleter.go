@@ -22,26 +22,48 @@ func (dtb *database) DeleteMulti(ctx context.Context, keys []*record.Key) error 
 	return deleteMulti(ctx, dtb.options, keys, dtb.db.ExecContext)
 }
 
-func deleteSingle(ctx context.Context, options DbOptions, key *record.Key, exec statementExecutor) error {
-	collection := key.Collection()
-	//goland:noinspection SqlNoDataSourceInspection
-	query := fmt.Sprintf("DELETE FROM %v WHERE ", key.Collection())
-	if rs, hasOptions := options.Recordsets[collection]; hasOptions && len(rs.PrimaryKey()) == 1 {
-		query += rs.PrimaryKey()[0].Name() + " = " + options.Placeholder.placeholder(1)
-	} else {
-		query += "ID = " + options.Placeholder.placeholder(1)
+// deleteTarget returns the table of key and its primary-key column as they may
+// be written into SQL text: the table is the recordset of the key, the column is
+// that of the recordset's single primary key, or ID when the recordset has none
+// declared.
+func deleteTarget(options DbOptions, key *record.Key) (table, pkColumn string, err error) {
+	if table, err = options.recordsetIdentifier(key); err != nil {
+		return "", "", err
 	}
-	_, err := exec(ctx, query, key.ID)
+	pkName := "ID"
+	if primaryKey := options.PrimaryKeyFieldNames(key); len(primaryKey) == 1 {
+		pkName = primaryKey[0]
+	}
+	if pkColumn, err = options.sqlIdentifier(positionPrimaryKey, pkName); err != nil {
+		return "", "", err
+	}
+	return table, pkColumn, nil
+}
+
+func deleteSingle(ctx context.Context, options DbOptions, key *record.Key, exec statementExecutor) error {
+	table, pkColumn, err := deleteTarget(options, key)
 	if err != nil {
+		return err
+	}
+	//goland:noinspection SqlNoDataSourceInspection
+	query := fmt.Sprintf("DELETE FROM %v WHERE %v = %s", table, pkColumn, options.Placeholder.placeholder(1))
+	if _, err = exec(ctx, query, key.ID); err != nil {
 		return err
 	}
 	return nil
 }
 
 func deleteMulti(ctx context.Context, options DbOptions, keys []*record.Key, exec statementExecutor) error {
-	var prevTable string
+	// The whole batch is checked before its first statement: recordsets are
+	// deleted from one after the other.
+	for _, key := range keys {
+		if _, _, err := deleteTarget(options, key); err != nil {
+			return err
+		}
+	}
+	var prevRecordset string
 	var tableKeys []*record.Key
-	deleteByKeys := func(table string, keys []*record.Key) error {
+	deleteByKeys := func(_ string, keys []*record.Key) error {
 		if len(keys) == 1 {
 			return deleteSingle(ctx, options, keys[0], exec)
 		}
@@ -56,22 +78,22 @@ func deleteMulti(ctx context.Context, options DbOptions, keys []*record.Key, exe
 		return nil // TODO: code above commented out as tests are failing for RAMSQL driver.
 	}
 	for i, key := range keys {
-		kind := key.Collection()
-		if kind == prevTable {
+		recordset := getRecordsetName(key)
+		if recordset == prevRecordset {
 			tableKeys = append(tableKeys, key)
 			continue
 		}
-		if prevTable != "" {
-			if err := deleteByKeys(prevTable, tableKeys); err != nil {
+		if prevRecordset != "" {
+			if err := deleteByKeys(prevRecordset, tableKeys); err != nil {
 				return err
 			}
 		}
-		prevTable = kind
+		prevRecordset = recordset
 		tableKeys = make([]*record.Key, 1, len(keys)-i)
 		tableKeys[0] = key
 	}
 	if len(tableKeys) > 0 {
-		if err := deleteByKeys(prevTable, tableKeys); err != nil {
+		if err := deleteByKeys(prevRecordset, tableKeys); err != nil {
 			return err
 		}
 	}
@@ -79,14 +101,12 @@ func deleteMulti(ctx context.Context, options DbOptions, keys []*record.Key, exe
 }
 
 func deleteMultiInSingleTable(ctx context.Context, options DbOptions, keys []*record.Key, exec statementExecutor) error {
-	pkCol := "ID"
-
-	collection := keys[0].Collection()
-	if rs, hasOptions := options.Recordsets[collection]; hasOptions && len(rs.primaryKey) == 1 {
-		pkCol = rs.primaryKey[0].Name()
+	table, pkCol, err := deleteTarget(options, keys[0])
+	if err != nil {
+		return err
 	}
 
-	query := fmt.Sprintf("DELETE FROM %v WHERE %v IN (", collection, pkCol)
+	query := fmt.Sprintf("DELETE FROM %v WHERE %v IN (", table, pkCol)
 	args := make([]interface{}, len(keys))
 	q := make([]string, len(keys))
 	for i, key := range keys {
@@ -94,8 +114,7 @@ func deleteMultiInSingleTable(ctx context.Context, options DbOptions, keys []*re
 		q[i] = options.Placeholder.placeholder(i + 1)
 	}
 	query += strings.Join(q, ", ") + ")"
-	_, err := exec(ctx, query, args...)
-	if err != nil {
+	if _, err = exec(ctx, query, args...); err != nil {
 		return err
 	}
 	return nil

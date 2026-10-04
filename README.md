@@ -34,6 +34,30 @@ inputs to REAL for parity with DALgo's generic `float64` fallback. FIRST/LAST
 are deliberately not advertised until DALgo models aggregate-local ordering;
 using unspecified SQLite row order would not be deterministic.
 
+## Legacy text path (no dialect, no native compiler)
+
+A source opened with no `StructuredQueryDialect` and no
+`NativeStructuredQueryCompiler` renders structured queries through the legacy
+text emitter. That is every such source, among them datatug-cli SQLite sources
+opened without the `sqlite` dialect and openvaultdb-go's PostgreSQL and MySQL
+mounts. The emitter pastes names and values straight into the statement, so it
+fails closed: a name or value it cannot prove plain (brackets, backslashes,
+control characters, quotes inside JSON-rendered slices, `<`, `>`, `&`, U+2028,
+U+2029, invalid UTF-8, a `[]byte` constant, named slice types, non-finite
+numbers, times outside the JSON range) gets an error wrapping
+`dal.ErrNotSupported`, and no SQL is executed. The PostgreSQL and MySQL mounts
+stay on this guarded path until the PostgreSQL adapter work gives them a native
+compiler.
+
+## NUMERIC result values
+
+SQLite results are unchanged in the recordset reader. In the records reader a
+bare `NUMERIC` column changes in two cases: a BLOB holding decimal text, and the
+texts `NaN`, `Infinity` and `-Infinity`, become `float64`. With lib/pq the
+recordset reader keeps `NUMERIC` as `[]byte`; only the records reader converts.
+Text that is not a number stays a string, and a `float64`-typed recordset column
+refuses it with an error.
+
 ## End2end - is a separate module
 
 For end-to-end testing a SQLite driver is used.

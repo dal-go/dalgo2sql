@@ -41,6 +41,37 @@ func TestUpdater(t *testing.T) {
 		}
 	})
 
+	t.Run("Update_several_fields", func(t *testing.T) {
+		sqlDB, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherEqual))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer closeDatabase(t, sqlDB)
+
+		db := dal.BackendOf(NewDatabase(sqlDB, newSchema(), DbOptions{
+			Recordsets: map[string]*Recordset{
+				"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID")}),
+			},
+		})).(*database)
+
+		key := dalrecord.NewKeyWithID("users", "id1")
+		updates := []update.Update{
+			update.ByFieldName("Name", "new_name"),
+			update.ByFieldName("Age", 30),
+		}
+
+		mock.ExpectExec("UPDATE users SET\n\tName = ?,\n\tAge = ?\n\tWHERE ID = ?").
+			WithArgs("new_name", 30, "id1").
+			WillReturnResult(sqlmock.NewResult(0, 1))
+
+		if err = db.Update(ctx, key, updates); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if err = mock.ExpectationsWereMet(); err != nil {
+			t.Error(err)
+		}
+	})
+
 	t.Run("UpdateMulti", func(t *testing.T) {
 		sqlDB, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherEqual))
 		if err != nil {
