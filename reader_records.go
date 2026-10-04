@@ -7,6 +7,7 @@ import (
 	"math"
 	"reflect"
 	"strconv"
+	"strings"
 
 	"github.com/dal-go/dalgo/dal"
 	dalrecord "github.com/dal-go/record"
@@ -82,6 +83,41 @@ type recordsReader struct {
 	validateFinite      bool
 }
 
+// normalizeValueByDatabaseType turns a driver value into the Go type its
+// database type implies. Drivers such as pgx deliver NUMERIC and DECIMAL as
+// text and JSON and JSONB as []byte, whatever ScanType reports.
+//
+//   - NUMERIC / DECIMAL delivered as string or []byte becomes float64; text
+//     that does not parse is kept (as a string).
+//   - JSON / JSONB delivered as []byte becomes string.
+//
+// Every other type name, and every other value (nil included), is returned
+// unchanged, so results from drivers that already deliver native values (SQLite)
+// are not altered.
+func normalizeValueByDatabaseType(databaseTypeName string, value any) any {
+	switch strings.ToUpper(databaseTypeName) {
+	case "NUMERIC", "DECIMAL":
+		var text string
+		switch v := value.(type) {
+		case string:
+			text = v
+		case []byte:
+			text = string(v)
+		default:
+			return value
+		}
+		if number, err := strconv.ParseFloat(text, 64); err == nil {
+			return number
+		}
+		return text
+	case "JSON", "JSONB":
+		if b, ok := value.([]byte); ok {
+			return string(b)
+		}
+	}
+	return value
+}
+
 func selectsIdentityField(columns []dal.Column, name string) bool {
 	for _, column := range columns {
 		if column.Wildcard != nil {
@@ -142,7 +178,7 @@ func (r recordsReader) Next() (record dalrecord.Record, err error) {
 			return nil, err
 		}
 		for i, n := range r.colNames {
-			v := values[i]
+			v := normalizeValueByDatabaseType(r.colTypes[i].DatabaseTypeName(), values[i])
 			if r.validateFinite {
 				if number, ok := v.(float64); ok && (math.IsNaN(number) || math.IsInf(number, 0)) {
 					return nil, fmt.Errorf("non-finite aggregate result in column %q", n)

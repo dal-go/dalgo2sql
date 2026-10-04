@@ -146,7 +146,7 @@ func (r *recordsetReader) Next() (row recordset.Row, rs recordset.Recordset, err
 
 	row = r.rs.NewRow()
 	for i := range r.colNames {
-		value := values[i]
+		value := normalizeValueByDatabaseType(r.colTypes[i].DatabaseTypeName(), values[i])
 		if r.validateFinite {
 			if number, ok := value.(float64); ok && (math.IsNaN(number) || math.IsInf(number, 0)) {
 				err = fmt.Errorf("non-finite aggregate result in column %q", r.colNames[i])
@@ -170,6 +170,12 @@ func (r *recordsetReader) Next() (row recordset.Row, rs recordset.Recordset, err
 				switch v := value.(type) {
 				case int64:
 					value = float64(v)
+				case string:
+					// NUMERIC text that did not parse cannot live in a float64
+					// column; fail with the column name instead of letting the
+					// recordset's strict type assertion panic.
+					err = fmt.Errorf("failed to set value for column %s: %q is not a number", r.colNames[i], v)
+					return
 				}
 			} else if vt.Kind() == reflect.Int64 {
 				switch v := value.(type) {
