@@ -90,6 +90,28 @@ func (s *sqliteProtectedStorage) WithinProtectedExecution(ctx context.Context, o
 	return s.within(ctx, ops, true, func(session *sqliteProtectedSession) error { return callback(sqliteExecution{session}) })
 }
 
+// sqliteBusyRetryDelay is how long within waits before retrying a BEGIN that
+// SQLite answered with SQLITE_BUSY or SQLITE_LOCKED.
+const sqliteBusyRetryDelay = 5 * time.Millisecond
+
+// sqliteBusyWait is the seam within uses to wait between busy retries; tests
+// replace it so the retry loop's reaction to a failed wait does not depend on
+// racing a deadline against a timer.
+var sqliteBusyWait = waitBeforeSQLiteBusyRetry
+
+// waitBeforeSQLiteBusyRetry blocks for delay, or returns ctx's error as soon as
+// ctx is done.
+func waitBeforeSQLiteBusyRetry(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
 func (s *sqliteProtectedStorage) within(ctx context.Context, ops []access.ProtectedOperation, write bool, callback func(*sqliteProtectedSession) error) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -112,12 +134,8 @@ func (s *sqliteProtectedStorage) within(ctx context.Context, ops []access.Protec
 		if !errors.As(err, &code) || code.Code()&255 != 5 && code.Code()&255 != 6 {
 			return err
 		}
-		timer := time.NewTimer(5 * time.Millisecond)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return ctx.Err()
-		case <-timer.C:
+		if err = sqliteBusyWait(ctx, sqliteBusyRetryDelay); err != nil {
+			return err
 		}
 	}
 	// Cleanup is bounded independently after ingress cancellation; it performs
