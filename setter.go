@@ -73,7 +73,7 @@ func setMulti(ctx context.Context, options DbOptions, records []dalrecord.Record
 }
 
 func existsSingle(options DbOptions, key *dalrecord.Key, execQuery queryExecutor) (bool, error) {
-	table, err := options.sqlIdentifier(positionCollection, key.Collection())
+	table, err := options.recordsetIdentifier(key)
 	if err != nil {
 		return false, err
 	}

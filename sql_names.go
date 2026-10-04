@@ -143,8 +143,9 @@ func (o DbOptions) sqlIdentifier(position, name string) (string, error) {
 }
 
 // recordsetIdentifier returns the recordset name getRecordsetName derives from
-// key as it may be written into SQL text. Each collection of the key's path is
-// validated before the names are joined, and the joined name is validated as
+// key as it may be written into SQL text. It is the table of every statement a
+// key read or write builds, nested key or not. Each collection of the key's path
+// is validated before the names are joined, and the joined name is validated as
 // the one identifier it becomes.
 func (o DbOptions) recordsetIdentifier(key *dalrecord.Key) (string, error) {
 	for segment := key; segment != nil; segment = segment.Parent() {

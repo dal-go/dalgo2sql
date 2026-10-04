@@ -91,7 +91,7 @@ func buildSingleRecordQuery(o operation, options DbOptions, record dalrecord.Rec
 
 	if key.ID != nil && o == insertOperation {
 		if len(pk) == 0 {
-			panic(fmt.Sprintf("record key has value but no primary key defined for: '%s'", collection))
+			return query{}, fmt.Errorf("primary key is not defined for recordset %s: the ID of the record's key has no column to be written to", collection)
 		}
 		processPrimaryKey(pk, key, func(i int, pkName string, v any) {
 			cols = append(cols, ident(positionPrimaryKey, pkName))

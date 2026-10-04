@@ -130,7 +130,7 @@ func getSingle(_ context.Context, options DbOptions, record dalrecord.Record, ex
 }
 
 func getMulti(ctx context.Context, options DbOptions, records []dalrecord.Record, exec queryExecutor) error {
-	// The whole batch is checked before its first read: the collections below are
+	// The whole batch is checked before its first read: the recordsets below are
 	// read one after the other in map order, so a refusal found half way would
 	// leave it to chance which of the valid ones had been sent.
 	for _, r := range records {
@@ -138,13 +138,13 @@ func getMulti(ctx context.Context, options DbOptions, records []dalrecord.Record
 			return refuseRecords(records, err)
 		}
 	}
-	byCollection := make(map[string][]dalrecord.Record)
+	// Records are read together when their keys address the same recordset.
+	byRecordset := make(map[string][]dalrecord.Record)
 	for _, r := range records {
-		id := r.Key().Collection()
-		recs := byCollection[id]
-		byCollection[id] = append(recs, r)
+		name := getRecordsetName(r.Key())
+		byRecordset[name] = append(byRecordset[name], r)
 	}
-	for _, recs := range byCollection {
+	for _, recs := range byRecordset {
 		if len(recs) == 1 {
 			if err := getSingle(ctx, options, recs[0], exec); err != nil {
 				recs[0].SetError(err)
@@ -172,13 +172,15 @@ func getMultiFromSingleTable(_ context.Context, options DbOptions, records []dal
 		return nil
 	}
 	records = append(make([]dalrecord.Record, 0, len(records)), records...)
-	collection := records[0].Key().Collection()
-	table, err := options.sqlIdentifier(positionCollection, collection)
+	// The records share the recordset their keys address, which is the table and
+	// the one the primary key is looked up in.
+	recordset := getRecordsetName(records[0].Key())
+	table, err := options.recordsetIdentifier(records[0].Key())
 	if err != nil {
 		return refuseRecords(records, err)
 	}
 
-	rs, hasRecordsetDefinition := options.Recordsets[collection]
+	rs, hasRecordsetDefinition := options.Recordsets[recordset]
 	var primaryKey []string
 	if hasRecordsetDefinition && len(rs.PrimaryKey()) > 0 {
 		for _, pk := range rs.PrimaryKey() {
@@ -187,7 +189,7 @@ func getMultiFromSingleTable(_ context.Context, options DbOptions, records []dal
 	} else if len(options.PrimaryKey) > 0 {
 		primaryKey = options.PrimaryKey
 	} else {
-		err := fmt.Errorf("%w: no primary key defined for: '%s'", dalrecord.ErrRecordNotFound, collection)
+		err := fmt.Errorf("%w: no primary key defined for: '%s'", dalrecord.ErrRecordNotFound, recordset)
 		for _, record := range records {
 			record.SetError(err)
 		}
@@ -514,12 +516,11 @@ func getSelectFields(includePK bool, options DbOptions, records ...dalrecord.Rec
 		if key == nil {
 			panic("not able to determine key field(s) as a record does not reference a key")
 		}
-		collection := record.Key().Collection()
-		if strings.TrimSpace(collection) == "" {
+		if strings.TrimSpace(key.Collection()) == "" {
 			panic("record key reference an empty collection name")
 		}
 		fields = make([]string, 1, numberOfFields+1)
-		if rs, hasOptions := options.Recordsets[collection]; hasOptions {
+		if rs, hasOptions := options.Recordsets[getRecordsetName(key)]; hasOptions {
 			fields[0] = rs.PrimaryKey()[0].Name()
 		} else {
 			fields[0] = "ID"

@@ -77,6 +77,9 @@ type nameCase struct {
 	collection string // collection of every key and record
 	pk         string // primary-key column configured for that collection
 	field      string // data field (insert, set) or update field
+	// parent, when set, is the parent key of every key of the case: the keys are
+	// nested, and the table they address is the joined recordset name.
+	parent *dalrecord.Key
 }
 
 func validNames() nameCase { return nameCase{collection: "users", pk: "id", field: "name"} }
@@ -102,6 +105,9 @@ func (c nameCase) key(id string) *dalrecord.Key {
 	if c.collection == "" {
 		return &dalrecord.Key{ID: id}
 	}
+	if c.parent != nil {
+		return dalrecord.NewKeyWithParentAndID(c.parent, c.collection, id)
+	}
 	return dalrecord.NewKeyWithID(c.collection, id)
 }
 
@@ -109,7 +115,7 @@ func (c nameCase) incompleteKey() *dalrecord.Key {
 	if c.collection == "" {
 		return &dalrecord.Key{}
 	}
-	return dalrecord.NewIncompleteKey(c.collection, reflect.String, nil)
+	return dalrecord.NewIncompleteKey(c.collection, reflect.String, c.parent)
 }
 
 func (c nameCase) keys() []*dalrecord.Key { return []*dalrecord.Key{c.key("id1"), c.key("id2")} }
@@ -202,12 +208,19 @@ type recordedAPI struct {
 }
 
 // keyPathAPIs returns a database handle and a transaction, each over its own
-// recording driver.
+// recording driver that fails every statement.
 func keyPathAPIs(t *testing.T, options DbOptions) []recordedAPI {
 	t.Helper()
-	dbRecorder := &statementRecorder{}
+	return keyPathAPIsAnswering(t, options, nil)
+}
+
+// keyPathAPIsAnswering is keyPathAPIs over drivers that answer statements as
+// statementRecorder.rowExists says; nil fails every statement.
+func keyPathAPIsAnswering(t *testing.T, options DbOptions, rowExists func(text string) bool) []recordedAPI {
+	t.Helper()
+	dbRecorder := &statementRecorder{rowExists: rowExists}
 	raw := dbRecorder.open(t)
-	txRecorder := &statementRecorder{}
+	txRecorder := &statementRecorder{rowExists: rowExists}
 	tx, err := txRecorder.open(t).Begin()
 	if err != nil {
 		t.Fatal(err)

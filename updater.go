@@ -36,14 +36,11 @@ type updateTarget struct {
 // renderUpdateNames returns the names an update of key by updates writes into
 // SQL text, or an error wrapping ErrUnsafeName for the first one refused.
 func renderUpdateNames(options DbOptions, key *record.Key, updates []update.Update) (updateTarget, error) {
-	table, err := options.sqlIdentifier(positionCollection, key.Collection())
+	// The table, the primary key that is looked up and the recordset an error
+	// names are all the recordset of the whole path joined, as for every key read
+	// and write: every segment of it must be a name that can be written.
+	table, err := options.recordsetIdentifier(key)
 	if err != nil {
-		return updateTarget{}, err
-	}
-	// The table written is the key's own collection, but the primary key is looked
-	// up, and an error names it, by the whole path joined: every segment of it
-	// must be a name that can be written.
-	if _, err = options.recordsetIdentifier(key); err != nil {
 		return updateTarget{}, err
 	}
 	target := updateTarget{table: table, fields: make([]string, len(updates))}
@@ -70,6 +67,9 @@ func updateSingle(ctx context.Context, options DbOptions, execStatement statemen
 	}
 	n := 1
 	for i, u := range updates {
+		if i > 0 {
+			qry.text += ","
+		}
 		qry.text += fmt.Sprintf("\n\t%v = %s", target.fields[i], options.Placeholder.placeholder(n))
 		qry.args = append(qry.args, u.Value())
 		n++
