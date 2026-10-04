@@ -46,7 +46,11 @@ func TestCompileStructuredSQLWildcardExclusion(t *testing.T) {
 func TestEmitSQLQualifiedWildcardExclusionUsesLegacySingleSourceWildcard(t *testing.T) {
 	q := dal.From(dal.NewRootCollectionRef("customers", "c")).NewQuery().
 		SelectColumns(dal.AllColumnsExceptFrom("c", "email"))
-	if got, want := emitSQL(q), "SELECT * FROM customers"; got != want {
+	got, err := emitSQL(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "SELECT * FROM customers"; got != want {
 		t.Fatalf("emitSQL() = %q, want %q", got, want)
 	}
 }
