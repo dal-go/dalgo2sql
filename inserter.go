@@ -28,6 +28,11 @@ func (t transaction) Insert(ctx context.Context, record dalrecord.Record, opts .
 //     for arbitrary key types;
 //   - otherwise the record is inserted as is.
 func insertSingle(ctx context.Context, options DbOptions, record dalrecord.Record, exec statementExecutor, execQuery queryExecutor, opts ...dal.InsertOption) error {
+	// An ID generator checks for a taken ID with a statement of its own before
+	// the insert is built, so the names the insert will carry are checked first.
+	if err := options.checkRecordNames(record); err != nil {
+		return err
+	}
 	insertOptions := dal.NewInsertOptions(opts...)
 	generateID := insertOptions.IDGenerator()
 	if generateID == nil && insertOptions.PreferAdapterGeneratedID() {
@@ -63,7 +68,10 @@ func insertSingle(ctx context.Context, options DbOptions, record dalrecord.Recor
 // each call site — verified by reading every caller of insertSingle and
 // execInsert in this file.
 func execInsert(ctx context.Context, options DbOptions, record dalrecord.Record, exec statementExecutor) error {
-	q := buildSingleRecordQuery(insertOperation, options, record)
+	q, err := buildSingleRecordQuery(insertOperation, options, record)
+	if err != nil {
+		return err
+	}
 	if _, err := exec(ctx, q.text, q.args...); err != nil {
 		if options.IsAlreadyExists != nil && options.IsAlreadyExists(err) {
 			return fmt.Errorf("%w: %w", dalrecord.ErrRecordExists, err)

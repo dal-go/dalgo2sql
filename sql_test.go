@@ -114,7 +114,7 @@ func TestBuildSingleRecordQuery_Panics(t *testing.T) {
 			}
 		}()
 		record := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "u1"), &user2{Name: "John"})
-		buildSingleRecordQuery(insertOperation, DbOptions{}, record)
+		_, _ = buildSingleRecordQuery(insertOperation, DbOptions{}, record)
 	})
 
 	t.Run("update_no_fields", func(t *testing.T) {
@@ -125,7 +125,7 @@ func TestBuildSingleRecordQuery_Panics(t *testing.T) {
 		}()
 		// If we mark "Name" as part of PK, there will be no fields to update
 		record := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "u1"), &user2{Name: "John"})
-		buildSingleRecordQuery(updateOperation, DbOptions{
+		_, _ = buildSingleRecordQuery(updateOperation, DbOptions{
 			Recordsets: map[string]*Recordset{
 				"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID"), dal.Field("Name")}),
 			},
