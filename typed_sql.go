@@ -63,8 +63,11 @@ func typedUnsupported(format string, args ...any) error {
 // dal.ErrNotSupported rather than an approximation: an unrecognised node, a
 // query option the statement cannot honour (the DTQL money option, a source's
 // scan or database: see validateTypedJoinSources and validateTypedScanRestated),
-// a reference the server could not match (typedCheckOrderByName). DALgo's
-// generic engine remains the place for those queries.
+// a reference the server could not match (typedCheckOrderByName), and a bare name
+// the server would read as the whole row (typedCompiler.checkNamesAColumn).
+// DALgo's generic engine remains the place for those queries. A field that the
+// catalog facts of a known source do not list is a plain error, not a refusal:
+// the table has no such column.
 func compileTypedSQL(q dal.StructuredQuery, dialect typedDialect, facts typedCatalogFacts) (string, []any, error) {
 	if dialect == nil {
 		return "", nil, errors.New("typed SQL compiler requires a dialect")
@@ -417,6 +420,12 @@ func (c *typedCompiler) expandWildcard(wildcard *wildcardProjectionPlan) ([]type
 	}
 	items := make([]typedSelectItem, 0, len(source.Columns))
 	for _, column := range source.Columns {
+		// The statement writes the dialect's folded name, so a column whose own name
+		// is not that name cannot be listed, and writing the folded one would return
+		// another column, or the same one twice.
+		if !c.facts.addressable(column.Name) {
+			return nil, typedUnsupported("a wildcard projection cannot list catalog column %q: the dialect writes its name in another form", column.Name)
+		}
 		if wildcard.projection.Excludes(column.Name) {
 			continue
 		}
@@ -961,13 +970,58 @@ func (c *typedCompiler) field(field dal.FieldRef, sources map[string]typedSource
 		if requireQualified {
 			return "", typedUnsupported("field %q must name a source in a JOIN query", field.Name())
 		}
+		// Without a qualifier the field belongs to the single FROM source.
+		if err := c.checkNamesAColumn(field, name, sources[c.base]); err != nil {
+			return "", err
+		}
 		return name, nil
 	}
 	source, ok := sources[field.Source()]
 	if !ok {
 		return "", fmt.Errorf("field %q references unknown source %q", field.Name(), field.Source())
 	}
+	if err := c.checkNamesAColumn(field, name, source); err != nil {
+		return "", err
+	}
 	return source.quoted + "." + name, nil
+}
+
+// checkNamesAColumn refuses a field the server could read as something other than
+// a column of its source. PostgreSQL reads a name that matches no column as the
+// whole row of a source when it is the source's identity (a bare name: the alias,
+// else the table name), and as a function of the row when it is qualified (x.f is
+// f(x), documented as the table.func notation: to_json, row_to_json, to_jsonb,
+// concat, count, quote_literal read alike). Either hands back every column of the
+// row inside one value, past a field policy that checks names only, and the
+// caller chooses both the alias and the field.
+//
+// Two cases, decided by what the catalog facts say about the source:
+//
+//   - The facts know the source: the field must be one of its columns (the lookup
+//     matches the name the dialect writes, see typedCatalogFacts.column). Anything
+//     else is a plain error naming the column, as an unknown source is. It holds
+//     for a bare and for a qualified field, in every clause and in a join's ON.
+//   - The facts do not know the source: a bare field whose written name is the
+//     written identity of its source is refused, because without the column list
+//     the compiler cannot tell the column of that name from the whole row. The
+//     comparison is on the quoted texts, as the ORDER BY guard's is, so a dialect
+//     that folds case in quoteIdent is covered. A qualified field cannot be
+//     checked without facts, which is why the caller must pass facts for every
+//     source it compiles (the typedDialect contract).
+//
+// An aliased source hides its table's own name, so only the alias is an identity
+// here: a bare name equal to the table name is then no whole-row reference.
+func (c *typedCompiler) checkNamesAColumn(field dal.FieldRef, written string, source typedSource) error {
+	if _, known := c.facts.source(source.table); known {
+		if _, ok := c.facts.column(source.table, field.Name()); !ok {
+			return fmt.Errorf("field %q is not a column of source %s in the catalog facts; the server would read the name as the row of the source or as a function of it", field.Name(), source.quoted)
+		}
+		return nil
+	}
+	if field.Source() == "" && written == source.quoted {
+		return typedUnsupported("field %q is written as the identity of its source %s, which the server reads as the whole row unless a column has that name, and no catalog facts say whether one does", field.Name(), source.quoted)
+	}
+	return nil
 }
 
 // quote is the only way an identifier reaches the SQL text. The dialect

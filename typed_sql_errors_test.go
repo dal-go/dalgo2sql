@@ -706,8 +706,6 @@ func TestCompileTypedSQLCheckedJoinKeyTypes(t *testing.T) {
 		{"same category different widths", "ArtistId", "ArtistId"},
 		{"same non-scalar type", "Guid", "Guid"},
 		{"same unknown type name", "Mystery", "Mystery"},
-		{"column missing from the facts is left to the server", "Missing", "ArtistId"},
-		{"other side missing from the facts", "ArtistId", "Missing"},
 	}
 	for _, tc := range accepted {
 		t.Run("accepts "+tc.name, func(t *testing.T) {
@@ -725,6 +723,18 @@ func TestCompileTypedSQLCheckedJoinKeyTypes(t *testing.T) {
 	for _, tc := range refused {
 		t.Run("refuses "+tc.name, func(t *testing.T) {
 			expectTypedUnsupported(t, join(tc.album, tc.artist), nil, facts, "join_plan")
+		})
+	}
+	// A key the facts of a known source do not list is no longer left to the server:
+	// the server would read r.Missing as the function Missing applied to the row of r
+	// (TestCompileTypedSQLRefusesANameThatIsNotAColumnOfAKnownSource). It is a plain
+	// error, not a join_plan refusal.
+	for _, tc := range []struct{ name, album, artist, fragment string }{
+		{"a key missing from the facts of the left source", "Missing", "ArtistId", `on[0].left: field "Missing"`},
+		{"a key missing from the facts of the right source", "ArtistId", "Missing", `on[0].right: field "Missing"`},
+	} {
+		t.Run("rejects "+tc.name, func(t *testing.T) {
+			expectTypedInvalid(t, join(tc.album, tc.artist), nil, facts, tc.fragment)
 		})
 	}
 	t.Run("without facts nothing is checked", func(t *testing.T) {
@@ -827,5 +837,128 @@ func TestTypedQuerySources(t *testing.T) {
 	}
 	if got := typedQuerySources(nil); len(got) != 0 {
 		t.Fatalf("typedQuerySources(nil) = %v, want none", got)
+	}
+}
+
+// TestCompileTypedSQLRefusesAWholeRowNameWithoutFacts: PostgreSQL reads a bare name
+// that is no column of the statement's source as the source's identity, the whole
+// row as one composite value, when the name is the identity (the alias, else the
+// table name). The caller chooses both the alias and the field, so SELECT x FROM
+// Invoice AS x would return every column of the row inside one value, past a
+// policy that checks field names only. Without catalog facts the compiler cannot
+// tell whether a column has that name, so it refuses the written identity
+// (typedCompiler.checkNamesAColumn). With facts it asks the facts instead
+// (TestCompileTypedSQLRefusesANameThatIsNotAColumnOfAKnownSource).
+//
+// The comparison is on the quoted names written, as the ORDER BY guard's is, so a
+// dialect that folds case in quoteIdent is covered: X and x are one identifier.
+func TestCompileTypedSQLRefusesAWholeRowNameWithoutFacts(t *testing.T) {
+	folding := newFoldingFakeTypedDialect()
+	aliased := func() dal.IQueryBuilder { return typedTestFrom("Invoice", "x").NewQuery() }
+	plain := func() dal.IQueryBuilder { return typedTestFrom("Invoice", "").NewQuery() }
+	inSchema := func() dal.IQueryBuilder {
+		return dal.From(dal.NewQualifiedRootCollectionRef("public", "Invoice", "")).NewQuery()
+	}
+	total := typedTestColumn(typedTestField("Total"), "")
+	countOf := func(name string) dal.Expression { return dal.NewAggregate(dal.COUNT, false, typedTestField(name)) }
+	cases := []struct {
+		name     string
+		query    dal.StructuredQuery
+		dialect  typedDialect
+		fragment string
+	}{
+		{"select list, the alias", aliased().SelectColumns(typedTestColumn(typedTestField("x"), "")), nil, `field "x" is written as the identity of its source`},
+		{"select list, the alias, under an output alias", aliased().SelectColumns(typedTestColumn(typedTestField("x"), "row")), nil, `field "x"`},
+		{"select list, the table name", plain().SelectColumns(typedTestColumn(typedTestField("Invoice"), "")), nil, `field "Invoice"`},
+		{"select list, the table name of a schema-qualified source", inSchema().SelectColumns(typedTestColumn(typedTestField("Invoice"), "")), nil, `field "Invoice"`},
+		{"WHERE compares whole rows", aliased().Where(typedTestEq(typedTestField("x"), 1)).SelectColumns(total), nil, `field "x"`},
+		{"WHERE IS NULL on the table name", plain().Where(dal.NewIsNullCondition(typedTestField("Invoice"))).SelectColumns(total), nil, `field "Invoice"`},
+		{"ORDER BY sorts whole rows", aliased().OrderBy(dal.Ascending(typedTestField("x"))).SelectColumns(total), nil, `field "x"`},
+		{"ORDER BY the table name", plain().OrderBy(dal.Descending(typedTestField("Invoice"))).SelectColumns(total), nil, `field "Invoice"`},
+		{"GROUP BY groups whole rows", aliased().GroupBy(typedTestField("x")).SelectColumns(dal.Count()), nil, `field "x"`},
+		{"an aggregate counts whole rows", aliased().SelectColumns(dal.CountAs(typedTestField("x"), "n")), nil, `field "x"`},
+		{
+			"HAVING over an aggregate of the whole row",
+			aliased().GroupBy(typedTestField("g")).Having(dal.NewComparison(countOf("x"), dal.GreaterThen, typedTestConst(1))).SelectColumns(typedTestColumn(typedTestField("g"), "")),
+			nil, `field "x"`,
+		},
+		{"folding dialect: the alias written in capitals", aliased().SelectColumns(typedTestColumn(typedTestField("X"), "")), folding, `field "X" is written as the identity of its source "x"`},
+		{"folding dialect: an alias in capitals, the field in lower case", typedTestFrom("Invoice", "X").NewQuery().SelectColumns(typedTestColumn(typedTestField("x"), "")), folding, `field "x"`},
+		{"folding dialect: the table name in capitals", plain().SelectColumns(typedTestColumn(typedTestField("INVOICE"), "")), folding, `field "INVOICE"`},
+		{"folding dialect: ORDER BY the alias in capitals", aliased().OrderBy(dal.Ascending(typedTestField("X"))).SelectColumns(total), folding, `field "X"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			expectTypedUnsupported(t, tc.query, tc.dialect, typedCatalogFacts{}, tc.fragment)
+		})
+	}
+}
+
+// TestCompileTypedSQLRefusesANameThatIsNotAColumnOfAKnownSource: when the catalog
+// facts know a source, a field it names must be one of that source's columns. A
+// name that is no column is not an error to PostgreSQL, it is read as something
+// else: a bare name as the whole row (the alias or table name), and a qualified
+// name x.f as the function f applied to the row of x (x.to_json is to_json(x), and
+// row_to_json, to_jsonb, concat and count read alike). Either returns the row
+// inside one value, so a policy that checks field names would pass it and leak
+// every column. The error is a plain one, not ErrNotSupported: the query names a
+// column the table does not have, as an unknown source does.
+func TestCompileTypedSQLRefusesANameThatIsNotAColumnOfAKnownSource(t *testing.T) {
+	facts := typedCatalogFacts{Sources: map[typedSourceName]typedSourceFacts{
+		{Name: "Invoice"}:  {Columns: []typedColumnFact{{Name: "InvoiceId"}, {Name: "Total"}, {Name: "CustomerId"}}},
+		{Name: "Customer"}: {Columns: []typedColumnFact{{Name: "CustomerId"}, {Name: "Name"}}},
+	}}
+	foldingFacts := typedCatalogFacts{Fold: strings.ToLower, Sources: map[typedSourceName]typedSourceFacts{
+		{Name: "invoice"}: {Columns: []typedColumnFact{{Name: "invoiceid"}, {Name: "total"}}},
+	}}
+	mixedCaseFacts := typedCatalogFacts{Fold: strings.ToLower, Sources: map[typedSourceName]typedSourceFacts{
+		{Name: "invoice"}: {Columns: []typedColumnFact{{Name: "Total"}, {Name: "name"}}},
+	}}
+	folding := newFoldingFakeTypedDialect()
+	aliased := func() dal.IQueryBuilder { return typedTestFrom("Invoice", "x").NewQuery() }
+	plain := func() dal.IQueryBuilder { return typedTestFrom("Invoice", "").NewQuery() }
+	total := typedTestColumn(typedTestField("Total"), "")
+	countOf := func(name string) dal.Expression { return dal.NewAggregate(dal.COUNT, false, typedTestField(name)) }
+	joined := func(customerField string) dal.StructuredQuery {
+		return typedTestFrom("Invoice", "i").Join(
+			dal.NewJoinedSource(dal.NewRootCollectionRef("Customer", "c"), dal.JoinInner, typedTestJoinOn("i", "CustomerId", "c", customerField)),
+		).NewQuery().SelectColumns(typedTestColumn(typedTestQualified("c", "Name"), ""))
+	}
+	cases := []struct {
+		name     string
+		query    dal.StructuredQuery
+		facts    typedCatalogFacts
+		dialect  typedDialect
+		fragment string
+	}{
+		{"the alias read as the whole row", aliased().SelectColumns(typedTestColumn(typedTestField("x"), "")), facts, nil, `field "x" is not a column of source "x"`},
+		{"the table name read as the whole row", plain().SelectColumns(typedTestColumn(typedTestField("Invoice"), "")), facts, nil, `field "Invoice" is not a column of source "Invoice"`},
+		{"a qualified name read as a function of the row", aliased().SelectColumns(typedTestColumn(typedTestQualified("x", "to_json"), "")), facts, nil, `field "to_json" is not a column of source "x"`},
+		{"a qualified name, written under an output alias", aliased().SelectColumns(typedTestColumn(typedTestQualified("x", "row_to_json"), "j")), facts, nil, `field "row_to_json"`},
+		{"a misspelt column", plain().SelectColumns(typedTestColumn(typedTestField("Totl"), "")), facts, nil, `field "Totl"`},
+		{"WHERE, bare", aliased().Where(typedTestEq(typedTestField("x"), 1)).SelectColumns(total), facts, nil, `field "x"`},
+		{"WHERE, qualified", aliased().Where(typedTestEq(typedTestQualified("x", "to_jsonb"), 1)).SelectColumns(total), facts, nil, `field "to_jsonb"`},
+		{"ORDER BY, bare", aliased().OrderBy(dal.Ascending(typedTestField("x"))).SelectColumns(total), facts, nil, `field "x"`},
+		{"ORDER BY, qualified", aliased().OrderBy(dal.Ascending(typedTestQualified("x", "concat"))).SelectColumns(total), facts, nil, `field "concat"`},
+		{"GROUP BY, bare", aliased().GroupBy(typedTestField("x")).SelectColumns(dal.Count()), facts, nil, `field "x"`},
+		{"an aggregate argument", aliased().SelectColumns(dal.CountAs(typedTestQualified("x", "quote_literal"), "n")), facts, nil, `field "quote_literal"`},
+		{
+			"HAVING over an aggregate of the whole row",
+			aliased().GroupBy(typedTestField("InvoiceId")).Having(dal.NewComparison(countOf("x"), dal.GreaterThen, typedTestConst(1))).SelectColumns(typedTestColumn(typedTestField("InvoiceId"), "")),
+			facts, nil, `field "x"`,
+		},
+		{"a JOIN key read as a function of the row", joined("to_json"), facts, nil, `from.joins[0].on[0].right: field "to_json" is not a column of source "c"`},
+		{"a JOIN key on the left, missing from the facts", typedTestFrom("Invoice", "i").Join(
+			dal.NewJoinedSource(dal.NewRootCollectionRef("Customer", "c"), dal.JoinInner, typedTestJoinOn("i", "Missing", "c", "CustomerId")),
+		).NewQuery().SelectColumns(), facts, nil, `on[0].left: field "Missing"`},
+		{"folding dialect: the alias in capitals", aliased().SelectColumns(typedTestColumn(typedTestField("X"), "")), foldingFacts, folding, `field "X" is not a column of source "x"`},
+		// The dialect writes "total", which the catalog does not hold: the column there
+		// is Total, a different identifier, and the server would not find it.
+		{"folding dialect: a catalog column that is not in its folded form", plain().SelectColumns(typedTestColumn(typedTestField("Total"), "")), mixedCaseFacts, folding, `field "Total"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			expectTypedInvalid(t, tc.query, tc.dialect, tc.facts, tc.fragment)
+		})
 	}
 }

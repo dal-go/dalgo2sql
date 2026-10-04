@@ -69,19 +69,40 @@ import (
 //     so the compiler refuses an ORDER BY item whose written name is the written
 //     name of another output (typedCheckOrderByName). That check compares the
 //     quoted names quoteIdent returned, never the query's spelling, so it holds
-//     for a folding dialect too. Everything else that looks a name up stays on the
-//     query's spelling, because it decides what DALgo means and not what the
-//     server reads: the lookup of a select alias (typedAliasRewriter), source
-//     qualifiers, and the comparison of ORDER BY with a source's scan
-//     (validateTypedScanRestated). Under a folding dialect those treat Total and
-//     TOTAL as different names, which makes them refuse or leave a name as the
-//     column, never pick another expression, and the ORDER BY check above catches
-//     the written names that then meet. Wildcard exclusions match the catalog's
-//     names exactly, as dal.WildcardProjection.Excludes defines. In GROUP BY a
+//     for a folding dialect too. Three other kinds of lookup do not compare
+//     written names. The first looks a name up by the query's spelling, because it
+//     decides what DALgo means and not what the server reads: the lookup of a
+//     select alias (typedAliasRewriter), source qualifiers, and the comparison of
+//     ORDER BY with a source's scan (validateTypedScanRestated). Under a folding
+//     dialect those treat Total and TOTAL as different names, which makes them
+//     refuse or leave a name as the column, never pick another expression, and the
+//     ORDER BY check above catches the written names that then meet. The second
+//     matches a wildcard exclusion against the catalog's names exactly, as
+//     dal.WildcardProjection.Excludes defines. The third is the catalog facts
+//     lookup, which folds the query's name with typedCatalogFacts.Fold and matches
+//     a column only when the catalog's own name equals the result: Fold must be
+//     the case rule quoteIdent applies, a catalog column whose name is not its own
+//     folded form is never matched, and a select-all that would have to write one
+//     is refused, because the statement could not name that column. In GROUP BY a
 //     bare name is an input column before it is an output, and HAVING cannot see
 //     outputs at all, so both write the input column as it is, under any case
 //     rule. A dialect for an engine that reads a select alias before an input
 //     column in GROUP BY or HAVING needs that check extended before it is added.
+//   - A name that matches no column is not an error to the server, it is read as
+//     something else: a bare name equal to a source's identity (its alias, else its
+//     table name) as the whole row, one composite value that holds every column,
+//     and a qualified name x.f that is no column of x as the function f applied to
+//     the row of x (x.to_json is to_json(x); row_to_json, to_jsonb, concat, count
+//     and quote_literal read alike). Either returns the row inside one value, past
+//     any policy that checks field names. The compiler closes both with the
+//     catalog facts (typedCompiler.checkNamesAColumn): a field of a source whose
+//     facts are known must be one of its columns, else the statement fails with a
+//     plain error naming the column; and when the facts do not know the source, an
+//     unqualified field written as the base source's identity is refused with
+//     dal.ErrNotSupported. A qualified name without facts cannot be checked, so
+//     the caller (SQL-04) must pass catalog facts for every source it compiles,
+//     and each source's Columns must list every column a query may name (a system
+//     column such as ctid is not one unless the dialect lists it).
 //
 // The interface stays unexported until three dialects exist.
 type typedDialect interface {
@@ -181,11 +202,19 @@ type typedSourceFacts struct {
 // typedCatalogFacts is the compiler's whole knowledge of the database. The
 // zero value knows nothing, and the compiler then emits correct but less
 // optimised SQL (no wildcard expansion, no NOT NULL shortcuts, no join key
-// type check).
+// type check) and cannot check that a field is a column: it refuses a bare name
+// written as the base source's identity, and leaves a qualified name to the
+// server, which may read it as a function of the row. Pass facts for every source
+// of a query (see the name-resolution rules in typedDialect).
 type typedCatalogFacts struct {
 	// Fold maps a name to the key it is stored under, for engines or modes
-	// that fold identifier case. Nil means names are matched exactly.
-	Fold    func(string) string
+	// that fold identifier case. Nil means names are matched exactly. It must be
+	// the case rule the dialect's quoteIdent applies, and Sources holds the folded
+	// names: a column is matched when its name is the folded name of the query's.
+	Fold func(string) string
+	// Sources lists the columns of every source the query reads, all of them (see
+	// the name-resolution rules in typedDialect): a field the facts of a known
+	// source do not list is refused.
 	Sources map[typedSourceName]typedSourceFacts
 }
 
@@ -196,11 +225,21 @@ func (f typedCatalogFacts) fold(name string) string {
 	return f.Fold(name)
 }
 
+// addressable reports whether a statement can write a catalog name: the name is
+// its own folded form (every name is, when nothing folds). A column that is not
+// can never be matched by column, and a select-all cannot list it.
+func (f typedCatalogFacts) addressable(name string) bool { return f.fold(name) == name }
+
 func (f typedCatalogFacts) source(name typedSourceName) (typedSourceFacts, bool) {
 	source, ok := f.Sources[typedSourceName{Schema: f.fold(name.Schema), Name: f.fold(name.Name)}]
 	return source, ok
 }
 
+// column finds the column a statement means when it writes the name column. The
+// statement writes the folded name, so a catalog column matches only when its own
+// name is that folded name: comparing both sides through Fold would let a column
+// the dialect cannot write (Total, where the statement says "total") stand in for
+// another, or take the first of several that fold together.
 func (f typedCatalogFacts) column(name typedSourceName, column string) (typedColumnFact, bool) {
 	source, ok := f.source(name)
 	if !ok {
@@ -208,7 +247,7 @@ func (f typedCatalogFacts) column(name typedSourceName, column string) (typedCol
 	}
 	key := f.fold(column)
 	for _, candidate := range source.Columns {
-		if f.fold(candidate.Name) == key {
+		if candidate.Name == key {
 			return candidate, true
 		}
 	}

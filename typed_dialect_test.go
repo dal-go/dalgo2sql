@@ -160,6 +160,33 @@ func TestTypedCatalogFactsLookups(t *testing.T) {
 			t.Fatalf("column() = %v, %v", column, ok)
 		}
 	})
+	// A folding dialect writes the folded name, so a column matches only when the
+	// catalog's own name is that name; the first column that folds to the same key
+	// is not enough.
+	t.Run("folded lookup matches the catalog's own name only", func(t *testing.T) {
+		album := typedSourceName{Name: "album"}
+		colliding := typedCatalogFacts{Fold: strings.ToLower, Sources: map[typedSourceName]typedSourceFacts{
+			album: {Columns: []typedColumnFact{{Name: "Title", NotNull: true}, {Name: "title"}}},
+		}}
+		if column, ok := colliding.column(album, "TITLE"); !ok || column.NotNull || column.Name != "title" {
+			t.Fatalf("column(TITLE) = %v, %v; want the column named title, not the first one that folds to it", column, ok)
+		}
+		mixedOnly := typedCatalogFacts{Fold: strings.ToLower, Sources: map[typedSourceName]typedSourceFacts{
+			album: {Columns: []typedColumnFact{{Name: "Title"}}},
+		}}
+		for _, spelling := range []string{"Title", "title", "TITLE"} {
+			if column, ok := mixedOnly.column(album, spelling); ok {
+				t.Fatalf("column(%s) = %v; a catalog name the dialect cannot write must never match", spelling, column)
+			}
+		}
+		if !colliding.addressable("title") || colliding.addressable("Title") {
+			t.Fatal("addressable() must hold exactly for a name that is its own folded form")
+		}
+		var exact typedCatalogFacts
+		if !exact.addressable("Title") {
+			t.Fatal("without a fold every name is addressable")
+		}
+	})
 	t.Run("zero value has no facts", func(t *testing.T) {
 		var none typedCatalogFacts
 		if _, ok := none.source(typedSourceName{Name: "album"}); ok {

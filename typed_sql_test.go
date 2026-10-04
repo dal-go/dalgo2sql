@@ -369,8 +369,10 @@ func TestCompileTypedSQLAggregates(t *testing.T) {
 
 func TestCompileTypedSQLOrderBy(t *testing.T) {
 	facts := typedCatalogFacts{Sources: map[typedSourceName]typedSourceFacts{
-		{Name: "Album"}:  {Columns: []typedColumnFact{{Name: "AlbumId", NotNull: true}, {Name: "Title"}}},
-		{Name: "Artist"}: {Columns: []typedColumnFact{{Name: "ArtistId", NotNull: true}, {Name: "Name"}}},
+		// ArtistId is on both sides because the join keys below read it: a field of a
+		// known source must be one of its columns.
+		{Name: "Album"}:  {Columns: []typedColumnFact{{Name: "AlbumId", NotNull: true}, {Name: "Title"}, {Name: "ArtistId", DataType: "int4", Category: typedTypeNumber}}},
+		{Name: "Artist"}: {Columns: []typedColumnFact{{Name: "ArtistId", NotNull: true, DataType: "int4", Category: typedTypeNumber}, {Name: "Name"}}},
 	}}
 	album := func() dal.IQueryBuilder { return typedTestFrom("Album", "").NewQuery() }
 	runTypedGoldens(t, []typedGolden{
@@ -892,3 +894,122 @@ func TestCompileTypedSQLArgumentLimitIsPerStatement(t *testing.T) {
 }
 
 func typedTestPtr[T any](value T) *T { return &value }
+
+// TestCompileTypedSQLNamesThatAreColumnsOfAKnownSource pins what must keep
+// compiling beside the refusals in typed_sql_errors_test.go: a name the catalog
+// facts list is a column, and PostgreSQL reads a bare name as a column before it
+// reads it as the whole row, so a column that shares its name with its table or
+// alias is read as the column. A qualified column the facts list compiles too.
+func TestCompileTypedSQLNamesThatAreColumnsOfAKnownSource(t *testing.T) {
+	facts := typedCatalogFacts{Sources: map[typedSourceName]typedSourceFacts{
+		{Name: "Invoice"}:  {Columns: []typedColumnFact{{Name: "Invoice"}, {Name: "x"}, {Name: "Total"}, {Name: "CustomerId", DataType: "int4", Category: typedTypeNumber}}},
+		{Name: "Customer"}: {Columns: []typedColumnFact{{Name: "CustomerId", DataType: "int8", Category: typedTypeNumber}, {Name: "Name"}}},
+	}}
+	runTypedGoldens(t, []typedGolden{
+		{
+			name:    "a column named like its table",
+			facts:   facts,
+			query:   typedTestFrom("Invoice", "").NewQuery().SelectColumns(typedTestColumn(typedTestField("Invoice"), "")),
+			wantSQL: `SELECT "Invoice" FROM "Invoice"`,
+		},
+		{
+			name:  "a column named like its alias, in every clause",
+			facts: facts,
+			query: typedTestFrom("Invoice", "x").NewQuery().
+				Where(typedTestEq(typedTestField("x"), 1)).
+				OrderBy(dal.Ascending(typedTestField("x"))).
+				SelectColumns(typedTestColumn(typedTestField("x"), "")),
+			wantSQL:  `SELECT "x" FROM "Invoice" AS "x" WHERE "x" = $1::bigint ORDER BY "x" ASC NULLS FIRST`,
+			wantArgs: []any{1},
+		},
+		{
+			name:    "a qualified column",
+			facts:   facts,
+			query:   typedTestFrom("Invoice", "i").NewQuery().SelectColumns(typedTestColumn(typedTestQualified("i", "Total"), "")),
+			wantSQL: `SELECT "i"."Total" FROM "Invoice" AS "i"`,
+		},
+		{
+			name:  "a qualified column named like its alias",
+			facts: facts,
+			query: typedTestFrom("Invoice", "x").NewQuery().SelectColumns(typedTestColumn(typedTestQualified("x", "x"), "")),
+			// x.x is the column x of x
+			wantSQL: `SELECT "x"."x" FROM "Invoice" AS "x"`,
+		},
+		{
+			name:  "join keys that the facts list",
+			facts: facts,
+			query: typedTestFrom("Invoice", "i").Join(
+				dal.NewJoinedSource(dal.NewRootCollectionRef("Customer", "c"), dal.JoinInner, typedTestJoinOn("i", "CustomerId", "c", "CustomerId")),
+			).NewQuery().SelectColumns(typedTestColumn(typedTestQualified("c", "Name"), "")),
+			wantSQL: `SELECT "c"."Name" FROM "Invoice" AS "i" INNER JOIN "Customer" AS "c" ON ("i"."CustomerId" = "c"."CustomerId")`,
+		},
+		{
+			// The facts know nothing of Genre, so the name is not checked; it is not
+			// Genre's identity either.
+			name:    "a source the facts do not know, with a bare name that is not its identity",
+			facts:   facts,
+			query:   typedTestFrom("Genre", "").NewQuery().SelectColumns(typedTestColumn(typedTestField("Name"), "")),
+			wantSQL: `SELECT "Name" FROM "Genre"`,
+		},
+		{
+			// Only a bare name can be the whole row. A qualified name is not compared
+			// with the identity, and without facts it is not checked at all, which is why
+			// the typedDialect contract makes SQL-04 pass facts for every source.
+			name:    "a qualified name written like its alias, without facts",
+			query:   typedTestFrom("Invoice", "x").NewQuery().SelectColumns(typedTestColumn(typedTestQualified("x", "x"), "")),
+			wantSQL: `SELECT "x"."x" FROM "Invoice" AS "x"`,
+		},
+		{
+			// With an alias the table's own name is hidden (PostgreSQL), so the bare
+			// name Genre is no whole-row reference here and is not refused.
+			name:    "a source with an alias, with a bare name equal to its table name",
+			query:   typedTestFrom("Genre", "g").NewQuery().SelectColumns(typedTestColumn(typedTestField("Genre"), "")),
+			wantSQL: `SELECT "Genre" FROM "Genre" AS "g"`,
+		},
+	})
+}
+
+// TestCompileTypedSQLFactsLookupsUseTheNameTheDialectWrites: under a folding
+// dialect the compiler writes "total" for Total and TOTAL alike, so a facts lookup
+// may match only a catalog column whose own name is "total". A catalog that holds
+// Total (NOT NULL) and total (nullable) must never lend Total's NOT NULL to the
+// column the server will sort, or the NULLS clause is dropped and the nullable
+// column sorts with NULL on the wrong side.
+func TestCompileTypedSQLFactsLookupsUseTheNameTheDialectWrites(t *testing.T) {
+	folding := newFoldingFakeTypedDialect()
+	colliding := typedCatalogFacts{Fold: strings.ToLower, Sources: map[typedSourceName]typedSourceFacts{
+		{Name: "invoice"}: {Columns: []typedColumnFact{{Name: "Total", NotNull: true}, {Name: "total"}, {Name: "secret"}}},
+	}}
+	invoice := func() dal.IQueryBuilder { return typedTestFrom("Invoice", "").NewQuery() }
+	runTypedGoldens(t, []typedGolden{
+		{
+			name:    "ORDER BY keeps the NULLS clause of the nullable column the server sorts",
+			dialect: folding,
+			facts:   colliding,
+			query:   invoice().OrderBy(dal.Ascending(typedTestField("total"))).SelectColumns(typedTestColumn(typedTestField("total"), "")),
+			wantSQL: `SELECT "total" FROM "invoice" ORDER BY "total" ASC NULLS FIRST`,
+		},
+		{
+			name:    "the same, spelled as the mixed-case catalog name",
+			dialect: folding,
+			facts:   colliding,
+			query:   invoice().OrderBy(dal.Descending(typedTestField("Total"))).SelectColumns(typedTestColumn(typedTestField("total"), "")),
+			wantSQL: `SELECT "total" FROM "invoice" ORDER BY "total" DESC NULLS LAST`,
+		},
+	})
+	t.Run("a select-all that would write a name the catalog does not hold is refused", func(t *testing.T) {
+		q := invoice().SelectColumns(dal.AllColumnsExcept("secret"))
+		expectTypedUnsupported(t, q, folding, colliding, `catalog column "Total"`)
+	})
+	t.Run("a select-all over names that are their own folded form compiles", func(t *testing.T) {
+		lower := typedCatalogFacts{Fold: strings.ToLower, Sources: map[typedSourceName]typedSourceFacts{
+			{Name: "invoice"}: {Columns: []typedColumnFact{{Name: "total"}, {Name: "secret"}}},
+		}}
+		typedGolden{
+			dialect: folding,
+			facts:   lower,
+			query:   invoice().SelectColumns(dal.AllColumnsExcept("secret")),
+			wantSQL: `SELECT "total" FROM "invoice"`,
+		}.run(t)
+	})
+}
