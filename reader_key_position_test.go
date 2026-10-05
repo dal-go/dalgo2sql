@@ -17,10 +17,10 @@ import (
 // has only a name it takes the column of exactly that name before one that is the same name
 // folded.
 
-// On a fold-lower mount the stored names id and Id are two columns, and the statement a
-// select-all sends is a bare *, so only the catalog says which of them is the key. The table is
-// read with the key first and with the key second, as a select-all and as a select-all over a
-// join, which lists the base source's columns from the same catalog.
+// A select-all returns the columns of its source in table order, and two stored names can be
+// one name once folded, so only the catalog says which column is the key. The table is read
+// with the key first and with the key second, as a select-all and as a select-all over a join,
+// which lists the base source's columns from the same catalog.
 func TestPostgresRecordsReaderKeysASelectAllByTheCatalogKeyWhenAnotherColumnFoldsToItsName(t *testing.T) {
 	const join = ` FROM "album" AS "a" INNER JOIN "artist" AS "r" ON ("a"."artist_id" = "r"."id")`
 	for _, tc := range []struct {
@@ -135,8 +135,8 @@ func TestPostgresRecordsReaderKeysASelectAllJoinByTheBasesColumnOfExactlyTheKeys
 // the name the statement gives its columns: a compiler of the caller's writes the statement,
 // and the names it gives need not be the query's.
 func TestRecordsReaderKeysASelectListByTheItemThatIsTheKeysOwnField(t *testing.T) {
-	title := dal.Column{Expression: dal.Field("Title")}
-	key := dal.Column{Expression: dal.Field("AlbumId")}
+	title := dal.Column{Expression: dal.Field("Label")}
+	key := dal.Column{Expression: dal.Field("Code")}
 	for _, tc := range []struct {
 		name    string
 		columns []dal.Column
@@ -144,7 +144,7 @@ func TestRecordsReaderKeysASelectListByTheItemThatIsTheKeysOwnField(t *testing.T
 	}{
 		{"the key first", []dal.Column{key, title}, int64(7)},
 		{"the key second", []dal.Column{title, key}, int64(8)},
-		{"the key under its own name as an alias", []dal.Column{title, {Expression: dal.Field("AlbumId"), Alias: "AlbumId"}}, int64(8)},
+		{"the key under its own name as an alias", []dal.Column{title, {Expression: dal.Field("Code"), Alias: "Code"}}, int64(8)},
 		{"the key twice: the first", []dal.Column{title, key, key}, int64(8)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -158,8 +158,8 @@ func TestRecordsReaderKeysASelectListByTheItemThatIsTheKeysOwnField(t *testing.T
 			compiler := nativeCompilerFunc(func(dal.StructuredQuery, NativeJoinHintFragments) (string, []any, error) {
 				return "SELECT native", nil, nil
 			})
-			q := dal.From(dal.NewRootCollectionRef("Album", "")).NewQuery().SelectColumns(tc.columns...)
-			reader, err := getRecordsReaderWithOptions(context.Background(), q, db.QueryContext, DbOptions{NativeStructuredQueryCompiler: compiler, PrimaryKey: []string{"AlbumId"}})
+			q := dal.From(dal.NewRootCollectionRef("Item", "")).NewQuery().SelectColumns(tc.columns...)
+			reader, err := getRecordsReaderWithOptions(context.Background(), q, db.QueryContext, DbOptions{NativeStructuredQueryCompiler: compiler, PrimaryKey: []string{"Code"}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -175,15 +175,15 @@ func TestRecordsReaderKeysASelectListByTheItemThatIsTheKeysOwnField(t *testing.T
 // statement, whichever compiler writes it, as it is for a join: a record is read by name, one
 // value per name, so it would drop one of the two columns.
 func TestAReadOfALoneSourceThatGivesOneOutputNameToTwoExpressionsIsRefused(t *testing.T) {
-	title := dal.Column{Expression: dal.Field("Title"), Alias: "AlbumId"}
-	key := dal.Column{Expression: dal.Field("AlbumId")}
-	for _, columns := range [][]dal.Column{{key, title}, {title, key}, {{Expression: dal.Field("Title")}, {Expression: dal.Field("Genre"), Alias: "Title"}}} {
-		q := dal.From(dal.NewRootCollectionRef("Album", "")).NewQuery().SelectColumns(columns...)
+	relabelled := dal.Column{Expression: dal.Field("Label"), Alias: "Code"}
+	key := dal.Column{Expression: dal.Field("Code")}
+	for _, columns := range [][]dal.Column{{key, relabelled}, {relabelled, key}, {{Expression: dal.Field("Label")}, {Expression: dal.Field("Group"), Alias: "Label"}}} {
+		q := dal.From(dal.NewRootCollectionRef("Item", "")).NewQuery().SelectColumns(columns...)
 		for _, tc := range []struct {
 			name    string
 			options DbOptions
 		}{
-			{"the legacy emitter", DbOptions{PrimaryKey: []string{"AlbumId"}}},
+			{"the legacy emitter", DbOptions{PrimaryKey: []string{"Code"}}},
 			{"SQLite", DbOptions{StructuredQueryDialect: dialectSQLite}},
 			{"PostgreSQL", DbOptions{StructuredQueryDialect: "postgres"}},
 		} {
@@ -214,17 +214,17 @@ func (noSourceQuery) From() dal.FromSource { return nil }
 // unaliased expression is named by the server, a statement with joins is refused by its compiler
 // (errJoinOutputRepeated), and a query with no source has no columns to name.
 func TestRefusedOutputNamesLeavesWhatItDoesNotKnow(t *testing.T) {
-	album := dal.From(dal.NewRootCollectionRef("Album", "")).NewQuery()
-	count := dal.Column{Expression: dal.NewAggregate(dal.COUNT, false, dal.Field("AlbumId"))}
+	album := dal.From(dal.NewRootCollectionRef("Item", "")).NewQuery()
+	count := dal.Column{Expression: dal.NewAggregate(dal.COUNT, false, dal.Field("Code"))}
 	for _, tc := range []struct {
 		name string
 		q    dal.StructuredQuery
 	}{
-		{"one expression twice", album.SelectColumns(dal.Column{Expression: dal.Field("Title")}, dal.Column{Expression: dal.Field("Title")})},
-		{"one expression twice under one alias", album.SelectColumns(dal.Column{Expression: dal.Field("Title"), Alias: "t"}, dal.Column{Expression: dal.Field("Title"), Alias: "t"})},
-		{"a wildcard and a column of a name it may list", album.SelectColumns(dal.AllColumnsExcept("Secret"), dal.Column{Expression: dal.Field("Title"), Alias: "AlbumId"})},
+		{"one expression twice", album.SelectColumns(dal.Column{Expression: dal.Field("Label")}, dal.Column{Expression: dal.Field("Label")})},
+		{"one expression twice under one alias", album.SelectColumns(dal.Column{Expression: dal.Field("Label"), Alias: "t"}, dal.Column{Expression: dal.Field("Label"), Alias: "t"})},
+		{"a wildcard and a column of a name it may list", album.SelectColumns(dal.AllColumnsExcept("Secret"), dal.Column{Expression: dal.Field("Label"), Alias: "Code"})},
 		{"expressions with no name", album.SelectColumns(count, count)},
-		{"every column named apart", album.SelectColumns(dal.Column{Expression: dal.Field("Title")}, dal.Column{Expression: dal.Field("Genre")})},
+		{"every column named apart", album.SelectColumns(dal.Column{Expression: dal.Field("Label")}, dal.Column{Expression: dal.Field("Group")})},
 		{"no columns", album.SelectColumns()},
 		{"a join", pgJoinKeyQuery(dal.Column{Expression: dal.NewFieldRef("a", "id")}, dal.Column{Expression: dal.NewFieldRef("r", "id")})},
 		{"no source", noSourceQuery{album.SelectColumns()}},

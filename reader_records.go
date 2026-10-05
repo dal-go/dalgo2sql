@@ -263,8 +263,8 @@ func catalogPrimaryKey(ctx context.Context, options DbOptions, q dal.StructuredQ
 // keyColumnIndex is the position of the column that carries the key's name, among the
 // columns names lists, or -1 when none does. A column that spells the name as it is wins over
 // one that is the name folded (under fold, nil: as they are), and of several that are only
-// the name folded the first is taken, so the key is never the last of the columns that
-// share a name. In a select-all over joins the base's columns lead the result, so a position
+// the name folded the first is taken, so the choice does not depend on how many columns share
+// the name. In a select-all over joins the base's columns lead the result, so a position
 // among them is a position in the result; a column of a joined source that carries the name is
 // never taken for it.
 func keyColumnIndex(names []string, name string, fold nameFold) int {

@@ -148,14 +148,14 @@ arguments of every supported shape are in `testdata/postgres`.
   select-all (its position among the source's columns, which a select-all returns in table
   order), and the first item of a select list that is the key's own field. Where only a
   name says which column is the key (a declared key on a select-all, a select-all over
-  joins) the column of exactly that name wins over one that is the same name folded, so on
-  a fold-lower mount the key `id` is not the column `Id`, whichever comes first in the
-  table, and of several columns that are only the name folded the first is taken. A select
-  list over one source that gives one output name to two different expressions
-  (`AlbumId, Title AS AlbumId`) is refused before any statement, as it is for a join, with
-  every dialect and compiler (`columns[1]: duplicate output name "AlbumId"`); one
-  expression written twice is one column asked twice and is left alone. The names a
-  wildcard lists are not known before the statement, so they are not compared.
+  joins) the column of exactly that name wins over one that is the same name folded, and
+  of several columns that are only the name folded the first is taken, so a column that
+  folds to the key's name is not taken for the key. A select list over one source that gives
+  one output name to two different expressions (`a` and `b AS a`) is refused before any
+  statement, as it is for a join, with every dialect and compiler (`columns[1]: duplicate
+  output name "a"`); one expression written twice is one column asked twice and is left
+  alone. The names a wildcard lists are not known before the statement, so they are not
+  compared.
 - **Records are keyed by the source's primary key.** The records reader keys each record
   by the primary key column of the recordset declared for the source in
   `DbOptions.Recordsets` (else `DbOptions.PrimaryKey`). With no key configured, the key is
