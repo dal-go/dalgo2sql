@@ -56,16 +56,9 @@ func (dtb *database) ExecuteQueryToRecordsetReader(ctx context.Context, query da
 		return nil, err
 	}
 	reader, err := getRecordsetReaderWithOptions(ctx, query, execute, dtb.options, options...)
-	if lease == nil {
-		return reader, err
-	}
 	if err != nil {
-		// A read that fails after its statement ran (a column type the recordset cannot
-		// hold) returns the reader with the rows still open, and the connection can only
-		// go back once they are closed: closing it waits for them.
-		if reader != nil {
-			_ = reader.Close()
-		}
+		// A read that fails has closed its rows (see getRecordsetReaderWithOptions), which
+		// is what lets the connection go back: closing it waits for them.
 		lease.release()
 		return nil, err
 	}
@@ -89,7 +82,8 @@ func (dtb *database) readExecutor(ctx context.Context, query dal.Query, pool exe
 	if err != nil {
 		return nil, nil, err
 	}
-	return conn.QueryContext, newConnLease(ctx, conn), nil
+	lease := newConnLease(ctx, conn)
+	return lease.query, lease, nil
 }
 
 //func (dtb *database) Connect(ctx context.Context) (dal.Connection, error) {
