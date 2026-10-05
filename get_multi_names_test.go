@@ -80,8 +80,11 @@ func TestGetMulti_ChecksEveryNameBeforeTheFirstStatement(t *testing.T) {
 // check cannot carry a name the check never saw, and nothing is sent for it.
 func TestGetMulti_ChecksTheNamesAgainWhereTheReadIsBuilt(t *testing.T) {
 	record := &shiftingRecord{
-		key:   dalrecord.NewKeyWithID("users", "id1"),
-		datas: []any{&struct{ Name string }{}, &struct{ Имя string }{}},
+		key: dalrecord.NewKeyWithID("users", "id1"),
+		// The record is read three times before the statement is built (the check of its data,
+		// the check of the names of the batch, and the check of its data again where the
+		// read starts), and the fourth read is of a field that cannot be written.
+		datas: []any{&struct{ Name string }{}, &struct{ Name string }{}, &struct{ Name string }{}, &struct{ Имя string }{}},
 	}
 	for _, r := range keyPathAPIs(t, validNames().options("")) {
 		t.Run(r.kind, func(t *testing.T) {

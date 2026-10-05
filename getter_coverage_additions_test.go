@@ -27,6 +27,9 @@ func (m mockRecord) Key() *dalrecord.Key             { return m.key }
 func (m mockRecord) Data() any                       { return m.data }
 func (m mockRecord) SetError(error) dalrecord.Record { return m }
 
+// A record with no data is refused by checkReadTarget before a read reaches getSelectFields;
+// called on its own, it still panics. The two other inputs that used to panic here, a record
+// with no key and a key with no collection, are errors now (TestGetSelectFields_RefusesAKeyThatNamesNoRecordset).
 func TestGetter_GetSelectFields_Panics(t *testing.T) {
 	t.Run("nil_data", func(t *testing.T) {
 		defer func() {
@@ -36,26 +39,6 @@ func TestGetter_GetSelectFields_Panics(t *testing.T) {
 		}()
 		rec := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "u1"), nil)
 		_, _ = getSelectFields(false, DbOptions{}, rec)
-	})
-
-	t.Run("nil_key_with_include_pk", func(t *testing.T) {
-		defer func() {
-			if r := recover(); r == nil {
-				t.Fatal("expected panic on nil key")
-			}
-		}()
-		rec := mockRecord{key: nil, data: &struct{ Name string }{}}
-		_, _ = getSelectFields(true, DbOptions{}, rec)
-	})
-
-	t.Run("empty_collection_with_include_pk", func(t *testing.T) {
-		defer func() {
-			if r := recover(); r == nil {
-				t.Fatal("expected panic on empty collection")
-			}
-		}()
-		rec := mockRecord{key: &dalrecord.Key{}, data: &struct{ Name string }{}}
-		_, _ = getSelectFields(true, DbOptions{}, rec)
 	})
 }
 

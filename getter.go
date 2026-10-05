@@ -40,11 +40,11 @@ func (t transaction) GetMulti(ctx context.Context, records []dalrecord.Record) e
 }
 
 func executeExists(_ context.Context, options DbOptions, key *dalrecord.Key, exec queryExecutor) (exists bool, err error) {
-	rsName := getRecordsetName(key)
 	table, err := options.recordsetIdentifier(key)
 	if err != nil {
 		return false, err
 	}
+	rsName := getRecordsetName(key)
 	queryText := fmt.Sprintf("SELECT 1 FROM %s WHERE ", table)
 
 	pk := options.PrimaryKeyFieldNames(key)
@@ -111,6 +111,10 @@ func renderSingleGet(options DbOptions, record dalrecord.Record) (names singleGe
 
 func getSingle(_ context.Context, options DbOptions, record dalrecord.Record, exec queryExecutor) error {
 	key := record.Key()
+	if err := checkReadTarget(record); err != nil {
+		record.SetError(err)
+		return err
+	}
 	names, onRecord, err := renderSingleGet(options, record)
 	if err != nil {
 		if onRecord {
@@ -151,6 +155,9 @@ func getMulti(ctx context.Context, options DbOptions, records []dalrecord.Record
 	// is checked here, for every recordset.
 	for _, r := range records {
 		if _, err := options.recordsetIdentifier(r.Key()); err != nil {
+			return refuseRecords(records, err)
+		}
+		if err := checkReadTarget(r); err != nil {
 			return refuseRecords(records, err)
 		}
 	}
@@ -261,6 +268,13 @@ func renderMultiGet(options DbOptions, records []dalrecord.Record) (names multiG
 	// For map data we use SELECT * and identify the PK column after reading columns.
 	// For struct data we enumerate fields explicitly.
 	names.dataIsMap = isMapData(records[0].Data())
+	for _, r := range records[1:] {
+		// One statement reads the records, and each is filled from its row as the first is.
+		if isMapData(r.Data()) != names.dataIsMap {
+			return multiGetNames{}, nil, fmt.Errorf("%w: the records of recordset %s read together mix map and struct data",
+				dal.ErrNotSupported, recordset)
+		}
+	}
 	if names.dataIsMap {
 		names.fields = []string{"*"}
 	} else if names.fields, err = getSelectFields(true, options, records...); err != nil {
@@ -539,10 +553,7 @@ func scanRowIntoMap(rows *sql.Rows, data interface{}, pkIncluded bool) error {
 	// Resolve the target map (handle *map[string]any or map[string]any).
 	v := reflect.ValueOf(data)
 	if v.Kind() == reflect.Pointer || v.Kind() == reflect.Interface {
-		// If it's a pointer to a nil map, initialize the map first.
-		if v.Elem().Kind() == reflect.Map && v.Elem().IsNil() {
-			v.Elem().Set(reflect.MakeMap(v.Elem().Type()))
-		}
+		// A pointer to a nil map has its map already: checkReadTarget made it.
 		v = v.Elem()
 	}
 
@@ -601,6 +612,76 @@ func scanIntoDataWithPrimaryKeyIncluded(rows *sql.Rows, data interface{}) error 
 //	return m, nil
 //}
 
+// checkReadTarget refuses, before any statement, a record whose data a read cannot fill: the
+// errors wrap dal.ErrNotSupported, name the kind of data and never a value. A read fills a
+// pointer to a struct with exported fields, a map with string keys whose elements hold any
+// value (a map by value must be made: the read stores into it), or a pointer to either, and
+// whatever else the scan of one record accepts, such as a pointer to a sql.Scanner. The data
+// of a record that has none, a struct given by value (its fields cannot be set), a nil
+// pointer, a struct with a field that is not exported (reflect cannot set it, and it cannot be
+// told from a column), a nil map by value, and a map with keys that are not strings or elements
+// that cannot hold every column value can never be filled, and storing into them panics.
+//
+// A pointer to a nil map is a target: its map is made here, as the scan of one record always
+// made it, so that a read of several records can store into it.
+func checkReadTarget(record dalrecord.Record) error {
+	// Data() panics while the record's error is unset or set to a failure, and SetError(nil)
+	// clears both.
+	record.SetError(nil)
+	data := record.Data()
+	if data == nil {
+		return fmt.Errorf("%w: the record has no data to read into, want a pointer to a struct or a map with string keys", dal.ErrNotSupported)
+	}
+	target := reflect.ValueOf(data)
+	switch target.Kind() {
+	case reflect.Struct:
+		return fmt.Errorf("%w: the data is a %s value, which a read cannot fill, want a pointer to it", dal.ErrNotSupported, target.Type())
+	case reflect.Map:
+		if target.IsNil() {
+			return fmt.Errorf("%w: the data is a nil %s, which a read cannot store into, want a made map or a pointer to it", dal.ErrNotSupported, target.Type())
+		}
+		return checkMapTarget(target.Type())
+	case reflect.Pointer:
+		if target.IsNil() {
+			return fmt.Errorf("%w: the data is a nil %s, which a read cannot fill", dal.ErrNotSupported, target.Type())
+		}
+		switch elem := target.Elem(); elem.Kind() {
+		case reflect.Struct:
+			return checkStructTarget(elem.Type())
+		case reflect.Map:
+			if err := checkMapTarget(elem.Type()); err != nil {
+				return err
+			}
+			if elem.IsNil() {
+				elem.Set(reflect.MakeMap(elem.Type()))
+			}
+		}
+	}
+	return nil
+}
+
+// checkStructTarget refuses a struct type that has a field that is not exported.
+func checkStructTarget(t reflect.Type) error {
+	for i := 0; i < t.NumField(); i++ {
+		if field := t.Field(i); !field.IsExported() {
+			return fmt.Errorf("%w: the field %s of the %s data is not exported, so a read cannot set it", dal.ErrNotSupported, field.Name, t)
+		}
+	}
+	return nil
+}
+
+// checkMapTarget refuses a map type whose keys are not strings or whose elements cannot hold
+// every value a column can have, which is any value.
+func checkMapTarget(t reflect.Type) error {
+	if kind := t.Key().Kind(); kind != reflect.String {
+		return fmt.Errorf("%w: the keys of the %s data are %s, not strings", dal.ErrNotSupported, t, kind)
+	}
+	if elem := t.Elem(); elem.Kind() != reflect.Interface || elem.NumMethod() != 0 {
+		return fmt.Errorf("%w: the elements of the %s data are %s, which cannot hold every column value, want any", dal.ErrNotSupported, t, elem)
+	}
+	return nil
+}
+
 // dataFieldNames lists the fields a read of record selects: the names of the
 // struct fields of its data, or the one wildcard for map data, whose columns
 // cannot be enumerated ahead of time (the scan path, scanRowIntoMap, handles the
@@ -640,10 +721,10 @@ func getSelectFields(includePK bool, options DbOptions, records ...dalrecord.Rec
 	}
 	key := record.Key()
 	if key == nil {
-		panic("not able to determine key field(s) as a record does not reference a key")
+		return nil, fmt.Errorf("%w: the primary key cannot be determined, as the record has no key", dal.ErrNotSupported)
 	}
 	if strings.TrimSpace(key.Collection()) == "" {
-		panic("record key reference an empty collection name")
+		return nil, fmt.Errorf("%w: the primary key cannot be determined, as the key of the record names no collection", dal.ErrNotSupported)
 	}
 	primaryKey := "ID"
 	if rs, hasOptions := options.Recordsets[getRecordsetName(key)]; hasOptions {

@@ -10,6 +10,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/dal-go/dalgo/dal"
 	dalrecord "github.com/dal-go/record"
 )
 
@@ -166,6 +167,10 @@ func (o DbOptions) sqlIdentifier(position, name string) (string, error) {
 	return quote(name), nil
 }
 
+// errNilKey is the error of an operation that is given a nil key, which names no recordset.
+// Every operation reaches the table through recordsetIdentifier before it builds a statement.
+var errNilKey = fmt.Errorf("%w: the key is nil", dal.ErrNotSupported)
+
 // recordsetIdentifier returns the recordset name getRecordsetName derives from
 // key as it may be written into SQL text. It is the table of every statement a
 // key read or write builds, nested key or not. Each collection of the key's path
@@ -175,6 +180,9 @@ func (o DbOptions) sqlIdentifier(position, name string) (string, error) {
 // operation reaches the table through here, before any statement, so that is one
 // rule for all of them.
 func (o DbOptions) recordsetIdentifier(key *dalrecord.Key) (string, error) {
+	if key == nil {
+		return "", errNilKey
+	}
 	for segment := key; segment != nil; segment = segment.Parent() {
 		if _, err := o.sqlIdentifier(positionCollection, segment.Collection()); err != nil {
 			return "", err
