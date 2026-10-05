@@ -100,7 +100,7 @@ func TestCompileSQLConditionIsNull(t *testing.T) {
 			wantSQL:   "((+`x` COLLATE BINARY) IS NULL AND (+`y` COLLATE BINARY) IS NOT NULL)",
 		},
 		{
-			name: "inside AND and OR with a comparison",
+			name: "inside AND and OR",
 			condition: dal.NewGroupCondition(dal.Or,
 				dal.NewGroupCondition(dal.And, dal.Field("x").IsNull(), dal.Field("y").IsNotNull()),
 				dal.NewIsNullCondition(dal.Field("z")),
@@ -147,6 +147,10 @@ func TestCompileSQLConditionIsNullRejectsBadOperands(t *testing.T) {
 		{"unknown source", dal.NewIsNullCondition(dal.NewFieldRef("zzz", "x")), false, `unknown source "zzz"`},
 		{"unqualified field in a join", dal.NewIsNotNullCondition(dal.Field("x")), true, "must name a source"},
 		{"unsupported value", dal.NewIsNullCondition(dal.Constant{Value: struct{}{}}), false, "unsupported SQL value type"},
+		{"star operand", dal.NewIsNullCondition(dal.Star()), false, "null test over *"},
+		{"star operand, negated", dal.NewIsNotNullCondition(dal.Star()), false, "null test over *"},
+		{"parameter operand", dal.NewIsNullCondition(dal.NewParam("p")), false, "unsupported expression"},
+		{"array operand", dal.NewIsNullCondition(dal.NewArray([]any{1, 2})), false, "unsupported expression"},
 		{"error inside a group", dal.NewGroupCondition(dal.And, dal.Field("x").IsNull(), dal.NewIsNullCondition(nil)), false, "unsupported expression"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -211,6 +215,10 @@ func TestSQLiteNullTestsInWhere(t *testing.T) {
 		{"zero and empty text are not null", dal.Field("qty").IsNotNull(), []string{"1", "2", "4"}},
 		{"AND", dal.NewGroupCondition(dal.And, dal.Field("name").IsNull(), dal.Field("qty").IsNotNull()), []string{"2"}},
 		{"OR", dal.NewGroupCondition(dal.Or, dal.Field("name").IsNull(), dal.Field("qty").IsNull()), []string{"2", "3", "5"}},
+		{"OR with an equality to nil", dal.NewGroupCondition(dal.Or,
+			dal.NewComparison(dal.Field("name"), dal.Equal, dal.NewConstant(nil)),
+			dal.Field("qty").IsNull(),
+		), []string{"2", "3", "5"}},
 		{"nested", dal.NewGroupCondition(dal.And,
 			dal.NewGroupCondition(dal.Or, dal.Field("name").IsNull(), dal.Field("qty").IsNull()),
 			dal.Field("id").IsNotNull(),
@@ -389,5 +397,27 @@ func TestSQLiteJoinedQueryRejectsInvalidNullOperandBeforeNativePlanning(t *testi
 	err = canExecuteSQLiteJoin(ctx, nullJoinQuery(dal.NewIsNullCondition(dal.Field("note"))), "sqlite", tx.QueryContext)
 	if err == nil || !strings.Contains(err.Error(), "join_plan") || !strings.Contains(err.Error(), "must name a source") {
 		t.Fatalf("CanExecuteJoin = %v, want a join_plan decline naming the unqualified field", err)
+	}
+}
+
+// A null test over an aggregate is a HAVING condition. In a WHERE it names an
+// aggregate before any group exists, and SQLite rejects the statement, so the
+// compiler refuses it rather than sending it.
+func TestCompileStructuredSQLRefusesANullTestOverAnAggregateInWhere(t *testing.T) {
+	sum := dal.NewAggregate(dal.SUM, false, dal.Field("amount"))
+	for name, where := range map[string]dal.Condition{
+		"aggregate":           dal.NewIsNullCondition(sum),
+		"negated":             dal.NewIsNotNullCondition(sum),
+		"inside arithmetic":   dal.NewIsNullCondition(dal.Binary(sum, dal.Add, dal.NewConstant(1))),
+		"inside a group":      dal.NewGroupCondition(dal.And, dal.Field("x").IsNull(), dal.NewIsNullCondition(sum)),
+		"inside nested group": dal.NewGroupCondition(dal.Or, dal.NewGroupCondition(dal.And, dal.NewIsNullCondition(sum))),
+	} {
+		t.Run(name, func(t *testing.T) {
+			q := dal.From(dal.NewRootCollectionRef("orders", "")).NewQuery().Where(where).SelectColumns(dal.Column{Expression: dal.Field("id")})
+			text, _, err := compileStructuredSQL(q)
+			if text != "" || err == nil || !strings.Contains(err.Error(), "null test over an aggregate") {
+				t.Fatalf("compileStructuredSQL = %q, %v; want a refusal", text, err)
+			}
+		})
 	}
 }

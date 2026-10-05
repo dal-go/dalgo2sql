@@ -85,8 +85,18 @@ func execInsert(ctx context.Context, options DbOptions, record dalrecord.Record,
 func (t transaction) InsertMulti(ctx context.Context, records []dalrecord.Record, opts ...dal.InsertOption) error {
 	// The whole batch is checked before its first statement: an earlier record
 	// would otherwise be inserted before a later one is refused.
+	insertOptions := dal.NewInsertOptions(opts...)
+	idIsGenerated := insertOptions.IDGenerator() != nil || insertOptions.PreferAdapterGeneratedID()
 	for _, record := range records {
 		if err := t.sqlOptions.checkRecordNames(record); err != nil {
+			return err
+		}
+		// A generated ID is a column of its own, so a record without a field is
+		// still an insert.
+		if idIsGenerated {
+			continue
+		}
+		if err := t.sqlOptions.checkRecordColumns(record, insertOperation); err != nil {
 			return err
 		}
 	}

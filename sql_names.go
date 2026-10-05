@@ -4,7 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strconv"
+	"strings"
 	"unicode"
 	"unicode/utf8"
 
@@ -40,12 +42,29 @@ import (
 // reviewed quoting.
 var ErrUnsafeName = errors.New("unsafe SQL name")
 
+// ErrUndeclaredNestedRecordset is wrapped by the error every key read and write
+// returns for a key with a parent when no recordset is declared under its joined
+// name in DbOptions.Recordsets. The statement is not sent. Test for it with
+// errors.Is.
+//
+// It is one rule for nested keys in every operation (Exists, Get, GetMulti,
+// Insert, InsertMulti, Set, SetMulti, Update, UpdateMulti, Delete and
+// DeleteMulti, on a database and on a transaction): a SQL recordset is a table,
+// the table of a nested key is named by the collections of the key and of its
+// parents joined with "_", the key's own collection first, and it is the
+// declaration of that recordset that says the table exists and has the primary
+// key the key's ID is looked up in. A key without a parent is not affected.
+var ErrUndeclaredNestedRecordset = errors.New("nested key without a declared recordset")
+
 // The positions a name can have in a key read or write; an ErrUnsafeName error
 // names the one that was refused.
 const (
 	positionCollection = "collection"
 	positionField      = "field"
 	positionPrimaryKey = "primary key"
+	// The positions of the names a structured SQLite query writes.
+	positionAlias  = "alias"
+	positionSchema = "schema"
 )
 
 const (
@@ -104,6 +123,23 @@ func reviewedIdentifierQuoting(dialect string) func(string) string {
 	return nil
 }
 
+// reservedSQLWords are common SQL words that an engine rejects as a bare name in
+// the text of a statement: a conservative list, not any one engine's. The legacy
+// text emitter writes names unquoted, so it refuses a keys-only query ordered by one.
+var reservedSQLWords = map[string]bool{
+	"and": true, "as": true, "between": true, "by": true, "case": true, "check": true,
+	"create": true, "default": true, "delete": true, "distinct": true, "drop": true,
+	"else": true, "exists": true, "foreign": true, "from": true, "group": true,
+	"having": true, "in": true, "index": true, "insert": true, "into": true, "is": true,
+	"join": true, "like": true, "limit": true, "not": true, "null": true, "on": true,
+	"or": true, "order": true, "primary": true, "references": true, "select": true,
+	"set": true, "table": true, "then": true, "union": true, "unique": true,
+	"update": true, "values": true, "when": true, "where": true,
+}
+
+// isReservedSQLWord reports whether name, in any case, is one of reservedSQLWords.
+func isReservedSQLWord(name string) bool { return reservedSQLWords[strings.ToLower(name)] }
+
 // quotableNameProblem says why name cannot be written quoted, or "" if it can.
 func quotableNameProblem(name string) string {
 	switch {
@@ -146,14 +182,25 @@ func (o DbOptions) sqlIdentifier(position, name string) (string, error) {
 // key as it may be written into SQL text. It is the table of every statement a
 // key read or write builds, nested key or not. Each collection of the key's path
 // is validated before the names are joined, and the joined name is validated as
-// the one identifier it becomes.
+// the one identifier it becomes. A key with a parent is refused unless a recordset
+// is declared under the joined name (ErrUndeclaredNestedRecordset): every
+// operation reaches the table through here, before any statement, so that is one
+// rule for all of them.
 func (o DbOptions) recordsetIdentifier(key *dalrecord.Key) (string, error) {
 	for segment := key; segment != nil; segment = segment.Parent() {
 		if _, err := o.sqlIdentifier(positionCollection, segment.Collection()); err != nil {
 			return "", err
 		}
 	}
-	return o.sqlIdentifier(positionCollection, getRecordsetName(key))
+	identifier, err := o.sqlIdentifier(positionCollection, getRecordsetName(key))
+	if err != nil {
+		return "", err
+	}
+	if name := getRecordsetName(key); key.Parent() != nil && o.Recordsets[name] == nil {
+		return "", fmt.Errorf("%w: the key has a parent, so a recordset must be declared as %q in DbOptions.Recordsets",
+			ErrUndeclaredNestedRecordset, name)
+	}
+	return identifier, nil
 }
 
 // recordFieldNames lists the field names a write of data names in SQL text:
@@ -204,4 +251,24 @@ func (o DbOptions) checkRecordNames(record dalrecord.Record) error {
 		}
 	}
 	return nil
+}
+
+// checkRecordColumns refuses a record that has no column to write, before any
+// statement: for operation updateOperation (Set, which updates a row that is
+// there) a field that is not a column of the primary key; for insertOperation a
+// key ID or a field. buildSingleRecordQuery refuses the same records on its own.
+func (o DbOptions) checkRecordColumns(record dalrecord.Record, op operation) error {
+	key := record.Key()
+	primaryKey := o.PrimaryKeyFieldNames(key)
+	record.SetError(nil)
+	fields := 0
+	for _, name := range recordFieldNames(record.Data()) {
+		if !slices.Contains(primaryKey, name) {
+			fields++
+		}
+	}
+	if fields > 0 || (op == insertOperation && key.ID != nil) {
+		return nil
+	}
+	return fmt.Errorf("%w: the record of recordset %s has no field to write", ErrNoFieldsToWrite, getRecordsetName(key))
 }

@@ -10,11 +10,12 @@ import (
 // "_". For a key without a parent it is the key's collection.
 //
 // It is the one table rule of every statement a key read or write builds, which
-// reaches it through DbOptions.recordsetIdentifier (the table) and
-// DbOptions.PrimaryKeyFieldNames (the primary key): Exists, Get, GetMulti,
-// Insert, Set, SetMulti, Update, UpdateMulti, Delete and DeleteMulti. A builder
-// does not write key.Collection() as the table, as that is the table of a
-// different recordset for a nested key.
+// reaches it through DbOptions.recordsetIdentifier (the table): Exists, Get,
+// GetMulti, Insert, InsertMulti, Set, SetMulti, Update, UpdateMulti, Delete and
+// DeleteMulti. The primary key is looked up under the same name: by
+// DbOptions.PrimaryKeyFieldNames or, for GetMulti of several records, directly in
+// DbOptions.Recordsets. A builder does not write key.Collection() as the table,
+// as that is the table of a different recordset for a nested key.
 func getRecordsetName(key *record.Key) string {
 	path := make([]string, 0, key.Level()+1)
 	for key != nil {

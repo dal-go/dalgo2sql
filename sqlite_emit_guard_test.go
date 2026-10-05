@@ -373,9 +373,9 @@ func TestEmitSQLGuardValueTypes(t *testing.T) {
 
 // TestEmitSQLGuardRefusesJSONRenderingMismatch pins the slices in constant
 // position whose encoding/json text differs from the values the guard checked:
-// a []byte becomes a base64 string, and <, >, &, U+2028, U+2029 and invalid
-// UTF-8 become backslash-u escapes. Array position prints through fmt, so the
-// same strings are accepted there.
+// a []byte becomes a base64 string, <, >, &, U+2028 and U+2029 become
+// backslash-u escapes, and invalid UTF-8 is replaced with U+FFFD. Array position
+// prints through fmt, so the same strings are accepted there.
 func TestEmitSQLGuardRefusesJSONRenderingMismatch(t *testing.T) {
 	refused := []any{
 		[]byte("abc"), []uint8(nil), []string{"a<b"}, []string{"a>b"}, []any{"a&b"},

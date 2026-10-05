@@ -139,11 +139,7 @@ var keyTableStatements = []struct {
 		"UPDATE {table} SET\n\t{name} = ?\n\tWHERE {id} = ?",
 	}},
 	{"delete", false, []string{"DELETE FROM {table} WHERE {id} = ?"}},
-	{"delete-multi", false, []string{
-		"DELETE FROM {table} WHERE {id} = ?",
-		"DELETE FROM {table} WHERE {id} = ?",
-		"DELETE FROM {table} WHERE {id} IN (?, ?)",
-	}},
+	{"delete-multi", false, []string{"DELETE FROM {table} WHERE {id} IN (?, ?)"}},
 }
 
 // statementTable is the table a statement of the shapes above addresses.
@@ -249,8 +245,6 @@ func TestKeyTable_SameLeafCollectionBelowDifferentParentsIsNotOneTable(t *testin
 		{"delete-multi, consecutive", func(ctx context.Context, api keyPathAPI) error {
 			return api.DeleteMulti(ctx, []*dalrecord.Key{orders.key("l1"), orders.key("l2"), quotes.key("l3")})
 		}, []string{
-			"DELETE FROM lines_orders WHERE id = ?",
-			"DELETE FROM lines_orders WHERE id = ?",
 			"DELETE FROM lines_orders WHERE id IN (?, ?)",
 			"DELETE FROM lines_quotes WHERE id = ?",
 		}, false},
@@ -334,9 +328,10 @@ func TestUpdate_SeparatesAssignmentsWithCommas(t *testing.T) {
 // primary key configured is an error of the call, not a panic.
 func TestInsert_WithAKeyIDAndNoPrimaryKeyIsAnError(t *testing.T) {
 	// Only the leaf collection has a primary key configured: the recordset of the
-	// nested key is the joined name, which has none.
+	// nested key is the joined name, declared with none.
 	leafOnly := DbOptions{Recordsets: map[string]*Recordset{
-		"lines": NewRecordset("lines", Table, []dal.FieldRef{dal.Field("id")}),
+		"lines":     NewRecordset("lines", Table, []dal.FieldRef{dal.Field("id")}),
+		nestedTable: NewRecordset(nestedTable, Table, nil),
 	}}
 	nested := nestedNames()
 	cases := []struct {

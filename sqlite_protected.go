@@ -242,6 +242,11 @@ func (s *sqliteProtectedSession) prepare(ctx context.Context, op access.Protecte
 		return sqlitePrepared{}, unsupportedSQLite()
 	}
 	pk := rs.PrimaryKey()[0].Name()
+	// The statements below write both names quoted, by the rule of the key reads
+	// and writes: a name it refuses is not written.
+	if quotableNameProblem(table) != "" || quotableNameProblem(pk) != "" {
+		return sqlitePrepared{}, unsupportedSQLite()
+	}
 	var create string
 	if err := s.conn.QueryRowContext(ctx, "SELECT sql FROM sqlite_schema WHERE type='table' AND name=?", table).Scan(&create); err != nil {
 		return sqlitePrepared{}, unsupportedSQLite()

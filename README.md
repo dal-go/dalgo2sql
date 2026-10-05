@@ -118,23 +118,48 @@ as the pool does for a read of its own.
 
 A source opened with no `StructuredQueryDialect` and no
 `NativeStructuredQueryCompiler` renders structured queries through the legacy
-text emitter. That is every such source, among them datatug-cli SQLite sources
-opened without the `sqlite` dialect and openvaultdb-go's PostgreSQL and MySQL
-mounts today. The emitter pastes names and values straight into the statement, so
-it fails closed: a name or value it cannot prove plain (brackets, backslashes,
-control characters, quotes inside JSON-rendered slices, `<`, `>`, `&`, U+2028,
-U+2029, invalid UTF-8, a `[]byte` constant, named slice types, non-finite
-numbers, times outside the JSON range) gets an error wrapping
-`dal.ErrNotSupported`, and no SQL is executed.
+text emitter. A source leaves this path by setting a dialect: `sqlite` for SQLite
+and `postgres` for PostgreSQL, which is selectable. MySQL has no dialect, so a
+MySQL source stays on the legacy path, and so does a PostgreSQL or SQLite source
+opened without one, until its consumer sets it.
+
+The emitter pastes names and values straight into the statement, so it fails
+closed. What it refuses, by where it is found (each refusal is an error wrapping
+`dal.ErrNotSupported`, and no SQL is executed):
+
+- **A name** (collection, schema, alias, field, column alias, function name) that
+  is not a plain identifier.
+- **A string constant**, anywhere (a plain value, an `IN` list, inside a slice),
+  that holds a backslash, a bracket or a control character.
+- **A string inside a slice passed as one constant** (`dal.Constant` holding
+  a `[]string` or `[]any`, which `encoding/json` renders) that also holds a double
+  quote, `<`, `>`, `&`, U+2028, U+2029 or invalid UTF-8, which json writes as an
+  escape or replaces with U+FFFD. A plain value and an `IN` list may hold these
+  characters.
+- **A constant of a kind whose text cannot be checked**: a `[]byte` (or any byte
+  slice, nested ones included), a named slice type, a non-finite number (NaN,
+  Infinity, -Infinity, `float32` included), a time outside the range JSON can
+  write, a time inside an `IN` list, and any Go type that is not a scalar or an
+  unnamed slice of scalars.
+- **An aggregate** other than COUNT, SUM, AVG, MIN and MAX, and a keys-only query
+  that would be ordered by a field that is a reserved word (such as a primary key
+  named `order`), because the emitter writes the name unquoted and the server
+  rejects it.
 
 ## NUMERIC result values
 
-SQLite results are unchanged in the recordset reader. In the records reader a
-bare `NUMERIC` column changes in two cases: a BLOB holding decimal text, and the
-texts `NaN`, `Infinity` and `-Infinity`, become `float64`. With lib/pq the
-recordset reader keeps `NUMERIC` as `[]byte`; only the records reader converts.
-Text that is not a number stays a string, and a `float64`-typed recordset column
-refuses it with an error.
+Since dalgo2sql v0.21.0 the readers turn the text a driver delivers for a column
+typed `NUMERIC` (pgx delivers PostgreSQL's `NUMERIC` as text) into a `float64`
+when it is decimal text, or exactly `NaN`, `Infinity` or `-Infinity`. Text that is
+not a number stays a string, and a `float64`-typed recordset column refuses it
+with an error. The records reader converts every such column; the recordset reader
+converts a `float64`-typed column, and with lib/pq, which delivers `NUMERIC` as
+`[]byte`, it keeps `[]byte`.
+
+Compared with dalgo2sql v0.20, SQLite results are unchanged in the recordset
+reader. In the records reader a bare `NUMERIC` column changes in two cases: a BLOB
+holding decimal text, and the texts `NaN`, `Infinity` and `-Infinity`, become
+`float64`. A `DECIMAL` column is not `NUMERIC` and keeps its text.
 
 ## End2end - is a separate module
 
@@ -167,15 +192,28 @@ the same name, the shallower one wins, and at one depth the first in declaration
 order. Two columns of one row that reach the same field are an error, never a
 silent overwrite.
 
+An exact spelling beats depth, as it beats a looser spelling: with an untagged
+`ID` in the outer struct and an embedded field tagged `db:"id"`, the column `id`
+reaches the tagged embedded field, not the outer one (scany gave it to the outer
+`ID`, whose snake_case name is also `id`); the column `ID` still reaches the outer
+field.
+
+A struct field that is named (not embedded) is one column, named after its `db`
+tag or its Go name, whatever its type. scany's `db:""` on a named struct field,
+which maps the nested struct's fields without a prefix, is not supported: those
+fields are not reached, and a column that names one of them has no field.
+
 One difference in precedence from scany: the exact spelling is tried first, so
 with an untagged `Name` declared before a field tagged `db:"name"`, the column
 `name` reaches the tagged field (scany gave it to `Name`, whose snake_case name
 is also `name`); the column `Name` still reaches the untagged one.
 
 **Records reader.** A column without a field is skipped (the identity column of
-a record is not a field of its data). `NULL` stores the zero value, or calls
-`Scan(nil)` on a `sql.Scanner`. Values follow what a map target gets, with
-these differences by field type:
+a record is not a field of its data). `NULL` is `nil` in a pointer, an
+interface or a `[]byte` field, calls `Scan(nil)` on a `sql.Scanner`, and is an
+error naming the column for any other field, as it is for `Get` (it used to store
+the zero value). Values follow what a map target gets, with these differences by
+field type:
 
 - a `sql.Scanner` receives the driver's value unchanged, so a decimal type sees
   the exact `NUMERIC` text and a JSON type sees `[]byte`;
@@ -186,7 +224,9 @@ these differences by field type:
   keeps every digit and the whole `int64` and `uint64` range is reachable; a
   whole `NUMERIC` with a scale (`9007199254740993.00`, what `SUM` over
   `numeric(p,2)` returns) is read from the part before the point, so it keeps
-  every digit too; a fraction is an error;
+  every digit too; a fraction is an error, and so is a whole number outside the
+  field's range (`-9223372036854775809` for an `int64` is an error, never the
+  nearest bound);
 - float and `bool` fields take the normalised value (`NUMERIC` becomes
   `float64`); `time.Time` and `any` fields take it as is (`[]byte` becomes
   `string` for an `any` field, as in a map). Every field is checked for

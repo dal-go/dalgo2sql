@@ -71,10 +71,7 @@ func TestDeleter(t *testing.T) {
 			record.NewKeyWithID("users", "u2"),
 		}
 
-		// Currently deleteMulti calls deleteSingle for each key AND then deleteMultiInSingleTable
-		// according to the implementation in deleter.go:55-62
-		mock.ExpectExec("DELETE FROM users WHERE ID = ?").WithArgs("u1").WillReturnResult(sqlmock.NewResult(0, 1))
-		mock.ExpectExec("DELETE FROM users WHERE ID = ?").WithArgs("u2").WillReturnResult(sqlmock.NewResult(0, 1))
+		// The keys of one recordset are deleted by one IN statement.
 		mock.ExpectExec("DELETE FROM users WHERE ID IN (?, ?)").WithArgs("u1", "u2").WillReturnResult(sqlmock.NewResult(0, 2))
 
 		err = db.DeleteMulti(ctx, keys)

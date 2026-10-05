@@ -258,18 +258,30 @@ func TestAssignColumnValue(t *testing.T) {
 	}
 }
 
-func TestAssignColumnValue_NilStoresZero(t *testing.T) {
-	target := scanKinds{Int: 5, String: "x"}
-	value := "x"
-	target.Ptr = &value
+// NULL is nil in a pointer, an interface and a []byte field, Scan(nil) for a
+// sql.Scanner, and an error for every other field, as it is for Get.
+func TestAssignColumnValue_Nil(t *testing.T) {
+	value, bytes := "x", []byte("b")
+	target := scanKinds{Int: 5, String: "x", Ptr: &value, Bytes: bytes, Any: 1, Null: sql.NullString{String: "s", Valid: true}}
 	rv := reflect.ValueOf(&target).Elem()
-	for _, name := range []string{"Int", "String", "Ptr"} {
+	for _, name := range []string{"Ptr", "Bytes", "Any", "Null"} {
 		if err := assignColumnValue(rv.FieldByName(name), nil, nil); err != nil {
-			t.Fatal(err)
+			t.Fatalf("%s: %v", name, err)
 		}
 	}
-	if target.Int != 0 || target.String != "" || target.Ptr != nil {
-		t.Errorf("nil must store the zero value: %+v", target)
+	if target.Ptr != nil || target.Bytes != nil || target.Any != nil || target.Null.Valid {
+		t.Errorf("NULL must be nil: %+v", target)
+	}
+	for _, name := range []string{"Bool", "NamedBool", "Int", "Int8", "Uint", "Float64", "String", "Named", "Time", "Slice", "Raw"} {
+		field := rv.FieldByName(name)
+		before := field.Interface()
+		err := assignColumnValue(field, nil, nil)
+		if err == nil || !strings.Contains(err.Error(), "converting NULL to "+field.Type().String()+" is unsupported") {
+			t.Errorf("%s: error = %v, want one that refuses NULL", name, err)
+		}
+		if !reflect.DeepEqual(field.Interface(), before) {
+			t.Errorf("%s: the field was changed to %v", name, field.Interface())
+		}
 	}
 }
 
@@ -307,6 +319,13 @@ func TestAssignColumnValue_IntegerFieldsReadTheDriversText(t *testing.T) {
 		{name: "text that only looks like a whole NUMERIC is not parsed for a text value", field: "Int64", raw: "12.00", normalized: "12.00", wantErr: "invalid syntax"},
 		{name: "fractional NUMERIC is still refused", field: "Int64", raw: "12.5", normalized: 12.5, wantErr: "is not an int64"},
 		{name: "fractional NUMERIC for uint is still refused", field: "Uint64", raw: "12.5", normalized: 12.5, wantErr: "is not a uint64"},
+		{name: "MinInt64", field: "Int64", raw: "-9223372036854775808", normalized: -9223372036854775808.0, want: int64(math.MinInt64)},
+		{name: "MinInt64 with a scale", field: "Int64", raw: "-9223372036854775808.00", normalized: -9223372036854775808.0, want: int64(math.MinInt64)},
+		// Below MinInt64 the float64 of the text is exactly -2^63, so converting it
+		// would store MinInt64: the text is out of range and is refused.
+		{name: "just below MinInt64 is refused", field: "Int64", raw: "-9223372036854775809", normalized: -9223372036854775808.0, wantErr: "is not an int64: it is out of range"},
+		{name: "just below MinInt64 with a scale is refused", field: "Int64", raw: "-9223372036854775809.00", normalized: -9223372036854775808.0, wantErr: "is not an int64: it is out of range"},
+		{name: "just below MinInt64 as bytes is refused", field: "Int64", raw: []byte("-9223372036854775809"), normalized: -9223372036854775808.0, wantErr: "is not an int64: it is out of range"},
 		{name: "exact text beyond int64 is refused", field: "Int64", raw: "9223372036854775808", normalized: 9223372036854775808.0, wantErr: "is not an int64"},
 		{name: "exact text beyond uint64 is refused", field: "Uint64", raw: "18446744073709551616", normalized: 18446744073709551616.0, wantErr: "is not a uint64"},
 		{name: "exact text beyond the field is refused", field: "Int8", raw: "300", normalized: 300.0, wantErr: "overflows int8"},

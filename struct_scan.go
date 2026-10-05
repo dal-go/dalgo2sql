@@ -3,6 +3,7 @@ package dalgo2sql
 import (
 	"bytes"
 	"database/sql"
+	"errors"
 	"fmt"
 	"math"
 	"reflect"
@@ -11,6 +12,9 @@ import (
 	"strings"
 	"sync"
 )
+
+// bytesType is the type of a []byte field, which holds NULL as nil.
+var bytesType = reflect.TypeOf([]byte(nil))
 
 // structField is one settable field of a struct target.
 type structField struct {
@@ -214,14 +218,22 @@ func structSetter(target any) (set func(column string, raw, normalized any) erro
 //   - Every other field takes normalized, with []byte turned into string as a
 //     map target stores it: floats, booleans (SQLite stores them as integers),
 //     time.Time and interface fields, and integers as just said.
-//   - nil stores the zero value.
+//   - nil (NULL) is stored as nil in a pointer, an interface and a []byte field,
+//     passed to a sql.Scanner as Scan(nil), and an error for any other field, as
+//     it is for Get.
 func assignColumnValue(field reflect.Value, raw, normalized any) error {
 	if scanner, ok := field.Addr().Interface().(sql.Scanner); ok {
 		return scanner.Scan(raw)
 	}
 	if raw == nil {
-		field.SetZero()
-		return nil
+		// NULL is an error for a field that cannot hold it, as it is for Get
+		// (database/sql: converting NULL to int is unsupported). A pointer, an
+		// interface and a []byte hold it as nil.
+		if k := field.Kind(); k == reflect.Pointer || k == reflect.Interface || field.Type() == bytesType {
+			field.SetZero()
+			return nil
+		}
+		return fmt.Errorf("converting NULL to %s is unsupported", field.Type())
 	}
 	if field.Kind() == reflect.Pointer {
 		pointee := reflect.New(field.Type().Elem())
@@ -300,8 +312,14 @@ func assignColumnValue(field reflect.Value, raw, normalized any) error {
 // and every value that is not text, is converted from normalized as before.
 func exactInt64(raw any, normalized reflect.Value) (int64, error) {
 	if text, ok := wholeNumberText(raw, normalized); ok {
-		if n, err := strconv.ParseInt(text, 10, 64); err == nil {
+		n, err := strconv.ParseInt(text, 10, 64)
+		if err == nil {
 			return n, nil
+		}
+		// A text that spells an integer out of range is out of range: the float64
+		// of it may round to a bound (-9223372036854775809 is -2^63).
+		if errors.Is(err, strconv.ErrRange) {
+			return 0, errors.New("the value is not an int64: it is out of range")
 		}
 	}
 	return toInt64(normalized)
@@ -310,8 +328,12 @@ func exactInt64(raw any, normalized reflect.Value) (int64, error) {
 // exactUint64 is exactInt64 for unsigned fields.
 func exactUint64(raw any, normalized reflect.Value) (uint64, error) {
 	if text, ok := wholeNumberText(raw, normalized); ok {
-		if n, err := strconv.ParseUint(text, 10, 64); err == nil {
+		n, err := strconv.ParseUint(text, 10, 64)
+		if err == nil {
 			return n, nil
+		}
+		if errors.Is(err, strconv.ErrRange) {
+			return 0, errors.New("the value is not a uint64: it is out of range")
 		}
 	}
 	return toUint64(normalized)

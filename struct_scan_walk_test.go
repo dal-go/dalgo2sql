@@ -95,6 +95,52 @@ type walkUntaggedFirst struct {
 	Alias string `db:"name"`
 }
 
+// An untagged outer ID with an embedded ID tagged db:"id": the exact spelling `id`
+// is the embedded field's, although the outer field is shallower, and the column
+// `ID` is the outer field's. The exact spelling beats depth, as it beats a looser
+// spelling.
+type walkOuterUntaggedID struct {
+	ID string
+	walkTaggedID
+}
+
+type walkTaggedID struct {
+	ID string `db:"id"`
+}
+
+// A named struct field tagged db:"" is one column, named after the field: scany
+// maps the nested struct's fields without a prefix, this package does not.
+type walkNamedStructField struct {
+	Name string
+	Body walkBody `db:""`
+}
+
+type walkBody struct {
+	Text string
+}
+
+func TestStructColumnsOf_AnExactSpellingBeatsDepth(t *testing.T) {
+	columns := structColumnsOf(reflect.TypeOf(walkOuterUntaggedID{}))
+	tagged, taggedOK := columns.lookup("id")
+	outer, outerOK := columns.lookup("ID")
+	if !taggedOK || !outerOK {
+		t.Fatalf("id found %v, ID found %v", taggedOK, outerOK)
+	}
+	if !reflect.DeepEqual(tagged.index, []int{1, 0}) || !reflect.DeepEqual(outer.index, []int{0}) {
+		t.Errorf("id at %v, ID at %v", tagged.index, outer.index)
+	}
+}
+
+func TestStructColumnsOf_ANamedStructFieldTaggedEmptyIsNotWalked(t *testing.T) {
+	columns := structColumnsOf(reflect.TypeOf(walkNamedStructField{}))
+	if _, ok := columns.lookup("Text"); ok {
+		t.Error("the fields of a named struct field were reached without a prefix")
+	}
+	if got, ok := columns.lookup("body"); !ok || !reflect.DeepEqual(got.index, []int{1}) {
+		t.Errorf("the named field is one column: %v, %v", got.index, ok)
+	}
+}
+
 func TestStructColumnsOf_ReachesEveryFieldScanyFilled(t *testing.T) {
 	t.Run("two embedded structs with the same Go name and different tags", func(t *testing.T) {
 		columns := structColumnsOf(reflect.TypeOf(walkTwoEmbedded{}))
@@ -252,6 +298,24 @@ func TestScanIntoData_StructSelfEmbeddedPointerIsNotWalkedAgain(t *testing.T) {
 	}
 	if got.Name != "n" || inner.Name != "inner" {
 		t.Errorf("the outer field takes the column: %+v, inner %+v", got, inner)
+	}
+}
+
+func TestRecordsReader_StructTargetAnExactSpellingBeatsDepth(t *testing.T) {
+	var got walkOuterUntaggedID
+	if err := nextStruct(t, &got, sqlmock.NewRows([]string{"id", "ID"}).AddRow("tagged", "outer")); err != nil {
+		t.Fatal(err)
+	}
+	if got.walkTaggedID.ID != "tagged" || got.ID != "outer" {
+		t.Errorf("got %+v", got)
+	}
+	// With no column ID, the outer field stays empty: `id` is not given to it.
+	got = walkOuterUntaggedID{}
+	if err := nextStruct(t, &got, sqlmock.NewRows([]string{"id"}).AddRow("tagged")); err != nil {
+		t.Fatal(err)
+	}
+	if got.walkTaggedID.ID != "tagged" || got.ID != "" {
+		t.Errorf("got %+v", got)
 	}
 }
 

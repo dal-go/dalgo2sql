@@ -326,9 +326,17 @@ func sqliteJoinFields(ctx context.Context, source dal.RecordsetSource, dialect s
 func sqliteTableColumns(ctx context.Context, source dal.CollectionRef, execute executeQueryFunc) ([]sqliteTableColumn, error) {
 	pragma := "PRAGMA "
 	if schema := source.Schema(); schema != "" {
-		pragma += quoteSQLIdentifier(schema) + "."
+		quotedSchema, err := quoteCheckedSQLIdentifier(positionSchema, schema)
+		if err != nil {
+			return nil, err
+		}
+		pragma += quotedSchema + "."
 	}
-	pragma += "table_info(" + quoteSQLIdentifier(source.Name()) + ")"
+	table, err := quoteCheckedSQLIdentifier(positionCollection, source.Name())
+	if err != nil {
+		return nil, err
+	}
+	pragma += "table_info(" + table + ")"
 	rows, err := execute(ctx, pragma)
 	if err != nil {
 		return nil, fmt.Errorf("join_plan: inspect SQLite table %q: %w", source.Name(), err)
@@ -355,7 +363,10 @@ func sqlitePreflightColumnValues(ctx context.Context, source dal.CollectionRef, 
 	if err != nil {
 		return err
 	}
-	column := quoteSQLIdentifier(field)
+	column, err := quoteCheckedSQLIdentifier(positionField, field)
+	if err != nil {
+		return err
+	}
 	rows, err := execute(ctx, "SELECT typeof("+column+"), "+column+" FROM "+table+" WHERE "+column+" IS NOT NULL")
 	if err != nil {
 		return fmt.Errorf("join_plan: preflight SQLite JOIN key %q: %w", field, err)
