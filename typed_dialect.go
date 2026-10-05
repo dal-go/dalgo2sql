@@ -192,6 +192,18 @@ type typedDialect interface {
 	window(function string, args, partitionBy, orderBy []string) (string, error)
 }
 
+// typedColumnBinder is implemented by a dialect that binds a constant in the type of the
+// column the constant is compared with, where binding it by its own Go type (typedDialect.bind)
+// would make the comparison run in another type and miss a value that is stored. The compiler
+// asks it for the right operand of a comparison, and of an IN list, whose left operand is a
+// field whose facts are known.
+type typedColumnBinder interface {
+	// bindAgainst returns the marker and the argument that stand for value, which has
+	// passed typedKindOf, compared with column. ok is false when the column asks for nothing
+	// special, and the value is bound as bind binds it. The marker has the shape bind's has.
+	bindAgainst(value any, column typedColumnFact) (marker string, arg any, ok bool)
+}
+
 // typedSourceName names a table as a query spells it.
 type typedSourceName struct {
 	Schema string

@@ -1,0 +1,92 @@
+=== float64 against real
+sql: SELECT * FROM "measure" WHERE "reading" = $1::real
+$1 string "0.1"
+=== float32 against real
+sql: SELECT * FROM "measure" WHERE "reading" = $1::real
+$1 string "0.1"
+=== a whole float against real
+sql: SELECT * FROM "measure" WHERE "reading" = $1::real
+$1 string "5"
+=== negative zero against real
+sql: SELECT * FROM "measure" WHERE "reading" = $1::real
+$1 string "-0"
+=== NaN against real
+sql: SELECT * FROM "measure" WHERE "reading" = $1::real
+$1 string "NaN"
+=== infinity against real
+sql: SELECT * FROM "measure" WHERE "reading" = $1::real
+$1 string "-Infinity"
+=== the largest float32 against real
+sql: SELECT * FROM "measure" WHERE "reading" = $1::real
+$1 string "340282346638528860000000000000000000000"
+=== the smallest normal float32 against real
+sql: SELECT * FROM "measure" WHERE "reading" = $1::real
+$1 string "0.000000000000000000000000000000000000011754944"
+=== every ordering operator against real
+sql: SELECT * FROM "measure" WHERE ("reading" > $1::real AND "reading" >= $2::real AND "reading" < $3::real AND "reading" <= $4::real)
+$1 string "0.1"
+$2 string "0.2"
+$3 string "0.3"
+$4 string "0.4"
+=== a qualified real column in a join-shaped source
+sql: SELECT * FROM "measure" AS "m" WHERE "m"."reading" = $1::real
+$1 string "0.1"
+=== an IN list against real
+sql: SELECT * FROM "measure" WHERE "reading" IN ($1::real, $2::real, $3::bigint, $4, $5)
+$1 string "0.1"
+$2 string "0.25"
+$3 int64 3
+$4 string "x"
+$5 nil
+=== a NOT IN list against real
+sql: SELECT * FROM "measure" WHERE "reading" NOT IN ($1::real, $2::real)
+$1 string "0.1"
+$2 string "0.2"
+=== a float past the range of real keeps its binding
+sql: SELECT * FROM "measure" WHERE "reading" = $1::numeric
+$1 string "1000000000000000000000000000000000000000"
+=== a float below the range of real keeps its binding
+sql: SELECT * FROM "measure" WHERE "reading" = $1::numeric
+$1 string "0.0000000000000000000000000000000000000001"
+=== a negative float past the range of real keeps its binding
+sql: SELECT * FROM "measure" WHERE "reading" = $1::numeric
+$1 string "-1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+=== a whole number is bound as before
+sql: SELECT * FROM "measure" WHERE "reading" = $1::bigint
+$1 int64 5
+=== a string is bound as before
+sql: SELECT * FROM "measure" WHERE "reading" = $1
+$1 string "0.1"
+=== a NULL is IS NULL as before
+sql: SELECT * FROM "measure" WHERE "reading" IS NULL
+=== float64 against double precision
+sql: SELECT * FROM "measure" WHERE "wide" = $1::numeric
+$1 string "0.1"
+=== float32 against double precision
+sql: SELECT * FROM "measure" WHERE "wide" = $1::numeric
+$1 string "0.1"
+=== float64 against numeric
+sql: SELECT * FROM "measure" WHERE "amount" = $1::numeric
+$1 string "0.1"
+=== float64 against integer
+sql: SELECT * FROM "measure" WHERE "id" = $1::numeric
+$1 string "0.1"
+=== float64 against an array of real
+sql: SELECT * FROM "measure" WHERE "readings" = $1::numeric
+$1 string "0.1"
+=== an IN list against double precision
+sql: SELECT * FROM "measure" WHERE "wide" IN ($1::numeric, $2::numeric)
+$1 string "0.1"
+$2 string "0.2"
+=== a float against a column its source does not have is an error as before
+error: where: field "Missing" is not a column of source "measure"
+=== a float against a source the facts do not know
+sql: SELECT * FROM "measure" WHERE "reading" = $1::numeric
+$1 string "0.1"
+=== a float in arithmetic on a real column keeps its binding
+sql: SELECT * FROM "measure" WHERE ((("reading")::double precision) + (($1::numeric)::double precision)) > $2::bigint
+$1 string "0.1"
+$2 int64 1
+=== a float against a real column in HAVING
+sql: SELECT "id", MAX("reading") AS "top" FROM "measure" GROUP BY "id" HAVING MAX("reading") > $1::numeric
+$1 string "0.1"

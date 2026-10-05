@@ -145,7 +145,10 @@ type postgresDialect struct {
 	mode postgresIdentifierMode
 }
 
-var _ typedDialect = postgresDialect{}
+var (
+	_ typedDialect      = postgresDialect{}
+	_ typedColumnBinder = postgresDialect{}
+)
 
 func newPostgresDialect(mode postgresIdentifierMode) postgresDialect {
 	return postgresDialect{mode: mode}
@@ -219,6 +222,27 @@ func (postgresDialect) bind(value any) (string, any, error) {
 	// the marker from the place it stands in.
 	return "?", value, nil
 }
+
+// bindAgainst binds a float compared with a column that is a real (float4) as ?::real, from its
+// decimal text, so that the comparison runs in the column's own type: a real stores 0.1 as the
+// nearest float4, and compared as a numeric it is not the number 0.1, so the equality finds
+// nothing. A column of any other type, and a constant that is not a float, are bound as bind
+// binds them, and so is a finite float that a real cannot hold (past its range, or too small for
+// a normal float4), which the server would refuse as out of range where a numeric holds it.
+func (postgresDialect) bindAgainst(value any, column typedColumnFact) (string, any, bool) {
+	if kind, _ := typedKindOf(value); kind != typedValueFloat || column.DataType != "real" {
+		return "", nil, false
+	}
+	v := reflect.ValueOf(value)
+	if magnitude := math.Abs(v.Float()); !math.IsInf(magnitude, 0) && !math.IsNaN(magnitude) && magnitude != 0 &&
+		(magnitude > math.MaxFloat32 || magnitude < postgresSmallestNormalReal) {
+		return "", nil, false
+	}
+	return "?::real", postgresNumericText(v.Float(), v.Type().Bits()), true
+}
+
+// postgresSmallestNormalReal is the smallest positive normal float4, 2^-126.
+const postgresSmallestNormalReal = 1.17549435082228750796873653722224568e-38
 
 // postgresNumericText is the shortest decimal text that reads back as the same
 // float of the given size (32 or 64 bits), in the plain form numeric accepts.
