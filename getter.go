@@ -134,7 +134,17 @@ func getSingle(_ context.Context, options DbOptions, record dalrecord.Record, ex
 		record.SetError(notFound)
 		return notFound
 	}
-	if err = rowIntoRecord(rows, record, false); err != nil {
+	if isMapData(record.Data()) {
+		record.SetError(nil)
+		err = scanRowIntoMapWithOptions(rows, record.Data(), false, options)
+		if err == nil {
+			record.SetError(dalrecord.ErrNoError)
+		}
+	} else {
+		err = rowIntoRecord(rows, record, false)
+	}
+	if err != nil {
+		record.SetError(err)
 		return err
 	}
 	if rows.Next() {
@@ -318,51 +328,21 @@ func getMultiFromSingleTable(_ context.Context, options DbOptions, records []dal
 	if err != nil {
 		return err
 	}
+	defer func() { _ = rows.Close() }()
 
 	if dataIsMap {
 		// For map data: scan each row generically, then match by PK value.
 		pkCol := primaryKey[0]
-		for rows.Next() {
-			cols, _ := rows.Columns()
-			cells := make([]interface{}, len(cols))
-			cellPtrs := make([]interface{}, len(cols))
-			for i := range cells {
-				cellPtrs[i] = &cells[i]
-			}
-			_ = rows.Scan(cellPtrs...)
-			// Find PK column value.
-			var rowIDVal interface{}
-			for i, col := range cols {
-				if col == pkCol {
-					rowIDVal = cells[i]
-					if b, ok := rowIDVal.([]byte); ok {
-						rowIDVal = string(b)
-					}
-					break
-				}
-			}
-			rowID := fmt.Sprintf("%v", rowIDVal)
-			for i, record := range records {
-				if fmt.Sprintf("%v", record.Key().ID) == rowID {
-					records = append(records[:i], records[i+1:]...)
-					// Fill the target map.
-					m := record.Data()
-					mv := reflect.ValueOf(m)
-					if mv.Kind() == reflect.Pointer || mv.Kind() == reflect.Interface {
-						mv = mv.Elem()
-					}
-					for ci, col := range cols {
-						val := cells[ci]
-						if b, ok := val.([]byte); ok {
-							val = string(b)
-						}
-						setMapColumn(mv, col, val)
-					}
-					record.SetError(dalrecord.ErrNoError)
-					break
-				}
-			}
+		var remaining []dalrecord.Record
+		err = withMapColumnMetadata(rows, func(columns []string, columnTypes []*sql.ColumnType) error {
+			var scanErr error
+			remaining, scanErr = fillMapRecords(rows, columns, columnTypes, records, pkCol, options.StructuredQueryDialect)
+			return scanErr
+		})
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
 		}
+		records = remaining
 	} else {
 		// Struct data path: use the struct-field-aware scan.
 		val := reflect.ValueOf(records[0].Data()).Elem()
@@ -523,43 +503,152 @@ func setMapColumn(m reflect.Value, column string, value any) {
 // *map[string]any). PK columns are skipped if pkIncluded is false; when
 // pkIncluded is true they are also included in the result map.
 func scanRowIntoMap(rows *sql.Rows, data interface{}, pkIncluded bool) error {
-	cols, err := rows.Columns()
+	return scanRowIntoMapWithOptions(rows, data, pkIncluded, DbOptions{})
+}
+
+func scanRowIntoMapWithOptions(rows *sql.Rows, data interface{}, pkIncluded bool, options DbOptions) error {
+	return withMapColumnMetadata(rows, func(cols []string, columnTypes []*sql.ColumnType) error {
+		// Build generic scan targets.
+		cells := make([]interface{}, len(cols))
+		cellPtrs := make([]interface{}, len(cols))
+		for i := range cells {
+			cellPtrs[i] = &cells[i]
+		}
+		if err := rows.Scan(cellPtrs...); err != nil {
+			return err
+		}
+
+		// Resolve the target map (handle *map[string]any or map[string]any).
+		v := reflect.ValueOf(data)
+		if v.Kind() == reflect.Pointer || v.Kind() == reflect.Interface {
+			// If it's a pointer to a nil map, initialize the map first.
+			if v.Elem().Kind() == reflect.Map && v.Elem().IsNil() {
+				v.Elem().Set(reflect.MakeMap(v.Elem().Type()))
+			}
+			v = v.Elem()
+		}
+
+		for i, col := range cols {
+			// Include all columns in the map (including PK column).
+			// Callers that do not want the PK in the map can delete it afterward.
+			_ = pkIncluded
+			val := normalizeReadMapValue(cells[i], columnTypeAt(columnTypes, i), options.StructuredQueryDialect)
+			if val != nil || options.StructuredQueryDialect == "sqlite" {
+				setReadMapValue(v, col, val, options.StructuredQueryDialect)
+			}
+		}
+		return nil
+	})
+}
+
+func withMapColumnMetadata(rows mapColumnMetadataReader, use func([]string, []*sql.ColumnType) error) error {
+	columns, err := rows.Columns()
 	if err != nil {
+		_ = rows.Close()
 		return err
 	}
-
-	// Build generic scan targets.
-	cells := make([]interface{}, len(cols))
-	cellPtrs := make([]interface{}, len(cols))
-	for i := range cells {
-		cellPtrs[i] = &cells[i]
+	columnTypes, err := rows.ColumnTypes()
+	if err != nil {
+		_ = rows.Close()
+		return err
 	}
-	_ = rows.Scan(cellPtrs...)
+	return use(columns, columnTypes)
+}
 
-	// Resolve the target map (handle *map[string]any or map[string]any).
-	v := reflect.ValueOf(data)
-	if v.Kind() == reflect.Pointer || v.Kind() == reflect.Interface {
-		// If it's a pointer to a nil map, initialize the map first.
-		if v.Elem().Kind() == reflect.Map && v.Elem().IsNil() {
-			v.Elem().Set(reflect.MakeMap(v.Elem().Type()))
-		}
-		v = v.Elem()
-	}
+type mapColumnMetadataReader interface {
+	Columns() ([]string, error)
+	ColumnTypes() ([]*sql.ColumnType, error)
+	Close() error
+}
 
-	for i, col := range cols {
-		// Include all columns in the map (including PK column).
-		// Callers that do not want the PK in the map can delete it afterward.
-		_ = pkIncluded
-		val := cells[i]
-		// database/sql returns []byte for TEXT columns; convert to string for usability.
-		if b, ok := val.([]byte); ok {
-			val = string(b)
+type mapRowsScanner interface {
+	Next() bool
+	Scan(...any) error
+	Err() error
+}
+
+func fillMapRecords(rows mapRowsScanner, columns []string, columnTypes []*sql.ColumnType, records []dalrecord.Record, pkColumn, dialect string) ([]dalrecord.Record, error) {
+	for rows.Next() {
+		cells := make([]any, len(columns))
+		pointers := make([]any, len(columns))
+		for i := range cells {
+			pointers[i] = &cells[i]
 		}
-		if val != nil {
-			setMapColumn(v, col, val)
+		if err := rows.Scan(pointers...); err != nil {
+			return records, err
+		}
+		var rowID any
+		for i, column := range columns {
+			if column == pkColumn {
+				rowID = normalizeReadMapValue(cells[i], columnTypeAt(columnTypes, i), dialect)
+				break
+			}
+		}
+		for i, record := range records {
+			if fmt.Sprintf("%v", record.Key().ID) != fmt.Sprintf("%v", rowID) {
+				continue
+			}
+			records = append(records[:i], records[i+1:]...)
+			data := reflect.ValueOf(record.Data())
+			if data.Kind() == reflect.Pointer || data.Kind() == reflect.Interface {
+				data = data.Elem()
+			}
+			for columnIndex, column := range columns {
+				value := normalizeReadMapValue(cells[columnIndex], columnTypeAt(columnTypes, columnIndex), dialect)
+				setReadMapValue(data, column, value, dialect)
+			}
+			record.SetError(dalrecord.ErrNoError)
+			break
 		}
 	}
-	return nil
+	return records, rows.Err()
+}
+
+func normalizeReadMapValue(value any, columnType *sql.ColumnType, dialect string) any {
+	bytes, ok := value.([]byte)
+	if !ok {
+		return value
+	}
+	if dialect != "sqlite" {
+		return string(bytes)
+	}
+	if columnType == nil {
+		return bytes
+	}
+	typeName := strings.ToUpper(columnType.DatabaseTypeName())
+	if strings.Contains(typeName, "BLOB") {
+		if bytes == nil {
+			return []byte{}
+		}
+		return bytes
+	}
+	if strings.Contains(typeName, "CHAR") || strings.Contains(typeName, "CLOB") || strings.Contains(typeName, "TEXT") {
+		return string(bytes)
+	}
+	return bytes
+}
+
+func columnTypeAt(columnTypes []*sql.ColumnType, index int) *sql.ColumnType {
+	if index < 0 || index >= len(columnTypes) {
+		return nil
+	}
+	return columnTypes[index]
+}
+
+func setReadMapValue(target reflect.Value, column string, value any, dialect string) {
+	if value == nil {
+		key := reflect.ValueOf(column)
+		if keyType := target.Type().Key(); keyType.Kind() == reflect.String && keyType != key.Type() {
+			key = key.Convert(keyType)
+		}
+		if dialect == "sqlite" {
+			target.SetMapIndex(key, reflect.Zero(target.Type().Elem()))
+		} else {
+			target.SetMapIndex(key, reflect.Value{})
+		}
+		return
+	}
+	setMapColumn(target, column, value)
 }
 
 func scanIntoDataWithPrimaryKeyIncluded(rows *sql.Rows, data interface{}) error {

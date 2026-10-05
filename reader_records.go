@@ -47,6 +47,7 @@ func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute e
 	rr = &recordsReader{
 		fold:                recordNameFold(options),
 		identityColumnIndex: -1,
+		dialect:             options.StructuredQueryDialect,
 		newRecord: func() dalrecord.Record {
 			return dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("Unknown", ""), make(map[string]any))
 		},
@@ -320,6 +321,7 @@ type recordsReader struct {
 	// source's own column of the key's name (baseColumnIndex).
 	keyInBaseColumns bool
 	validateFinite   bool
+	dialect          string
 	// fold is applied to a column name and to the key's name before they are compared.
 	fold nameFold
 }
@@ -441,13 +443,19 @@ func (r recordsReader) Next() (record dalrecord.Record, err error) {
 		record = dalrecord.NewRecordWithData(record.Key(), data)
 	}
 	var set func(column string, raw, normalized any) error
+	mapColumnIndex := 0
 	if d, isMap := data.(map[string]any); isMap {
-		set = func(column string, _, normalized any) error {
+		set = func(column string, raw, normalized any) error {
 			// database/sql returns []byte for TEXT/VARCHAR columns with some
 			// drivers (notably go-sql-driver/mysql); store as string so the
 			// map is usable and JSON-serializes as text, not base64. Matches
 			// scanRowIntoMap on the Get path.
-			d[column] = textValue(normalized)
+			value := textValue(normalized)
+			columnType := columnTypeAt(r.colTypes, mapColumnIndex)
+			if r.dialect == "sqlite" && columnType != nil && strings.Contains(strings.ToUpper(columnType.DatabaseTypeName()), "BLOB") {
+				value = normalizeReadMapValue(raw, columnType, r.dialect)
+			}
+			d[column] = value
 			return nil
 		}
 	} else if structSet, isStruct := structSetter(data); isStruct {
@@ -464,6 +472,9 @@ func (r recordsReader) Next() (record dalrecord.Record, err error) {
 		return nil, err
 	}
 	for i, n := range r.colNames {
+		if _, isMap := data.(map[string]any); isMap {
+			mapColumnIndex = i
+		}
 		normalized := normalizeValueByDatabaseType(r.colTypes[i].DatabaseTypeName(), values[i])
 		if r.validateFinite {
 			if number, ok := normalized.(float64); ok && (math.IsNaN(number) || math.IsInf(number, 0)) {
