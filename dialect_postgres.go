@@ -347,7 +347,13 @@ func (postgresDialect) window(string, []string, []string, []string) (string, err
 // columns, attisdropped the dropped ones). Recursive CTE d walks each column's type
 // down the chain of domains to the base type that is not a domain, however deep the
 // chain (typbasetype of a domain names its parent), and the final select reads the
-// category, the OID and the element type of that base type. collisdeterministic
+// category, the OID and the element type of that base type. The not-null fact (the
+// column that is named attnotnull) is true only when the column is not null and no
+// not-null constraint that is not validated covers it: since PostgreSQL 18 a constraint
+// added NOT VALID (pg_constraint.contype 'n', convalidated false) sets
+// pg_attribute.attnotnull while rows that were there may hold NULL, and the order of
+// NULLs is then the one DALgo's rule writes a NULLS clause for. PostgreSQL 17 and
+// earlier have no contype 'n' row, so there the fact is attnotnull. collisdeterministic
 // (PostgreSQL 12 and later; NULL for a type with no collation) says whether the
 // column compares by bytes. A citext column is flagged like a non-deterministic
 // collation: its equality ignores case. The last column, pk, says whether the column
@@ -366,7 +372,9 @@ func (postgresDialect) window(string, []string, []string, []string) (string, err
 const (
 	postgresCatalogHead = `WITH RECURSIVE s(name) AS (VALUES `
 	postgresCatalogTail = `), ` +
-		`c AS (SELECT s.name, a.attnum, a.attname, a.atttypid, a.attnotnull, a.attcollation, ` +
+		`c AS (SELECT s.name, a.attnum, a.attname, a.atttypid, ` +
+		`(a.attnotnull AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint n WHERE n.conrelid = r.oid AND n.contype = 'n' AND a.attnum = ANY (n.conkey) AND NOT n.convalidated)) AS attnotnull, ` +
+		`a.attcollation, ` +
 		`EXISTS (SELECT 1 FROM pg_catalog.pg_constraint k WHERE k.conrelid = r.oid AND k.contype = 'p' AND a.attnum = ANY (k.conkey)) AS pk ` +
 		`FROM s ` +
 		`JOIN pg_catalog.pg_class r ON r.oid = pg_catalog.to_regclass(s.name) AND r.relkind IN ('r', 'p', 'v', 'm', 'f') ` +
