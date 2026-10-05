@@ -37,6 +37,20 @@ func RegisterSQLiteDecimalFunctions() error {
 }
 
 func registerSQLiteDecimalFunctions() error {
+	return registerSQLiteDecimalFunctionsWith(sqliteDecimalRegistrars{
+		scalar:    sqlite.RegisterDeterministicScalarFunction,
+		aggregate: sqlite.RegisterFunction,
+		collation: sqlite.RegisterCollationUtf8,
+	})
+}
+
+type sqliteDecimalRegistrars struct {
+	scalar    func(string, int32, func(*sqlite.FunctionContext, []driver.Value) (driver.Value, error)) error
+	aggregate func(string, *sqlite.FunctionImpl) error
+	collation func(string, func(string, string) int) error
+}
+
+func registerSQLiteDecimalFunctionsWith(registrars sqliteDecimalRegistrars) error {
 	scalars := []struct {
 		name string
 		args int32
@@ -51,7 +65,7 @@ func registerSQLiteDecimalFunctions() error {
 	}
 	for _, item := range scalars {
 		name, fn := item.name, item.fn
-		if err := sqlite.RegisterDeterministicScalarFunction(name, item.args, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+		if err := registrars.scalar(name, item.args, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
 			for _, arg := range args {
 				if arg == nil {
 					return nil, nil
@@ -68,7 +82,7 @@ func registerSQLiteDecimalFunctions() error {
 		avg  bool
 	}{{"decimal_sum", 1, false}, {"decimal_avg", 2, true}} {
 		name, avg := item.name, item.avg
-		if err := sqlite.RegisterFunction(name, &sqlite.FunctionImpl{
+		if err := registrars.aggregate(name, &sqlite.FunctionImpl{
 			NArgs: item.args,
 			MakeAggregate: func(sqlite.FunctionContext) (sqlite.AggregateFunction, error) {
 				return &decimalAggregate{average: avg}, nil
@@ -77,7 +91,7 @@ func registerSQLiteDecimalFunctions() error {
 			return fmt.Errorf("register SQLite %s: %w", name, err)
 		}
 	}
-	if err := sqlite.RegisterCollationUtf8("DECIMAL", compareDecimalText); err != nil {
+	if err := registrars.collation("DECIMAL", compareDecimalText); err != nil {
 		return fmt.Errorf("register SQLite DECIMAL collation: %w", err)
 	}
 	return nil
@@ -139,9 +153,9 @@ func parseExactDecimal(value driver.Value) (exactDecimal, error) {
 		return exactDecimal{}, fmt.Errorf("decimal exceeds %d digits or scale", maxDecimalDigits)
 	}
 	var coeff big.Int
-	if _, ok := coeff.SetString(digits, 10); !ok {
-		return exactDecimal{}, fmt.Errorf("invalid decimal text %q", text)
-	}
+	// The decimal grammar above guarantees base-10 digits here, so SetString
+	// cannot fail after validation.
+	_, _ = coeff.SetString(digits, 10)
 	if negative && coeff.Sign() != 0 {
 		coeff.Neg(&coeff)
 	}
@@ -363,7 +377,13 @@ func (a *decimalAggregate) WindowValue(_ *sqlite.FunctionContext) (driver.Value,
 	return a.result()
 }
 
-func (a *decimalAggregate) Final(_ *sqlite.FunctionContext) {}
+func (a *decimalAggregate) Final(_ *sqlite.FunctionContext) {
+	// SQLite calls Final after emitting the result. Release any large integer
+	// backing storage while the aggregate instance is still reachable.
+	a.sum.SetInt64(0)
+	a.count = 0
+	a.seen = false
+}
 
 func (a *decimalAggregate) result() (driver.Value, error) {
 	if a.err != nil {
