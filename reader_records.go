@@ -495,7 +495,10 @@ func (r recordsReader) Cursor() (string, error) {
 }
 
 func (r recordsReader) Close() error {
-	err := r.rows.Close()
+	var err error
+	if r.rows != nil { // a reader the read did not get as far as opening rows for
+		err = r.rows.Close()
+	}
 	r.lease.release()
 	return err
 }
@@ -506,7 +509,11 @@ type recordsReaderProvider struct {
 }
 
 func (rrp recordsReaderProvider) ExecuteQueryToRecordsReader(ctx context.Context, query dal.Query) (dal.RecordsReader, error) {
-	return getRecordsReader(ctx, query, rrp.executeQuery)
+	reader, err := getRecordsReader(ctx, query, rrp.executeQuery)
+	if err != nil {
+		return nil, err // a literal nil: see transaction.ExecuteQueryToRecordsReader
+	}
+	return reader, nil
 }
 
 //func (rrp recordsReaderProvider) ReadAllRecords(ctx context.Context, query dal.Query, options ...dal.ReaderOption) ([]record.Record, error) {

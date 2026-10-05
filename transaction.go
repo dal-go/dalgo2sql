@@ -37,11 +37,21 @@ func (t transaction) ID() string {
 }
 
 func (t transaction) Select(ctx context.Context, query dal.Query) (dal.Reader, error) {
-	return getRecordsReaderWithOptions(ctx, query, t.tx.QueryContext, t.sqlOptions)
+	reader, err := t.ExecuteQueryToRecordsReader(ctx, query)
+	if err != nil {
+		return nil, err // a literal nil, as ExecuteQueryToRecordsReader returns it
+	}
+	return reader, nil
 }
 
 func (t transaction) ExecuteQueryToRecordsReader(ctx context.Context, query dal.Query) (dal.RecordsReader, error) {
-	return getRecordsReaderWithOptions(ctx, query, t.tx.QueryContext, t.sqlOptions)
+	reader, err := getRecordsReaderWithOptions(ctx, query, t.tx.QueryContext, t.sqlOptions)
+	if err != nil {
+		// A literal nil: returning the typed nil pointer would make a non-nil interface
+		// whose Close panics.
+		return nil, err
+	}
+	return reader, nil
 }
 
 var _ dal.ReadTransaction = (*readTransaction)(nil)

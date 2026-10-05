@@ -3,6 +3,7 @@ package dalgo2sql
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -93,5 +94,55 @@ func TestTransactionRecordsetReadClosesItsRowsWhenAColumnTypeIsUnsupported(t *te
 	}
 	if open := recorder.openRowCount(); open != 0 {
 		t.Fatalf("%d result sets are still open after the failed read", open)
+	}
+}
+
+// The records reader is the twin of the recordset reader: a read that fails returns a literal
+// nil reader with its error, on every entry point. A typed nil pointer in the interface is not
+// nil, so a caller who tests the reader instead of the error, or closes it anyway, gets a
+// reader whose Close panics.
+func TestARecordsReadThatFailsReturnsNoReader(t *testing.T) {
+	ctx := context.Background()
+	textQuery := dal.NewTextQuery("SELECT * FROM Album", nil)
+	recorder := &statementRecorder{} // fails every statement
+	db := recorder.open(t)
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	pool := &database{recordsReaderProvider: recordsReaderProvider{executeQuery: db.QueryContext}, db: db}
+	leased := &database{recordsReaderProvider: recordsReaderProvider{executeQuery: db.QueryContext}, db: db, options: postgresConnectionOptions()}
+	transaction := newTransaction(tx, DbOptions{}, dal.NewTransactionOptions())
+	provider := recordsReaderProvider{executeQuery: db.QueryContext}
+	for _, tc := range []struct {
+		name string
+		read func() (any, error)
+	}{
+		{"the pool", func() (any, error) { return pool.ExecuteQueryToRecordsReader(ctx, textQuery) }},
+		{"the pool, on a leased connection", func() (any, error) {
+			return leased.ExecuteQueryToRecordsReader(ctx, typedTestFrom("Album", "").NewQuery().SelectColumns())
+		}},
+		{"a transaction", func() (any, error) { return transaction.ExecuteQueryToRecordsReader(ctx, textQuery) }},
+		{"a transaction's Select", func() (any, error) { return transaction.Select(ctx, textQuery) }},
+		{"the provider", func() (any, error) { return provider.ExecuteQueryToRecordsReader(ctx, textQuery) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reader, err := tc.read()
+			if !errors.Is(err, errReachedDatabase) {
+				t.Fatalf("the read returned %v, %v; want the error of the statement", reader, err)
+			}
+			if reader != nil {
+				t.Fatalf("the read returned the reader %#v with its error: a caller who sees the error never closes it", reader)
+			}
+		})
+	}
+}
+
+// A reader that never had rows closes without a panic: its caller can close it whatever the
+// read did.
+func TestARecordsReaderWithoutRowsCloses(t *testing.T) {
+	if err := (recordsReader{}).Close(); err != nil {
+		t.Fatalf("Close = %v, want nil", err)
 	}
 }

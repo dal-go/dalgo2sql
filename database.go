@@ -172,10 +172,10 @@ func (dtb *database) ExecuteQueryToRecordsReader(ctx context.Context, query dal.
 		return nil, err
 	}
 	reader, err := getRecordsReaderWithOptions(ctx, query, execute, dtb.options)
-	if lease == nil {
-		return reader, err
-	}
 	if err != nil {
+		// A literal nil, not the reader the failed read allocated: a typed nil pointer
+		// would make a non-nil interface. Releasing a lease the read does not hold (a read on
+		// the pool) does nothing.
 		lease.release()
 		return nil, err
 	}
