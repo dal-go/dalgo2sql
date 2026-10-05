@@ -174,28 +174,28 @@ func TestAReadWhoseContextEndsReturnsTheContextsError(t *testing.T) {
 	readers := []struct {
 		name string
 		// read opens the reader and reads it to its end or to the error, and returns
-		// that error and the reader's close, if it has one.
-		read func(ctx context.Context, backend *database, query dal.StructuredQuery) (err error, closeReader func())
+		// the reader's close, if it has one, and that error.
+		read func(ctx context.Context, backend *database, query dal.StructuredQuery) (closeReader func(), err error)
 	}{
-		{"records reader", func(ctx context.Context, backend *database, query dal.StructuredQuery) (error, func()) {
+		{"records reader", func(ctx context.Context, backend *database, query dal.StructuredQuery) (func(), error) {
 			reader, err := backend.ExecuteQueryToRecordsReader(ctx, query)
 			if err != nil {
-				return err, func() {}
+				return func() {}, err
 			}
 			for err == nil {
 				_, err = reader.Next()
 			}
-			return err, func() { _ = reader.Close() }
+			return func() { _ = reader.Close() }, err
 		}},
-		{"recordset reader", func(ctx context.Context, backend *database, query dal.StructuredQuery) (error, func()) {
+		{"recordset reader", func(ctx context.Context, backend *database, query dal.StructuredQuery) (func(), error) {
 			reader, err := backend.ExecuteQueryToRecordsetReader(ctx, query)
 			if err != nil {
-				return err, func() {}
+				return func() {}, err
 			}
 			for err == nil {
 				_, _, err = reader.Next()
 			}
-			return err, func() { _ = reader.Close() }
+			return func() { _ = reader.Close() }, err
 		}},
 	}
 	for _, point := range points {
@@ -211,7 +211,7 @@ func TestAReadWhoseContextEndsReturnsTheContextsError(t *testing.T) {
 						if point == endBeforeTheRead {
 							script.end()
 						}
-						err, closeReader := reader.read(script.ctx, backend, typedTestFrom("Album", "").NewQuery().SelectColumns())
+						closeReader, err := reader.read(script.ctx, backend, typedTestFrom("Album", "").NewQuery().SelectColumns())
 						closeReader()
 						if !errors.Is(err, cause) {
 							t.Fatalf("error = %v, want one that matches %v", err, cause)

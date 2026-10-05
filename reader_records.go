@@ -36,11 +36,13 @@ const recordIDHelperColumn = "__dalgo_record_id"
 //     a source with no primary key, a composite one, or a view, a materialized view or
 //     a foreign table, which have none.
 //   - In every other case (the SQLite dialect, the legacy emitter or a native compiler of
-//     the caller's, with no key configured, and a recordset declared with no single-column
+//     the caller's with no key configured, and a recordset declared with no single-column
 //     primary key) by the literal ID "__dalgo_record_id", the same for every record: those
-//     paths have no catalog to ask. A read into a record the query names
-//     (dal.StructuredQuery.IntoRecord) keeps that record's key unless a key is found by one of
-//     the first two rules.
+//     paths have no catalog to ask.
+//
+// A read into a record the query names (dal.StructuredQuery.IntoRecord) keeps that record's
+// own key, except that a key configured by the first rule is written into it; the catalog is
+// not asked for such a read's key.
 func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute executeQueryFunc, options DbOptions) (rr *recordsReader, err error) {
 	rr = &recordsReader{
 		fold:                recordNameFold(options),
