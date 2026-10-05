@@ -57,6 +57,18 @@ func renderUpdateNames(options DbOptions, key *record.Key, updates []update.Upda
 	return target, nil
 }
 
+// checkUpdatePrimaryKey returns the error that stops an update of key because its
+// recordset has no primary key to find the row by, or a composite one.
+func checkUpdatePrimaryKey(options DbOptions, key *record.Key) error {
+	switch len(options.PrimaryKeyFieldNames(key)) {
+	case 0:
+		return fmt.Errorf("primary key is not defined for %s", getRecordsetName(key))
+	case 1:
+		return nil
+	}
+	return fmt.Errorf("%w: updateOperation by composite primary key is not supported yet", dal.ErrNotImplementedYet)
+}
+
 func updateSingle(ctx context.Context, options DbOptions, execStatement statementExecutor, key *record.Key, updates []update.Update, _ ...dal.Precondition) error {
 	if len(updates) == 0 {
 		return fmt.Errorf("%w: no updates were given", ErrNoFieldsToWrite)
@@ -77,15 +89,10 @@ func updateSingle(ctx context.Context, options DbOptions, execStatement statemen
 		qry.args = append(qry.args, u.Value())
 		n++
 	}
-	primaryKey := options.PrimaryKeyFieldNames(key)
-	switch len(primaryKey) {
-	case 0:
-		return fmt.Errorf("primary key is not defined for %s", getRecordsetName(key))
-	case 1:
-		qry.text += fmt.Sprintf("\n\tWHERE %v = %s", target.pk, options.Placeholder.placeholder(n))
-	default:
-		return fmt.Errorf("%w: updateOperation by composite primary key is not supported yet", dal.ErrNotImplementedYet)
+	if err = checkUpdatePrimaryKey(options, key); err != nil {
+		return err
 	}
+	qry.text += fmt.Sprintf("\n\tWHERE %v = %s", target.pk, options.Placeholder.placeholder(n))
 	qry.args = append(qry.args, key.ID)
 	result, err := execStatement(ctx, qry.text, qry.args...)
 	if err != nil {
@@ -102,9 +109,13 @@ func updateMulti(ctx context.Context, options DbOptions, execStatement statement
 		return fmt.Errorf("%w: no updates were given", ErrNoFieldsToWrite)
 	}
 	// The whole batch is checked before its first statement: keys are updated
-	// one by one, outside a transaction on a database handle.
+	// one by one, outside a transaction on a database handle. Every name is checked, and
+	// every key's recordset must have one primary key to find its row by.
 	for i, key := range keys {
 		if _, err := renderUpdateNames(options, key, updates); err != nil {
+			return fmt.Errorf("failed to updateOperation record #%d of %d: %w", i+1, len(keys), err)
+		}
+		if err := checkUpdatePrimaryKey(options, key); err != nil {
 			return fmt.Errorf("failed to updateOperation record #%d of %d: %w", i+1, len(keys), err)
 		}
 	}

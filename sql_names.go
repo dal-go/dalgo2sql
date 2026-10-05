@@ -123,21 +123,9 @@ func reviewedIdentifierQuoting(dialect string) func(string) string {
 	return nil
 }
 
-// reservedSQLWords are common SQL words that an engine rejects as a bare name in
-// the text of a statement: a conservative list, not any one engine's. The legacy
-// text emitter writes names unquoted, so it refuses a keys-only query ordered by one.
-var reservedSQLWords = map[string]bool{
-	"and": true, "as": true, "between": true, "by": true, "case": true, "check": true,
-	"create": true, "default": true, "delete": true, "distinct": true, "drop": true,
-	"else": true, "exists": true, "foreign": true, "from": true, "group": true,
-	"having": true, "in": true, "index": true, "insert": true, "into": true, "is": true,
-	"join": true, "like": true, "limit": true, "not": true, "null": true, "on": true,
-	"or": true, "order": true, "primary": true, "references": true, "select": true,
-	"set": true, "table": true, "then": true, "union": true, "unique": true,
-	"update": true, "values": true, "when": true, "where": true,
-}
-
-// isReservedSQLWord reports whether name, in any case, is one of reservedSQLWords.
+// isReservedSQLWord reports whether name, in any case, is one of reservedSQLWords: a word
+// that any of the engines reserves (see reserved_words.go). The legacy text emitter writes
+// names unquoted, so it refuses a keys-only query ordered by one.
 func isReservedSQLWord(name string) bool { return reservedSQLWords[strings.ToLower(name)] }
 
 // quotableNameProblem says why name cannot be written quoted, or "" if it can.

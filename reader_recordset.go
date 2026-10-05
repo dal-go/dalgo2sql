@@ -158,7 +158,7 @@ func (r *recordsetReader) Next() (row recordset.Row, rs recordset.Recordset, err
 		if err = r.rows.Err(); err == nil {
 			err = dal.ErrNoMoreRecords
 		} else {
-			err = r.lease.explain(err)
+			err = streamError(r.lease, err)
 		}
 		return
 	}

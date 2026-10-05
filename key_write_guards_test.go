@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/dal-go/dalgo/dal"
@@ -12,7 +13,7 @@ import (
 )
 
 // A write with nothing to write is an error of the call: no statement is sent
-// and nothing panics. The tests run with the race detector in CI.
+// and nothing panics.
 
 // noFieldRecords are records of the users recordset (primary key ID) that carry
 // no field to write.
@@ -187,5 +188,41 @@ func TestGetSelectFields_DeclaredRecordsetWithNoPrimaryKeyIsAnError(t *testing.T
 	// Without the primary key in the list, the recordset is not asked.
 	if fields, err = getSelectFields(false, options, record); err != nil || len(fields) != 1 {
 		t.Errorf("= %v, %v", fields, err)
+	}
+}
+
+// UpdateMulti checks, before its first statement, that the recordset of every key has one
+// primary key to find the row by: on a database handle the keys are updated one by one, and
+// a key that is refused later would leave the earlier ones updated.
+func TestUpdateMulti_EveryKeysRecordsetNeedsOnePrimaryKeyBeforeTheFirstStatement(t *testing.T) {
+	c := validNames()
+	options := compositeOptions("")
+	options.Recordsets["users"] = NewRecordset("users", Table, []dal.FieldRef{dal.Field("id")})
+	options.Recordsets["empty"] = NewRecordset("empty", Table, nil)
+	cases := []struct {
+		name     string
+		other    *dalrecord.Key
+		wantText string
+		want     error
+	}{
+		{"a recordset that is not declared", dalrecord.NewKeyWithID("accounts", "a1"), "primary key is not defined for accounts", nil},
+		{"a recordset declared with no primary key", dalrecord.NewKeyWithID("empty", "e1"), "primary key is not defined for empty", nil},
+		{"a recordset with a composite primary key", dalrecord.NewKeyWithID("pairs", "p1"), "composite primary key", dal.ErrNotImplementedYet},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, r := range keyPathAPIsAnswering(t, options, func(string) bool { return true }) {
+				err := r.api.UpdateMulti(context.Background(), []*dalrecord.Key{c.key("u1"), tt.other}, c.updates())
+				if err == nil || !strings.Contains(err.Error(), tt.wantText) || !strings.Contains(err.Error(), "#2 of 2") {
+					t.Errorf("%s: error = %v, want the second key refused with %q", r.kind, err, tt.wantText)
+				}
+				if tt.want != nil && !errors.Is(err, tt.want) {
+					t.Errorf("%s: error = %v, want one wrapping %v", r.kind, err, tt.want)
+				}
+				if calls := r.recorder.calls(); len(calls) != 0 {
+					t.Errorf("%s: a statement reached the database: %q", r.kind, calls)
+				}
+			}
+		})
 	}
 }

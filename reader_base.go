@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"io"
 	"sync"
 
 	"github.com/dal-go/dalgo/access"
@@ -92,6 +93,20 @@ func (l *connLease) giveBack() {
 		defer l.mu.Unlock()
 		_ = l.conn.Close()
 	})
+}
+
+// streamError is the error of a result that broke in the middle of its stream, as a reader
+// returns it from Next. database/sql takes only io.EOF itself for the end of a result,
+// so a driver error that wraps io.EOF is the stream's. dal.ErrNoMoreRecords wraps io.EOF
+// too, and callers of the readers end a result on any error that matches it, so such an
+// error is returned without the chain (its text kept): nothing takes it for the end. The
+// error of a read whose context ended is the context's (connLease.explain).
+func streamError(lease *connLease, err error) error {
+	err = lease.explain(err)
+	if errors.Is(err, io.EOF) {
+		return fmt.Errorf("%v", err)
+	}
+	return err
 }
 
 // release gives the connection back to the pool. It is safe on a nil lease (a read on
@@ -294,11 +309,21 @@ func rejectRawRecursiveStructuredQuery(query dal.Query) error {
 }
 
 func sqliteSourceColumns(ctx context.Context, q dal.StructuredQuery, execute executeQueryFunc) ([]string, error) {
-	source := q.From().Base()
+	source, err := sqliteCollectionSource(q.From().Base())
+	if err != nil {
+		return nil, err
+	}
 	// table_xinfo gives the actual identifiers, not SELECT * result labels,
 	// which SQLite may prefix when full_column_names is enabled. It also
-	// includes generated columns (hidden 2/3), which SELECT * returns.
-	rows, err := execute(ctx, "SELECT name, hidden FROM pragma_table_xinfo(?) ORDER BY cid", source.Name())
+	// includes generated columns (hidden 2/3), which SELECT * returns. A source in a
+	// schema (an attached database) is asked for there: by its name alone, SQLite
+	// answers with the first table of that name, which can be another one, with other
+	// columns in another order.
+	statement, args := "SELECT name, hidden FROM pragma_table_xinfo(?) ORDER BY cid", []any{source.Name()}
+	if schema := source.Schema(); schema != "" {
+		statement, args = "SELECT name, hidden FROM pragma_table_xinfo(?, ?) ORDER BY cid", []any{source.Name(), schema}
+	}
+	rows, err := execute(ctx, statement, args...)
 	if err != nil {
 		return nil, err
 	}

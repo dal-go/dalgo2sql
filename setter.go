@@ -17,6 +17,11 @@ func (t transaction) Set(ctx context.Context, record dalrecord.Record) error {
 }
 
 func (dtb *database) SetMulti(ctx context.Context, records []dalrecord.Record) error {
+	// A batch that is refused opens no transaction: it sends no statement at all, BEGIN
+	// and ROLLBACK included.
+	if err := checkSetBatch(dtb.options, records); err != nil {
+		return err
+	}
 	// One transaction, and every write runs in it: a failure on a later record
 	// rolls back the earlier ones.
 	return dtb.RunReadwriteTransaction(ctx, func(ctx context.Context, tx dal.ReadwriteTransaction) error {
@@ -58,9 +63,10 @@ func setSingle(ctx context.Context, options DbOptions, record dalrecord.Record, 
 	return nil
 }
 
-func setMulti(ctx context.Context, options DbOptions, records []dalrecord.Record, execQuery queryExecutor, execStatement statementExecutor) error {
-	// The whole batch is checked before its first statement: records are set one
-	// by one, outside a transaction on a database handle.
+// checkSetBatch is the check of a whole batch of records to set, before any of them is
+// written: records are set one by one, and an earlier record would be written before a
+// later one is refused.
+func checkSetBatch(options DbOptions, records []dalrecord.Record) error {
 	for i, record := range records {
 		if err := options.checkRecordNames(record); err != nil {
 			return fmt.Errorf("failed to set record #%d of %d: %w", i+1, len(records), err)
@@ -68,6 +74,13 @@ func setMulti(ctx context.Context, options DbOptions, records []dalrecord.Record
 		if err := options.checkRecordColumns(record, updateOperation); err != nil {
 			return fmt.Errorf("failed to set record #%d of %d: %w", i+1, len(records), err)
 		}
+	}
+	return nil
+}
+
+func setMulti(ctx context.Context, options DbOptions, records []dalrecord.Record, execQuery queryExecutor, execStatement statementExecutor) error {
+	if err := checkSetBatch(options, records); err != nil {
+		return err
 	}
 	// TODO(help-wanted): insertOperation of multiple rows at once as: "INSERT INTO table (colA, colB) VALUES (a1, b2), (a2, b2)"
 	for i, record := range records {

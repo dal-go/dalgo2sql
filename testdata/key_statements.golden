@@ -165,9 +165,7 @@ UPDATE users SET\n	name = ?,\n	age = ?\n	WHERE id = ?
 UPDATE users SET\n	name = ?,\n	age = ?\n	WHERE id = ?
 UPDATE users SET\n	name = ?,\n	age = ?\n	WHERE id = ?
 ## dialect= placeholder=question database update-multi-two-recordsets rowExists=no
-UPDATE users SET\n	name = ?\n	WHERE id = ?
 ## dialect= placeholder=question transaction update-multi-two-recordsets rowExists=no
-UPDATE users SET\n	name = ?\n	WHERE id = ?
 ## dialect= placeholder=question database delete-multi-one-key rowExists=no
 DELETE FROM users WHERE id = ?
 ## dialect= placeholder=question transaction delete-multi-one-key rowExists=no
@@ -395,9 +393,7 @@ UPDATE users SET\n	name = $1,\n	age = $2\n	WHERE id = $3
 UPDATE users SET\n	name = $1,\n	age = $2\n	WHERE id = $3
 UPDATE users SET\n	name = $1,\n	age = $2\n	WHERE id = $3
 ## dialect= placeholder=dollar database update-multi-two-recordsets rowExists=no
-UPDATE users SET\n	name = $1\n	WHERE id = $2
 ## dialect= placeholder=dollar transaction update-multi-two-recordsets rowExists=no
-UPDATE users SET\n	name = $1\n	WHERE id = $2
 ## dialect= placeholder=dollar database delete-multi-one-key rowExists=no
 DELETE FROM users WHERE id = $1
 ## dialect= placeholder=dollar transaction delete-multi-one-key rowExists=no
@@ -625,9 +621,7 @@ UPDATE `users` SET\n	`name` = ?,\n	`age` = ?\n	WHERE `id` = ?
 UPDATE `users` SET\n	`name` = ?,\n	`age` = ?\n	WHERE `id` = ?
 UPDATE `users` SET\n	`name` = ?,\n	`age` = ?\n	WHERE `id` = ?
 ## dialect=sqlite placeholder=question database update-multi-two-recordsets rowExists=no
-UPDATE `users` SET\n	`name` = ?\n	WHERE `id` = ?
 ## dialect=sqlite placeholder=question transaction update-multi-two-recordsets rowExists=no
-UPDATE `users` SET\n	`name` = ?\n	WHERE `id` = ?
 ## dialect=sqlite placeholder=question database delete-multi-one-key rowExists=no
 DELETE FROM `users` WHERE `id` = ?
 ## dialect=sqlite placeholder=question transaction delete-multi-one-key rowExists=no
@@ -855,9 +849,7 @@ UPDATE `users` SET\n	`name` = $1,\n	`age` = $2\n	WHERE `id` = $3
 UPDATE `users` SET\n	`name` = $1,\n	`age` = $2\n	WHERE `id` = $3
 UPDATE `users` SET\n	`name` = $1,\n	`age` = $2\n	WHERE `id` = $3
 ## dialect=sqlite placeholder=dollar database update-multi-two-recordsets rowExists=no
-UPDATE `users` SET\n	`name` = $1\n	WHERE `id` = $2
 ## dialect=sqlite placeholder=dollar transaction update-multi-two-recordsets rowExists=no
-UPDATE `users` SET\n	`name` = $1\n	WHERE `id` = $2
 ## dialect=sqlite placeholder=dollar database delete-multi-one-key rowExists=no
 DELETE FROM `users` WHERE `id` = $1
 ## dialect=sqlite placeholder=dollar transaction delete-multi-one-key rowExists=no

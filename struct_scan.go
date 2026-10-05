@@ -308,9 +308,14 @@ func assignColumnValue(field reflect.Value, raw, normalized any) error {
 // exactInt64 reads an integer field from the driver's text when that text spells
 // an integer, because normalized is a float64 for NUMERIC and float64 holds only
 // 53 bits. A whole NUMERIC with a scale (9007199254740993.00) spells one too: its
-// fraction is zeros only, so the part before the point is read. Any other text,
-// and every value that is not text, is converted from normalized as before.
+// fraction is zeros only, so the part before the point is read. A NUMERIC with a
+// fraction that is not zeros is an error from the text, whatever the float64 of it
+// holds. Any other text, and every value that is not text, is converted from
+// normalized as before.
 func exactInt64(raw any, normalized reflect.Value) (int64, error) {
+	if fractionalNumericText(raw, normalized) {
+		return 0, errors.New("the value is not an int64: it has a fractional part")
+	}
 	if text, ok := wholeNumberText(raw, normalized); ok {
 		n, err := strconv.ParseInt(text, 10, 64)
 		if err == nil {
@@ -327,6 +332,9 @@ func exactInt64(raw any, normalized reflect.Value) (int64, error) {
 
 // exactUint64 is exactInt64 for unsigned fields.
 func exactUint64(raw any, normalized reflect.Value) (uint64, error) {
+	if fractionalNumericText(raw, normalized) {
+		return 0, errors.New("the value is not a uint64: it has a fractional part")
+	}
 	if text, ok := wholeNumberText(raw, normalized); ok {
 		n, err := strconv.ParseUint(text, 10, 64)
 		if err == nil {
@@ -337,6 +345,20 @@ func exactUint64(raw any, normalized reflect.Value) (uint64, error) {
 		}
 	}
 	return toUint64(normalized)
+}
+
+// fractionalNumericText reports whether raw is the text of a NUMERIC, which the
+// normaliser made a float64 of, with a fraction that is not zeros. It is judged by the
+// text: the float64 holds 53 bits, so -9223372036854775809.5 is -2^63 and 9007199254740993.5
+// is 9007199254740994, whole numbers both, and converting either would store a number the
+// column does not hold.
+func fractionalNumericText(raw any, normalized reflect.Value) bool {
+	text, ok := textValue(raw).(string)
+	if !ok || normalized.Kind() != reflect.Float64 {
+		return false
+	}
+	_, fraction, found := strings.Cut(text, ".")
+	return found && strings.Trim(fraction, "0") != ""
 }
 
 // wholeNumberText returns the digits of raw when raw is text that may spell a

@@ -572,7 +572,7 @@ func compileSQLConditionWithSources(condition dal.Condition, sources map[string]
 		}
 		return "(" + strings.Join(parts, " "+string(c.Operator())+" ") + ")", args, nil
 	case dal.IsNullCondition:
-		if _, star := c.Operand().(dal.StarExpression); star {
+		if sqlExpressionContainsStar(c.Operand()) {
 			return "", nil, fmt.Errorf("unsupported null test over *")
 		}
 		operand, args, err := compileSQLExpressionWithSources(c.Operand(), sources, requireQualified)
@@ -607,6 +607,20 @@ func sqlConditionTestsAggregateForNull(condition dal.Condition) bool {
 		}
 	}
 	return false
+}
+
+// sqlExpressionContainsStar reports whether expression is a star, or does arithmetic on
+// one at any depth: SQLite rejects `*` as an operand, so a null test over either is
+// refused. A star inside an aggregate is COUNT(*), which is a column; it is not looked into.
+func sqlExpressionContainsStar(expression dal.Expression) bool {
+	switch expression := expression.(type) {
+	case dal.StarExpression:
+		return true
+	case dal.BinaryExpression:
+		return sqlExpressionContainsStar(expression.Left) || sqlExpressionContainsStar(expression.Right)
+	default:
+		return false
+	}
 }
 
 func sqlExpressionContainsAggregate(expression dal.Expression) bool {

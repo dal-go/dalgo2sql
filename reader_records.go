@@ -410,7 +410,7 @@ func (r recordsReader) Next() (record dalrecord.Record, err error) {
 	if !r.rows.Next() {
 		r.lease.release() // the rows closed themselves at the end: the connection goes back
 		if err := r.rows.Err(); err != nil {
-			return nil, r.lease.explain(err)
+			return nil, streamError(r.lease, err)
 		}
 		return nil, dal.ErrNoMoreRecords
 	}

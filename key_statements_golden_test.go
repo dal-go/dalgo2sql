@@ -15,11 +15,14 @@ import (
 
 // updateKeyStatementsGolden rewrites testdata/key_statements.golden from the
 // code under test. The file was recorded from main before the nested-key rule,
-// the empty-update refusals and the batch changes were written. Its one
-// deliberate difference from that recording is the statements of DeleteMulti: main
+// the empty-update refusals and the batch changes were written. Its deliberate
+// differences from that recording are two. The statements of DeleteMulti: main
 // sent a DELETE per key and then the IN statement for a recordset with several
-// keys, and the file has the IN statement only. Do not regenerate it to follow any
-// other change of the statements of a key without a parent.
+// keys, and the file has the IN statement only. And UpdateMulti of a key of a
+// declared recordset and a key of one with no primary key (accounts): main updated the
+// first and then refused the second, and the file has no statement, as UpdateMulti
+// checks every key's recordset for a primary key before its first statement. Do not
+// regenerate it to follow any other change of the statements of a key without a parent.
 var updateKeyStatementsGolden = flag.Bool("update-key-statements-golden", false, "rewrite testdata/key_statements.golden")
 
 // goldenCase is one call whose statements are recorded: a key without a parent

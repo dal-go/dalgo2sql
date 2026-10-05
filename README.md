@@ -184,7 +184,9 @@ closed. What it refuses, by where it is found (each refusal is an error wrapping
 - **An aggregate** other than COUNT, SUM, AVG, MIN and MAX, and a keys-only query
   that would be ordered by a field that is a reserved word (such as a primary key
   named `order`), because the emitter writes the name unquoted and the server
-  rejects it.
+  rejects it. The reserved words are the union across engines (PostgreSQL, MySQL, SQL
+  Server and SQLite), so a word that one of them accepts bare, such as `index` or `user`
+  on PostgreSQL, is refused too: the text must run on each.
 
 ## NUMERIC result values
 
@@ -264,7 +266,8 @@ field type:
   keeps every digit and the whole `int64` and `uint64` range is reachable; a
   whole `NUMERIC` with a scale (`9007199254740993.00`, what `SUM` over
   `numeric(p,2)` returns) is read from the part before the point, so it keeps
-  every digit too; a fraction is an error, and so is a whole number outside the
+  every digit too; a fraction is an error, judged by the text (so one beyond 2^53 is
+  one too, never the float64's rounding), and so is a whole number outside the
   field's range (`-9223372036854775809` for an `int64` is an error, never the
   nearest bound);
 - float and `bool` fields take the normalised value (`NUMERIC` becomes

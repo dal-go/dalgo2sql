@@ -319,6 +319,13 @@ func TestAssignColumnValue_IntegerFieldsReadTheDriversText(t *testing.T) {
 		{name: "text that only looks like a whole NUMERIC is not parsed for a text value", field: "Int64", raw: "12.00", normalized: "12.00", wantErr: "invalid syntax"},
 		{name: "fractional NUMERIC is still refused", field: "Int64", raw: "12.5", normalized: 12.5, wantErr: "is not an int64"},
 		{name: "fractional NUMERIC for uint is still refused", field: "Uint64", raw: "12.5", normalized: 12.5, wantErr: "is not a uint64"},
+		// A fraction is an error whatever the float64 of the text holds: below MinInt64
+		// it is exactly -2^63, and beyond 2^53 it is a whole number that was not the value.
+		{name: "a fraction below MinInt64 is refused, not stored as MinInt64", field: "Int64", raw: "-9223372036854775809.5", normalized: -9223372036854775808.0, wantErr: "is not an int64: it has a fractional part"},
+		{name: "a fraction beyond 2^53 is refused, not rounded", field: "Int64", raw: "9007199254740993.5", normalized: 9007199254740994.0, wantErr: "is not an int64: it has a fractional part"},
+		{name: "a fraction beyond 2^53 is refused for uint, not rounded", field: "Uint64", raw: "9007199254740993.5", normalized: 9007199254740994.0, wantErr: "is not a uint64: it has a fractional part"},
+		{name: "a fraction at the top of uint64 is refused, as bytes", field: "Uint64", raw: []byte("18446744073709551615.5"), normalized: 18446744073709551616.0, wantErr: "is not a uint64: it has a fractional part"},
+		{name: "a fraction with trailing zeros after a digit is still a fraction", field: "Int64", raw: "12.500", normalized: 12.5, wantErr: "is not an int64: it has a fractional part"},
 		{name: "MinInt64", field: "Int64", raw: "-9223372036854775808", normalized: -9223372036854775808.0, want: int64(math.MinInt64)},
 		{name: "MinInt64 with a scale", field: "Int64", raw: "-9223372036854775808.00", normalized: -9223372036854775808.0, want: int64(math.MinInt64)},
 		// Below MinInt64 the float64 of the text is exactly -2^63, so converting it

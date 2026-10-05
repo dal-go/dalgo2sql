@@ -247,7 +247,11 @@ func validateTypedJoinSources(from dal.FromSource, path string) error {
 // dal/federated_stream.go): the scan restated as ORDER BY and LIMIT, with no
 // filter, grouping or offset. Anything else would be rendered over the whole
 // table (a WHERE would filter before the bound, not after it), so it returns
-// ErrNotSupported and DALgo's generic engine runs it.
+// ErrNotSupported. What happens next depends on who asked: a plain read goes
+// straight to the adapter (dal/join_execute.go), so the refusal is the read's
+// error and nothing falls back to DALgo's generic engine; only the federated
+// executor runs such a query in the generic engine, and it decides that itself,
+// before it asks the adapter (dal/federated_query.go).
 //
 // The statement restates the scan when ORDER BY equals the scan's orders item
 // by item (after select aliases are resolved, as orderBy resolves them), in the
