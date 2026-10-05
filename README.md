@@ -36,6 +36,44 @@ using unspecified SQLite row order would not be deterministic. DALgo's planner
 therefore refuses a query that uses them for this adapter (see the PostgreSQL
 section), and nothing runs it.
 
+### Exact SQLite decimal SQL functions
+
+Applications that issue SQLite SQL directly can opt in to exact decimal arithmetic
+on the `modernc.org/sqlite` driver. Register the functions before opening the first
+connection:
+
+```go
+if err := dalgo2sql.RegisterSQLiteDecimalFunctions(); err != nil {
+	return err
+}
+db, err := sql.Open("sqlite", "app.sqlite")
+```
+
+Store decimal input in a TEXT-affinity column such as `DECIMAL_TEXT(38, 6)`. The
+functions accept decimal strings, bytes, and exact integers; they reject floats,
+exponent notation, malformed input, and inputs or results over 38 significant
+digits or scale 38. Arithmetic returns canonical decimal text. Addition and
+multiplication never round: an over-precision result is an error. Division,
+`decimal_round`, and `decimal_avg` use round-half-to-even, with scales from 0
+through 38.
+
+```sql
+SELECT decimal_add('0.1', '0.2');             -- '0.3'
+SELECT decimal_mul(quantity, unit_price);     -- exact decimal text
+SELECT decimal_div('1', '6', 4);              -- '0.1667'
+SELECT decimal_sum(amount), decimal_avg(amount, 2)
+FROM invoice_lines;
+SELECT amount FROM invoice_lines ORDER BY amount COLLATE DECIMAL;
+```
+
+Scalar functions return NULL if any argument is NULL; `decimal_cmp` otherwise
+returns -1, 0, or 1. Aggregates ignore NULL and return NULL when every input is
+NULL or no input rows exist. The `DECIMAL` collation orders valid decimal text
+numerically; malformed text is placed after valid numbers and ordered
+lexically. Constrain a decimal column to valid decimal text when relying on
+numeric ordering. These opt-in functions do not change ordinary SQLite `NUMERIC`
+or DALgo aggregate normalization.
+
 ## Which path compiles a structured query
 
 A structured DALgo query reaches SQL by one of four paths. They are tried in this

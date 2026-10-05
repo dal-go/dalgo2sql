@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -16,6 +17,16 @@ type structWithIntAndString struct {
 	ID   string
 	Age  int
 	Name string
+}
+
+type namedColumnKey string
+
+func TestSetReadMapValuePreservesSQLiteNullWithNamedKey(t *testing.T) {
+	target := reflect.ValueOf(make(map[namedColumnKey]any))
+	setReadMapValue(target, "amount", nil, "sqlite")
+	if value, ok := target.Interface().(map[namedColumnKey]any)[namedColumnKey("amount")]; !ok || value != nil {
+		t.Fatalf("named-key map = %#v, want explicit NULL amount", target.Interface())
+	}
 }
 
 type mockRecord struct {
