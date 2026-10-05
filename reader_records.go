@@ -22,6 +22,25 @@ func getRecordsReader(ctx context.Context, query dal.Query, execute executeQuery
 
 const recordIDHelperColumn = "__dalgo_record_id"
 
+// getRecordsReaderWithOptions runs the query and returns a reader over its records. How
+// each record is keyed:
+//
+//   - By the primary key of the recordset declared for the source in DbOptions.Recordsets,
+//     or, when it declares none, DbOptions.PrimaryKey: the value of that column.
+//   - With the typed PostgreSQL dialect and a source nobody declared, by the primary key the
+//     catalog reports for it, when that is exactly one column. The catalog lookup is the
+//     one the read makes anyway for its compiler.
+//   - By ordinal, the position of the row in the result counted from 0 and written as
+//     decimal text, for the rows of a grouped or aggregated query (which have no source
+//     row) and, with the typed PostgreSQL dialect and a source nobody declared, for those of
+//     a source with no primary key, a composite one, or a view, a materialized view or
+//     a foreign table, which have none.
+//   - In every other case (the SQLite dialect, the legacy emitter or a native compiler of
+//     the caller's, with no key configured, and a recordset declared with no single-column
+//     primary key) by the literal ID "__dalgo_record_id", the same for every record: those
+//     paths have no catalog to ask. A read into a record the query names
+//     (dal.StructuredQuery.IntoRecord) keeps that record's key unless a key is found by one of
+//     the first two rules.
 func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute executeQueryFunc, options DbOptions) (rr *recordsReader, err error) {
 	rr = &recordsReader{
 		fold:                recordNameFold(options),
@@ -30,6 +49,9 @@ func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute e
 			return dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("Unknown", ""), make(map[string]any))
 		},
 	}
+	// facts, when the read asked the catalog before compiling, are handed to the compiler
+	// so that it does not ask again.
+	var facts *typedCatalogFacts
 	if q, ok := query.(dal.StructuredQuery); ok {
 		if readsWithTypedPostgres(options) {
 			// The typed compiler refuses what it cannot compute as asked, and reads that
@@ -49,19 +71,27 @@ func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute e
 				// Aggregate result rows do not have a source record identity. Give
 				// each result row a deterministic synthetic key without exposing a
 				// helper column in its data.
-				ordinal := 0
-				rr.newRecord = func() dalrecord.Record {
-					record := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID(collection, strconv.Itoa(ordinal)), make(map[string]any))
-					ordinal++
-					return record
-				}
+				rr.newRecord = ordinalRecords(collection)
 			} else {
 				rr.newRecord = func() dalrecord.Record {
 					return dalrecord.NewRecordWithData(dalrecord.NewKeyWithID(collection, recordIDHelperColumn), make(map[string]any))
 				}
 			}
 		}
-		if primaryKey := primaryKeyForQuery(options, query); primaryKey != "" && !dal.HasAggregation(q) {
+		primaryKey := primaryKeyForQuery(options, query)
+		if primaryKey == "" && keyedByCatalog(options, q) {
+			// Nothing names the key of this source, so the catalog does: the primary key,
+			// when it is one column, else the rows are keyed by ordinal.
+			var column string
+			if facts, column, err = catalogPrimaryKey(ctx, options, q, execute); err != nil {
+				err = fmt.Errorf("failed to get SQL reader: %w", err)
+				return
+			}
+			if primaryKey = column; primaryKey == "" {
+				rr.newRecord = ordinalRecords(q.From().Base().Name())
+			}
+		}
+		if primaryKey != "" && !rr.validateFinite {
 			if isKeysOnlyQuery(q) && len(q.OrderBy()) == 0 && len(q.From().Joins()) == 0 && canOrderByKey(options, primaryKey) {
 				// A keys-only query names no order, and SQL returns rows in no
 				// defined order without one, so callers would see a different
@@ -96,7 +126,7 @@ func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute e
 		}
 	}
 
-	if rr.readerBase, err = getReaderBaseFor(ctx, query, execute, options, rr.keyInBaseColumns); err != nil {
+	if rr.readerBase, err = getReaderBaseFor(ctx, query, execute, options, rr.keyInBaseColumns, facts); err != nil {
 		err = fmt.Errorf("failed to get SQL reader: %w", err)
 		return
 	}
@@ -107,6 +137,54 @@ func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute e
 	}
 
 	return
+}
+
+// ordinalRecords makes the records of rows that have no key of their own, one per row,
+// keyed by the position of the row in the result, from 0, written as decimal text.
+func ordinalRecords(collection string) func() dalrecord.Record {
+	ordinal := 0
+	return func() dalrecord.Record {
+		record := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID(collection, strconv.Itoa(ordinal)), make(map[string]any))
+		ordinal++
+		return record
+	}
+}
+
+// keyedByCatalog reports whether the key of the records of q is for the catalog to say:
+// the typed PostgreSQL compiler runs the read, which asks the catalog anyway, and nothing
+// else names the key (no recordset declared for the source, and no DbOptions.PrimaryKey).
+// A grouped or aggregated query has no source row to key, a read into a record keeps that
+// record's own key, and a query with no base source has no source to ask about.
+func keyedByCatalog(options DbOptions, q dal.StructuredQuery) bool {
+	return readsWithTypedPostgres(options) &&
+		!dal.HasAggregation(q) && q.IntoRecord() == nil &&
+		q.From() != nil && q.From().Base() != nil &&
+		len(options.PrimaryKey) == 0 && recordsetForQuery(options, q) == nil
+}
+
+// catalogPrimaryKey reads the catalog facts of the sources of q, which the compiler needs
+// next and is handed back to reuse, and names the column that is the whole of the primary
+// key of the base source, as the catalog stores it. The column is "" when the source has
+// none or several, and when the mount cannot write its name (a column stored as Id where the
+// fold-lower mount writes id: the statement could not select it).
+func catalogPrimaryKey(ctx context.Context, options DbOptions, q dal.StructuredQuery, execute executeQueryFunc) (*typedCatalogFacts, string, error) {
+	dialect, err := postgresDialectFor(options)
+	if err != nil {
+		return nil, "", err
+	}
+	facts, err := typedFactsForQuery(ctx, dialect, execute, q.From())
+	if err != nil {
+		return nil, "", err
+	}
+	base, err := typedCollection(q.From().Base())
+	if err != nil {
+		return &facts, "", nil // a source the compiler refuses: it reports it
+	}
+	source, _ := facts.source(typedSourceName{Schema: base.Schema(), Name: base.Name()})
+	if column, ok := source.primaryKeyColumn(); ok && facts.addressable(column.Name) {
+		return &facts, column.Name, nil
+	}
+	return &facts, "", nil
 }
 
 // baseColumnIndex is the position, in a select-all over joins, of the base source's

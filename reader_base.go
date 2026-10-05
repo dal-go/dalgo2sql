@@ -88,14 +88,16 @@ func getReaderBaseWithDialect(ctx context.Context, query dal.Query, execute exec
 }
 
 func getReaderBaseWithOptions(ctx context.Context, query dal.Query, execute executeQueryFunc, options DbOptions) (readerBase, error) {
-	return getReaderBaseFor(ctx, query, execute, options, false)
+	return getReaderBaseFor(ctx, query, execute, options, false, nil)
 }
 
 // getReaderBaseFor runs the query. wantBaseColumns asks, for a select-all over joins, for
 // the columns of the base source (readerBase.baseColumns), which the SQLite dialect reads
 // from its own catalog in one more statement, so it is asked for only by a read that needs
-// them.
-func getReaderBaseFor(ctx context.Context, query dal.Query, execute executeQueryFunc, options DbOptions, wantBaseColumns bool) (readerBase, error) {
+// them. facts, when the typed PostgreSQL compiler runs the read, are the catalog facts of
+// the sources of the query that the caller has read already (typedFactsForQuery); nil
+// reads them here.
+func getReaderBaseFor(ctx context.Context, query dal.Query, execute executeQueryFunc, options DbOptions, wantBaseColumns bool, facts *typedCatalogFacts) (readerBase, error) {
 	if err := rejectRawRecursiveStructuredQuery(query); err != nil {
 		return readerBase{}, err
 	}
@@ -177,7 +179,12 @@ func getReaderBaseFor(ctx context.Context, query dal.Query, execute executeQuery
 				// itself, so no column is filtered out of the result afterwards. The facts
 				// are read through execute, which the caller binds to the connection or
 				// transaction the statement runs on.
-				statement, err := compileTypedRead(ctx, q, dialect, execute)
+				var statement typedStatement
+				if facts != nil {
+					statement, err = compileTypedStatement(q, dialect, *facts)
+				} else {
+					statement, err = compileTypedRead(ctx, q, dialect, execute)
+				}
 				if err != nil {
 					return readerBase{}, err
 				}

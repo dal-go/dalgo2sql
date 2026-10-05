@@ -122,6 +122,20 @@ arguments of every supported shape are in `testdata/postgres`.
   two expressions of a join one output name (`a.id` and `r.id`) is refused with
   `join_field: duplicate output name`, the error DALgo's generic engine gives for the
   same query, with the SQLite dialect too.
+- **Records are keyed by the source's primary key.** The records reader keys each record
+  by the primary key column of the recordset declared for the source in
+  `DbOptions.Recordsets` (else `DbOptions.PrimaryKey`). With no key configured, the key is
+  the source's primary key as the catalog reports it, when that is exactly one column. The
+  one catalog query that serves the compiler serves the key, so a read still sends one. A
+  source with no primary key, with a composite one, a view, a materialized view and a foreign
+  table (the catalog reports none for these), and a grouped or aggregated query, key their
+  rows by ordinal: the position of the row in the result, from 0, as decimal text. A recordset
+  that is declared with no single-column primary key keeps the literal ID
+  `__dalgo_record_id`, as does a read with the SQLite dialect, the legacy emitter or a native
+  compiler of the caller's and no key configured: they have no catalog to ask. On a fold-lower
+  mount a declared recordset is looked up by the query's spelling of the source, then by that
+  spelling folded as the catalog lookup folds it, so a recordset declared as `album` is found
+  by a query that says `Album` or `ALBUM`.
 - **A stream error is never the end of a result.** Both readers return the error the
   server raised in the middle of a result (a timeout, an overflow at one row) from
   `Next`, instead of `ErrNoMoreRecords`; a read whose context ended returns the
@@ -273,7 +287,8 @@ and an exact name wins over a looser one (see the precedence note above).
 ## Keys-only query order
 
 A keys-only query (`SelectKeysOnly`) with no `ORDER BY` is ordered ascending by
-the primary key (from `DbOptions.Recordsets`, else `DbOptions.PrimaryKey`), so
+the primary key (from `DbOptions.Recordsets`, else `DbOptions.PrimaryKey`, else, with
+the PostgreSQL dialect, the primary key the catalog reports), so
 the order is defined and repeatable on each database. Text keys sort by that
 database's collation (the SQLite compiler uses `BINARY`; the legacy emitter,
 PostgreSQL and MySQL use the column's own collation). A query that names an

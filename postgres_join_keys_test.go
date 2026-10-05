@@ -15,10 +15,10 @@ import (
 func pgJoinKeyCatalog(mock sqlmock.Sqlmock, album []string, quote func(string) string) {
 	rows := sqlmock.NewRows(postgresCatalogColumns)
 	types := map[string][]driver.Value{
-		"id":        {"integer", "N", int64(23), int64(0), true, false},
-		"title":     {"text", "S", int64(25), int64(0), false, false},
-		"artist_id": {"integer", "N", int64(23), int64(0), false, false},
-		"name":      {"text", "S", int64(25), int64(0), false, false},
+		"id":        {"integer", "N", int64(23), int64(0), true, false, false},
+		"title":     {"text", "S", int64(25), int64(0), false, false, false},
+		"artist_id": {"integer", "N", int64(23), int64(0), false, false, false},
+		"name":      {"text", "S", int64(25), int64(0), false, false, false},
 	}
 	for _, name := range album {
 		rows.AddRow(append([]driver.Value{quote("album"), name}, types[name]...)...)
