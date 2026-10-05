@@ -356,7 +356,7 @@ func getMultiFromSingleTable(_ context.Context, options DbOptions, records []dal
 						if b, ok := val.([]byte); ok {
 							val = string(b)
 						}
-						mv.SetMapIndex(reflect.ValueOf(col), reflect.ValueOf(val))
+						setMapColumn(mv, col, val)
 					}
 					record.SetError(dalrecord.ErrNoError)
 					break
@@ -508,6 +508,17 @@ func isMapData(data interface{}) bool {
 	return v.Kind() == reflect.Map && v.Type().Key().Kind() == reflect.String
 }
 
+// setMapColumn stores value in the map m under the name of its column. A map with string
+// keys of a named type, which a write takes as it takes any map with string keys, is
+// keyed by the name converted to that type: reflect refuses a key of another type.
+func setMapColumn(m reflect.Value, column string, value any) {
+	key := reflect.ValueOf(column)
+	if keyType := m.Type().Key(); keyType.Kind() == reflect.String && keyType != key.Type() {
+		key = key.Convert(keyType)
+	}
+	m.SetMapIndex(key, reflect.ValueOf(value))
+}
+
 // scanRowIntoMap scans the current sql.Rows row into a map[string]any (or
 // *map[string]any). PK columns are skipped if pkIncluded is false; when
 // pkIncluded is true they are also included in the result map.
@@ -545,7 +556,7 @@ func scanRowIntoMap(rows *sql.Rows, data interface{}, pkIncluded bool) error {
 			val = string(b)
 		}
 		if val != nil {
-			v.SetMapIndex(reflect.ValueOf(col), reflect.ValueOf(val))
+			setMapColumn(v, col, val)
 		}
 	}
 	return nil

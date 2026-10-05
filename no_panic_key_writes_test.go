@@ -15,9 +15,12 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// No input of a key read or write reaches a panic: each of the cases below is an
-// error of the call, returned before any statement is sent. They were panics in
-// buildSingleRecordQuery, processPrimaryKey, getMultiFromSingleTable and reflect.
+// Four inputs of key reads and writes were panics and are errors of the call, returned
+// before any statement is sent: Insert (also through InsertMulti) of data that is neither
+// a struct nor a map with string keys; Insert of a key ID that does not fit the composite
+// primary key of its recordset; GetMulti of several records of a recordset with a composite
+// key; and a write of a struct with a field that is not exported. The tests below cover
+// these four, and that a map with string keys of a named type is written and read back.
 
 // noPanic runs the call and fails the test, instead of crashing it, if it panics.
 func noPanic(t *testing.T, call func() error) (err error) {
@@ -178,6 +181,50 @@ func TestInsert_MapWithANamedStringKeyTypeIsWritten(t *testing.T) {
 			t.Errorf("%s: statements = %q", r.kind, got)
 		}
 	}
+}
+
+// What a map with a named string key type takes in, a read gives back: Get and GetMulti
+// store each column under its name converted to the key type. The read used the plain string
+// as the key, and reflect panics on a key of another type.
+func TestGet_MapWithANamedStringKeyTypeIsReadBack(t *testing.T) {
+	ctx := context.Background()
+	opts := DbOptions{Recordsets: map[string]*Recordset{"widgets": NewRecordset("widgets", Table, []dal.FieldRef{dal.Field("id")})}}
+	sqlDB := openTestSQLiteDB(t, `CREATE TABLE widgets (id TEXT PRIMARY KEY, name TEXT NOT NULL)`)
+	db := dal.BackendOf(NewDatabase(sqlDB, newSchema(), opts)).(*database)
+	for _, id := range []string{"w1", "w2"} {
+		written := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("widgets", id), map[mapKeyString]any{"name": "Sprocket " + id})
+		if err := db.Insert(ctx, written); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := func(id string) map[mapKeyString]any {
+		return map[mapKeyString]any{"id": id, "name": "Sprocket " + id}
+	}
+	t.Run("Get", func(t *testing.T) {
+		got := map[mapKeyString]any{}
+		record := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("widgets", "w1"), got)
+		if err := noPanic(t, func() error { return db.Get(ctx, record) }); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(got, want("w1")) {
+			t.Errorf("data = %v, want %v", got, want("w1"))
+		}
+	})
+	t.Run("GetMulti", func(t *testing.T) {
+		got := []map[mapKeyString]any{{}, {}}
+		records := []dalrecord.Record{
+			dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("widgets", "w1"), got[0]),
+			dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("widgets", "w2"), got[1]),
+		}
+		if err := noPanic(t, func() error { return db.GetMulti(ctx, records) }); err != nil {
+			t.Fatal(err)
+		}
+		for i, id := range []string{"w1", "w2"} {
+			if !reflect.DeepEqual(got[i], want(id)) {
+				t.Errorf("data of %s = %v, want %v", id, got[i], want(id))
+			}
+		}
+	})
 }
 
 // keyWithID is a key of collection whose ID is any value, a slice included: the
