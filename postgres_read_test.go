@@ -208,3 +208,41 @@ func TestPostgresReaderRefusesWhatItCannotRunOnTheServer(t *testing.T) {
 		_ = reader.rows.Close()
 	})
 }
+
+// A keys-only query that names no order is ordered by the primary key (the wrapper
+// orderedByKey, which answers OrderBy()). The PostgreSQL path reads the order through
+// that interface like any other, so the statement carries it; the key is NOT NULL, so
+// the NULLS clause is left out and an index on the key can serve the order. No
+// COLLATE is written: the key is unique, so the order is total whatever the
+// collation, and a collation of its own would keep the planner from the key's index.
+func TestPostgresReaderOrdersAKeysOnlyQueryByItsPrimaryKey(t *testing.T) {
+	ctx := context.Background()
+	albums := dal.NewRootCollectionRef("Album", "")
+	options := DbOptions{StructuredQueryDialect: "postgres", Recordsets: map[string]*Recordset{
+		"Album": NewRecordset("Album", Table, []dal.FieldRef{dal.Field("AlbumId")}),
+	}}
+	for _, tc := range []struct {
+		name      string
+		query     dal.StructuredQuery
+		options   DbOptions
+		statement string
+	}{
+		{"no order named, key known", dal.From(albums).NewQuery().SelectKeysOnly(reflect.Int), options, `SELECT * FROM "Album" ORDER BY "AlbumId" ASC`},
+		{"an order that is named wins", dal.From(albums).NewQuery().OrderBy(dal.DescendingField("Title")).SelectKeysOnly(reflect.Int), options, `SELECT * FROM "Album" ORDER BY "Title" DESC NULLS LAST`},
+		{"key unknown, nothing to order by", dal.From(albums).NewQuery().SelectKeysOnly(reflect.Int), DbOptions{StructuredQueryDialect: "postgres"}, `SELECT * FROM "Album"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock := newPostgresReadMock(t)
+			mock.ExpectQuery(postgresCatalogQuery(1)).WithArgs(`"Album"`).WillReturnRows(postgresReadCatalogRows(`"Album"`, "AlbumId", "Title"))
+			mock.ExpectQuery(tc.statement).WillReturnRows(sqlmock.NewRows([]string{"AlbumId", "Title"}))
+			reader, err := getRecordsReaderWithOptions(ctx, tc.query, db.QueryContext, tc.options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = reader.Close()
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
