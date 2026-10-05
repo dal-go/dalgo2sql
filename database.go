@@ -119,13 +119,33 @@ func (dtb *database) RunReadonlyTransaction(ctx context.Context, f dal.ROTxWorke
 			return fmt.Errorf("failed to begin transaction: %w", err)
 		}
 	}
-	if err = f(ctx, newTransaction(dbTx, dtb.options, dalgoTxOptions)); err != nil {
+	return finishTransaction(dbTx, func() error {
+		return f(ctx, newTransaction(dbTx, dtb.options, dalgoTxOptions))
+	})
+}
+
+// finishTransaction runs worker in dbTx and ends the transaction: it commits when
+// the worker returns no error, and rolls back when it returns one. A worker that
+// panics, or ends its goroutine (runtime.Goexit, as t.FailNow does), is rolled back
+// too and then left to go on: the transaction is not left open, where it would hold
+// its connection and, on SQLite, the lock of the file for as long as its context lives,
+// which with context.Background() is for good.
+func finishTransaction(dbTx *sql.Tx, worker func() error) error {
+	returned := false
+	defer func() {
+		if !returned {
+			_ = dbTx.Rollback()
+		}
+	}()
+	err := worker()
+	returned = true
+	if err != nil {
 		if rollbackErr := dbTx.Rollback(); rollbackErr != nil {
 			return dal.NewRollbackError(rollbackErr, err)
 		}
 		return err
 	}
-	if err := dbTx.Commit(); err != nil {
+	if err = dbTx.Commit(); err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 	return nil
@@ -141,16 +161,9 @@ func (dtb *database) RunReadwriteTransaction(ctx context.Context, f dal.RWTxWork
 	if err != nil {
 		return err
 	}
-	if err = f(ctx, newReadwriteTransaction(dbTx, dtb.options, dalgoTxOptions)); err != nil {
-		if rollbackErr := dbTx.Rollback(); rollbackErr != nil {
-			return dal.NewRollbackError(rollbackErr, err)
-		}
-		return err
-	}
-	if err := dbTx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
-	}
-	return nil
+	return finishTransaction(dbTx, func() error {
+		return f(ctx, newReadwriteTransaction(dbTx, dtb.options, dalgoTxOptions))
+	})
 }
 
 func (dtb *database) ExecuteQueryToRecordsReader(ctx context.Context, query dal.Query) (dal.RecordsReader, error) {

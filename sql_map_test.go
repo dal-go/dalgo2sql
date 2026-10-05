@@ -2,6 +2,7 @@ package dalgo2sql
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 
@@ -91,34 +92,30 @@ func TestBuildSingleRecordQuery_Map(t *testing.T) {
 		}
 	})
 
-	t.Run("non_string_key_panics", func(t *testing.T) {
-		defer func() {
-			if r := recover(); r == nil {
-				t.Errorf("expected panic for non-string map keys")
-			}
-		}()
+	t.Run("non_string_key_is_an_error", func(t *testing.T) {
 		data := map[int]any{1: "x"}
 		record := dalrecord.NewRecordWithData(dalrecord.NewIncompleteKey("users", reflect.String, nil), data)
-		_, _ = buildSingleRecordQuery(insertOperation, DbOptions{
+		q, err := buildSingleRecordQuery(insertOperation, DbOptions{
 			Recordsets: map[string]*Recordset{
 				"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID")}),
 			},
 		}, record)
+		if !errors.Is(err, dal.ErrNotSupported) || q.text != "" {
+			t.Errorf("= %+v, %v; want an error wrapping dal.ErrNotSupported and no statement", q, err)
+		}
 	})
 
-	t.Run("unsupported_kind_panics", func(t *testing.T) {
-		defer func() {
-			if r := recover(); r == nil {
-				t.Errorf("expected panic for unsupported data kind")
-			}
-		}()
+	t.Run("unsupported_kind_is_an_error", func(t *testing.T) {
 		data := 42
 		record := dalrecord.NewRecordWithData(dalrecord.NewIncompleteKey("users", reflect.String, nil), &data)
-		_, _ = buildSingleRecordQuery(insertOperation, DbOptions{
+		q, err := buildSingleRecordQuery(insertOperation, DbOptions{
 			Recordsets: map[string]*Recordset{
 				"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID")}),
 			},
 		}, record)
+		if !errors.Is(err, dal.ErrNotSupported) || q.text != "" {
+			t.Errorf("= %+v, %v; want an error wrapping dal.ErrNotSupported and no statement", q, err)
+		}
 	})
 }
 

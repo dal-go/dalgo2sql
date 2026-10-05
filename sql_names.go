@@ -227,11 +227,12 @@ func recordFieldNames(data any) (names []string) {
 }
 
 // checkRecordNames refuses a record whose collection, primary-key or field names
-// may not be written into SQL text. The statement builders refuse the same names
-// on their own; this runs first so that a write whose first statement is not the
-// one that carries the names (an existence check), and a batch of writes of which
-// an earlier record would be written before a later one is refused, send nothing
-// at all.
+// may not be written into SQL text, and one whose data is not a struct with exported
+// fields or a map with string keys (an error wrapping dal.ErrNotSupported). The
+// statement builders refuse the same names on their own; this runs first so that a
+// write whose first statement is not the one that carries the names (an existence
+// check), and a batch of writes of which an earlier record would be written before
+// a later one is refused, send nothing at all.
 func (o DbOptions) checkRecordNames(record dalrecord.Record) error {
 	key := record.Key()
 	if _, err := o.recordsetIdentifier(key); err != nil {
@@ -245,8 +246,15 @@ func (o DbOptions) checkRecordNames(record dalrecord.Record) error {
 	// The statement builders read the data the same way: Data() panics while the
 	// record's error is unset or set to a failure, and SetError(nil) clears both.
 	record.SetError(nil)
-	for _, name := range recordFieldNames(record.Data()) {
-		if _, err := o.sqlIdentifier(positionField, name); err != nil {
+	// Data a write cannot turn into columns is refused here too, so that it is
+	// before any statement: an ID generator checks for a taken ID, and an earlier
+	// record of a batch is written, before the statement builder sees the data.
+	fields, err := recordDataFields(getRecordsetName(key), record.Data())
+	if err != nil {
+		return err
+	}
+	for _, field := range fields {
+		if _, err := o.sqlIdentifier(positionField, field.name); err != nil {
 			return err
 		}
 	}
