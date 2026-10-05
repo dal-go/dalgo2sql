@@ -119,12 +119,12 @@ func (c *connectionRecorderConn) QueryContext(_ context.Context, text string, ar
 	if strings.HasPrefix(text, "WITH RECURSIVE") {
 		// The catalog knows one relation, Album(AlbumId integer NOT NULL primary key, Title text),
 		// and answers nothing for any other.
-		catalog := &connectionRecorderRows{recorder: c.recorder, columns: []string{"name", "attname", "data_type", "category", "type_oid", "type_elem", "attnotnull", "nondeterministic", "pk"}}
+		catalog := &connectionRecorderRows{recorder: c.recorder, columns: []string{"name", "attname", "data_type", "category", "type_oid", "type_elem", "attnotnull", "nondeterministic", "pk", "collation"}}
 		for _, arg := range args {
 			if arg.Value == `"Album"` {
 				catalog.rows = [][]driver.Value{
-					{`"Album"`, "AlbumId", "integer", "N", int64(23), int64(0), true, false, true},
-					{`"Album"`, "Title", "text", "S", int64(25), int64(0), false, false, false},
+					{`"Album"`, "AlbumId", "integer", "N", int64(23), int64(0), true, false, true, int64(0)},
+					{`"Album"`, "Title", "text", "S", int64(25), int64(0), false, false, false, int64(0)},
 				}
 			}
 		}

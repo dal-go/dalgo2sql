@@ -192,6 +192,18 @@ type typedDialect interface {
 	window(function string, args, partitionBy, orderBy []string) (string, error)
 }
 
+// typedColumnBinder is implemented by a dialect that binds a constant in the type of the
+// column the constant is compared with, where binding it by its own Go type (typedDialect.bind)
+// would make the comparison run in another type and miss a value that is stored. The compiler
+// asks it for the right operand of a comparison, and of an IN list, whose left operand is a
+// field whose facts are known.
+type typedColumnBinder interface {
+	// bindAgainst returns the marker and the argument that stand for value, which has
+	// passed typedKindOf, compared with column. ok is false when the column asks for nothing
+	// special, and the value is bound as bind binds it. The marker has the shape bind's has.
+	bindAgainst(value any, column typedColumnFact) (marker string, arg any, ok bool)
+}
+
 // typedSourceName names a table as a query spells it.
 type typedSourceName struct {
 	Schema string
@@ -226,6 +238,12 @@ type typedColumnFact struct {
 	// equality (citext, ICU nondeterministic collations). The compiler carries
 	// it for dialect helpers; it does not act on it.
 	NonDeterministicCollation bool
+	// Collation identifies the column's collation when it is not the database's default:
+	// the OID of its pg_collation row, and 0 for the default collation and for a type that
+	// has none. Two columns whose collations are both not the default and are not the same
+	// cannot be compared by the server, which cannot choose between them
+	// (typedCollationsConflict).
+	Collation int64
 	// NoJoinKey marks a type that must not key a join even against a column of the
 	// very same type: the engine has no equality operator for it (PostgreSQL json,
 	// xml, point), or compares it in a way DALgo does not mean (a box by area, an oid
@@ -242,20 +260,19 @@ type typedSourceFacts struct {
 	Columns []typedColumnFact
 }
 
-// primaryKeyColumn returns the column that is the whole of the source's primary key,
-// as the catalog stores its name. It reports false for a source whose primary key is
-// not exactly one column: none (a view, a table without one), or several. A record's
-// key is one value, so a composite key names no column.
-func (f typedSourceFacts) primaryKeyColumn() (typedColumnFact, bool) {
-	var key typedColumnFact
-	count := 0
-	for _, column := range f.Columns {
+// primaryKeyPosition returns the position, among the source's columns in table order, of the
+// column that is the whole of the source's primary key. It reports false for a source whose
+// primary key is not exactly one column: none (a view, a table without one), or several. A
+// record's key is one value, so a composite key names no column.
+func (f typedSourceFacts) primaryKeyPosition() (int, bool) {
+	position, count := -1, 0
+	for i, column := range f.Columns {
 		if column.PrimaryKey {
-			key = column
+			position = i
 			count++
 		}
 	}
-	return key, count == 1
+	return position, count == 1
 }
 
 // typedCatalogFacts is the compiler's whole knowledge of the database. The
@@ -313,12 +330,20 @@ func (f typedCatalogFacts) column(name typedSourceName, column string) (typedCol
 	return typedColumnFact{}, false
 }
 
+// typedCollationsConflict reports whether two columns have collations the server cannot
+// choose between when it compares them: each has one of its own, not the database's default
+// (which gives way to any other), and they are not the same. PostgreSQL refuses that
+// comparison with SQLSTATE 42P22 (indeterminate collation), whatever the types' category says.
+func typedCollationsConflict(a, b typedColumnFact) bool {
+	return a.Collation != 0 && b.Collation != 0 && a.Collation != b.Collation
+}
+
 // typedJoinKeysComparable reports whether a join may equate two columns on a
 // statically typed engine: they share a scalar category, or they are the same
 // named type. A column of unknown type is comparable only to the same type. A
 // column whose type cannot key a join (NoJoinKey) is comparable to nothing.
 func typedJoinKeysComparable(a, b typedColumnFact) bool {
-	if a.NoJoinKey || b.NoJoinKey {
+	if a.NoJoinKey || b.NoJoinKey || typedCollationsConflict(a, b) {
 		return false
 	}
 	if a.Category == b.Category && a.Category != typedTypeUnknown && a.Category != typedTypeOther {

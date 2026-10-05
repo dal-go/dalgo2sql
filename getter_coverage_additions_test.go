@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -27,6 +28,9 @@ func (m mockRecord) Key() *dalrecord.Key             { return m.key }
 func (m mockRecord) Data() any                       { return m.data }
 func (m mockRecord) SetError(error) dalrecord.Record { return m }
 
+// A record with no data is refused by checkReadTarget before a read reaches getSelectFields;
+// called on its own, it still panics. The two other inputs that used to panic here, a record
+// with no key and a key with no collection, are errors now (TestGetSelectFields_RefusesAKeyThatNamesNoRecordset).
 func TestGetter_GetSelectFields_Panics(t *testing.T) {
 	t.Run("nil_data", func(t *testing.T) {
 		defer func() {
@@ -36,26 +40,6 @@ func TestGetter_GetSelectFields_Panics(t *testing.T) {
 		}()
 		rec := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "u1"), nil)
 		_, _ = getSelectFields(false, DbOptions{}, rec)
-	})
-
-	t.Run("nil_key_with_include_pk", func(t *testing.T) {
-		defer func() {
-			if r := recover(); r == nil {
-				t.Fatal("expected panic on nil key")
-			}
-		}()
-		rec := mockRecord{key: nil, data: &struct{ Name string }{}}
-		_, _ = getSelectFields(true, DbOptions{}, rec)
-	})
-
-	t.Run("empty_collection_with_include_pk", func(t *testing.T) {
-		defer func() {
-			if r := recover(); r == nil {
-				t.Fatal("expected panic on empty collection")
-			}
-		}()
-		rec := mockRecord{key: &dalrecord.Key{}, data: &struct{ Name string }{}}
-		_, _ = getSelectFields(true, DbOptions{}, rec)
 	})
 }
 
@@ -67,17 +51,19 @@ func TestGetter_GetSingle_Additional(t *testing.T) {
 	}
 	defer closeDatabase(t, sdb)
 
+	// A record whose data has no field selects the constant 1, and has no field to take it: the
+	// read says so. A pointer to a scalar used to take the 1, and is refused before the
+	// statement now (TestKeyReads_OfATargetThatCannotBeReadIntoAreErrorsBeforeAnyStatement).
 	t.Run("fieldsStr_empty_becomes_1", func(t *testing.T) {
-		var val int
-		rec := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "u1"), &val)
+		rec := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "u1"), &struct{}{})
 		smock.ExpectQuery("SELECT 1 FROM users WHERE ID = \\?").WithArgs("u1").WillReturnRows(sqlmock.NewRows([]string{"1"}).AddRow(1))
 		opts := DbOptions{Recordsets: map[string]*Recordset{"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID")})}}
 		err := getSingle(ctx, opts, rec, sdb.Query)
-		if err != nil {
-			t.Fatalf("unexpected err: %v", err)
+		if err == nil || !strings.Contains(err.Error(), `column "1": no corresponding field`) {
+			t.Fatalf("err = %v, want the column 1 to have no field", err)
 		}
-		if val != 1 {
-			t.Fatalf("expected val 1, got %d", val)
+		if err := smock.ExpectationsWereMet(); err != nil {
+			t.Fatal(err)
 		}
 	})
 
@@ -312,7 +298,7 @@ func TestGetter_ScanRowIntoMap_Errors(t *testing.T) {
 		_ = r.Close()
 
 		m := make(map[string]any)
-		err := scanRowIntoMap(r, m, false)
+		err := scanRowIntoMapWithOptions(r, m, false, DbOptions{})
 		if err == nil {
 			t.Fatal("expected error on closed rows")
 		}

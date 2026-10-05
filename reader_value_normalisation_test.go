@@ -147,11 +147,11 @@ func TestRecordsetReader_NumericStringBecomesFloat64(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		value any
-		want  float64
+		want  any
 	}{
 		{"string", "13.86", 13.86},
 		{"bytes", []byte("13.86"), 13.86},
-		{"nil", nil, 0},
+		{"nil", nil, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			db, _ := numericMock(t, "NUMERIC", float64(0), tc.value)
@@ -169,7 +169,7 @@ func TestRecordsetReader_NumericStringBecomesFloat64(t *testing.T) {
 				t.Fatal(err)
 			}
 			if got != tc.want {
-				t.Errorf("got %T(%v), want float64(%v)", got, got, tc.want)
+				t.Errorf("got %T(%v), want %T(%v)", got, got, tc.want, tc.want)
 			}
 		})
 	}
@@ -342,7 +342,8 @@ func openSQLite(t *testing.T, script string) *sql.DB {
 	return raw
 }
 
-// SQLite recordset reader results are unchanged: numeric-affinity and decimal
+// SQLite recordset reader results are unchanged, but for a NULL, which is nil
+// (it was the zero value of the column's type): numeric-affinity and decimal
 // columns already yield numbers, JSON columns yield text, and BLOBs stay BLOBs.
 // The records reader changes only for a bare NUMERIC column holding a BLOB of
 // decimal text, or the texts NaN, Infinity and -Infinity.
@@ -365,11 +366,11 @@ func TestReaders_SQLiteResultsUnchanged(t *testing.T) {
 		records []any // records reader
 		recset  []any // recordset reader
 	}{
-		{"amount", []any{13.86, int64(7), nil}, []any{13.86, float64(7), float64(0)}},
-		{"price", []any{13.86, int64(7), nil}, []any{13.86, float64(7), float64(0)}},
-		{"dec", []any{13.86, int64(7), nil}, []any{13.86, float64(7), float64(0)}},
-		{"doc", []any{`{"a":1}`, `[]`, nil}, []any{`{"a":1}`, `[]`, ""}},
-		{"docb", []any{`{"b":2}`, `[]`, nil}, []any{`{"b":2}`, `[]`, ""}},
+		{"amount", []any{13.86, int64(7), nil}, []any{13.86, float64(7), nil}},
+		{"price", []any{13.86, int64(7), nil}, []any{13.86, float64(7), nil}},
+		{"dec", []any{13.86, int64(7), nil}, []any{13.86, float64(7), nil}},
+		{"doc", []any{`{"a":1}`, `[]`, nil}, []any{`{"a":1}`, `[]`, nil}},
+		{"docb", []any{`{"b":2}`, `[]`, nil}, []any{`{"b":2}`, `[]`, nil}},
 	} {
 		t.Run(tc.column, func(t *testing.T) {
 			text := "SELECT " + tc.column + " FROM prices ORDER BY id"

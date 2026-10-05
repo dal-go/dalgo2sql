@@ -1010,6 +1010,9 @@ func (c *typedCompiler) joinOn(conditions []dal.Condition, visible map[string]ty
 			if leftColumn.NoJoinKey || rightColumn.NoJoinKey {
 				return "", typedUnsupported("%s: join_plan: key types %q and %q cannot be compared in a JOIN", pair, leftColumn.DataType, rightColumn.DataType)
 			}
+			if typedCollationsConflict(leftColumn, rightColumn) {
+				return "", typedUnsupported("%s: join_plan: the keys have different collations of their own, so the server cannot compare them", pair)
+			}
 			return "", typedUnsupported("%s: join_plan: key types differ (%q against %q)", pair, leftColumn.DataType, rightColumn.DataType)
 		}
 		parts[i] = leftSQL + " = " + rightSQL
@@ -1404,11 +1407,45 @@ func (c *typedCompiler) comparison(comparison dal.Comparison) (string, []any, er
 	if constant, isConstant := comparison.Right.(dal.Constant); isConstant && constant.Value == nil && comparison.Operator == dal.Equal {
 		return left + " IS NULL", args, nil
 	}
-	right, rightArgs, err := c.expr(comparison.Right)
+	right, rightArgs, err := c.comparedWith(comparison.Left, comparison.Right)
 	if err != nil {
 		return "", nil, err
 	}
 	return left + " " + operator + " " + right, slices.Concat(args, rightArgs), nil
+}
+
+// comparedWith renders the right operand of a comparison with left. A constant compared with a
+// field is bound in the type of the field's column when the dialect asks for it
+// (typedColumnBinder): a float compared with a PostgreSQL real is bound as a real, so that the
+// comparison runs in the column's own type, where a number is exact, and finds the value 0.1 the
+// column stores. Anything else is rendered as it is anywhere.
+func (c *typedCompiler) comparedWith(left, right dal.Expression) (string, []any, error) {
+	constant, isConstant := right.(dal.Constant)
+	field, isField := left.(dal.FieldRef)
+	if !isConstant || !isField {
+		return c.expr(right)
+	}
+	return c.bindAgainst(field, constant.Value)
+}
+
+// bindAgainst binds value for a comparison with field: see comparedWith.
+func (c *typedCompiler) bindAgainst(field dal.FieldRef, value any) (string, []any, error) {
+	binder, isBinder := c.dialect.(typedColumnBinder)
+	column, _, known := c.columnFact(field, c.sources)
+	if !isBinder || !known {
+		return c.bind(value)
+	}
+	if _, err := typedKindOf(value); err != nil {
+		return "", nil, err
+	}
+	marker, arg, special := binder.bindAgainst(value, column)
+	if !special {
+		return c.bind(value)
+	}
+	if err := c.checkFragment(marker, 1); err != nil {
+		return "", nil, err
+	}
+	return marker, []any{arg}, nil
 }
 
 // membership renders IN and NOT IN. The engine's own semantics are the right
@@ -1436,8 +1473,9 @@ func (c *typedCompiler) membership(left string, leftArgs []any, comparison dal.C
 	}
 	markers := make([]string, len(values))
 	args := slices.Clone(leftArgs)
+	field, isField := comparison.Left.(dal.FieldRef)
 	for i, value := range values {
-		marker, valueArgs, err := c.bind(value)
+		marker, valueArgs, err := c.bindMember(field, isField, value)
 		if err != nil {
 			return "", nil, fmt.Errorf("IN value %d: %w", i, err)
 		}
@@ -1449,6 +1487,15 @@ func (c *typedCompiler) membership(left string, leftArgs []any, comparison dal.C
 		keyword = " NOT IN ("
 	}
 	return left + keyword + strings.Join(markers, ", ") + ")", args, nil
+}
+
+// bindMember binds one value of an IN list: as a constant compared with the field on the left,
+// when the left is a field.
+func (c *typedCompiler) bindMember(field dal.FieldRef, isField bool, value any) (string, []any, error) {
+	if !isField {
+		return c.bind(value)
+	}
+	return c.bindAgainst(field, value)
 }
 
 func typedArrayValues(value any) ([]any, error) {

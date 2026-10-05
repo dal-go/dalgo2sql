@@ -47,8 +47,8 @@ func (t transaction) Select(ctx context.Context, query dal.Query) (dal.Reader, e
 func (t transaction) ExecuteQueryToRecordsReader(ctx context.Context, query dal.Query) (dal.RecordsReader, error) {
 	reader, err := getRecordsReaderWithOptions(ctx, query, t.tx.QueryContext, t.sqlOptions)
 	if err != nil {
-		// A literal nil: returning the typed nil pointer would make a non-nil interface
-		// whose Close panics.
+		// A literal nil, not the reader the failed read allocated: it holds no rows, and a
+		// caller who tests the reader instead of the error must find none.
 		return nil, err
 	}
 	return reader, nil

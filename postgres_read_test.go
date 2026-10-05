@@ -19,10 +19,10 @@ import (
 func postgresReadCatalogRows(relation string, names ...string) *sqlmock.Rows {
 	rows := sqlmock.NewRows(postgresCatalogColumns)
 	types := map[string][]driver.Value{
-		"albumid": {"integer", "N", int64(23), int64(0), true, false, false},
-		"title":   {"text", "S", int64(25), int64(0), false, false, false},
-		"secret":  {"text", "S", int64(25), int64(0), false, false, false},
-		"total":   {"numeric", "N", int64(1700), int64(0), false, false, false},
+		"albumid": {"integer", "N", int64(23), int64(0), true, false, false, int64(0)},
+		"title":   {"text", "S", int64(25), int64(0), false, false, false, int64(0)},
+		"secret":  {"text", "S", int64(25), int64(0), false, false, false, int64(0)},
+		"total":   {"numeric", "N", int64(1700), int64(0), false, false, false, int64(0)},
 	}
 	for _, name := range names {
 		rows.AddRow(append([]driver.Value{relation, name}, types[strings.ToLower(name)]...)...)
@@ -254,8 +254,8 @@ func TestPostgresRecordsReaderKeysRecordsByTheFoldedPrimaryKey(t *testing.T) {
 	ctx := context.Background()
 	catalog := func(relation string) *sqlmock.Rows {
 		return sqlmock.NewRows(postgresCatalogColumns).
-			AddRow(relation, "id", "integer", "N", int64(23), int64(0), true, false, false).
-			AddRow(relation, "title", "text", "S", int64(25), int64(0), false, false, false)
+			AddRow(relation, "id", "integer", "N", int64(23), int64(0), true, false, false, int64(0)).
+			AddRow(relation, "title", "text", "S", int64(25), int64(0), false, false, false, int64(0))
 	}
 	for _, tc := range []struct {
 		name       string
@@ -348,9 +348,11 @@ func TestSelectsIdentityFieldFoldsBothSides(t *testing.T) {
 		{"a wildcard that excludes it in another case does not return it", []dal.Column{{Wildcard: &dal.WildcardProjection{Exclude: []string{"Id"}}}}, "ID", fold, false},
 		{"a wildcard that excludes it in another case, compared as it is", []dal.Column{{Wildcard: &dal.WildcardProjection{Exclude: []string{"Id"}}}}, "ID", nil, true},
 		{"a mask excludes it", []dal.Column{{Wildcard: &dal.WildcardProjection{Exclude: []string{"I*"}}}}, "ID", fold, false},
+		{"a field of the base in another case", []dal.Column{{Expression: dal.NewFieldRef("A", "Id")}}, "ID", fold, true},
+		{"a field of the base in another case, compared as it is", []dal.Column{{Expression: dal.NewFieldRef("A", "id")}}, "id", nil, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := selectsIdentityField(tc.columns, tc.field, tc.fold); got != tc.want {
+			if got := selectsIdentityField(tc.columns, tc.field, "a", tc.fold); got != tc.want {
 				t.Fatalf("selectsIdentityField() = %v, want %v", got, tc.want)
 			}
 		})

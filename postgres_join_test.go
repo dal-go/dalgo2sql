@@ -81,17 +81,17 @@ func expectPostgresJoinCatalog(mock sqlmock.Sqlmock, asked ...string) {
 	rows := sqlmock.NewRows(postgresCatalogColumns)
 	columns := map[string][][]driver.Value{
 		`"Album"`: {
-			{"AlbumId", "integer", "N", int64(23), int64(0), true, false, false},
-			{"ArtistId", "integer", "N", int64(23), int64(0), true, false, false},
-			{"Title", "text", "S", int64(25), int64(0), false, false, false},
-			{"Doc", "json", "U", int64(114), int64(0), false, false, false},
-			{"Ref", "oid", "N", int64(26), int64(0), false, false, false},
+			{"AlbumId", "integer", "N", int64(23), int64(0), true, false, false, int64(0)},
+			{"ArtistId", "integer", "N", int64(23), int64(0), true, false, false, int64(0)},
+			{"Title", "text", "S", int64(25), int64(0), false, false, false, int64(0)},
+			{"Doc", "json", "U", int64(114), int64(0), false, false, false, int64(0)},
+			{"Ref", "oid", "N", int64(26), int64(0), false, false, false, int64(0)},
 		},
 		`"Artist"`: {
-			{"ArtistId", "integer", "N", int64(23), int64(0), true, false, false},
-			{"Name", "text", "S", int64(25), int64(0), false, false, false},
-			{"Doc", "json", "U", int64(114), int64(0), false, false, false},
-			{"Ref", "oid", "N", int64(26), int64(0), false, false, false},
+			{"ArtistId", "integer", "N", int64(23), int64(0), true, false, false, int64(0)},
+			{"Name", "text", "S", int64(25), int64(0), false, false, false, int64(0)},
+			{"Doc", "json", "U", int64(114), int64(0), false, false, false, int64(0)},
+			{"Ref", "oid", "N", int64(26), int64(0), false, false, false, int64(0)},
 		},
 	}
 	args := make([]driver.Value, len(asked))
@@ -314,8 +314,8 @@ func TestPostgresJoinFields(t *testing.T) {
 			t.Run("a column the dialect cannot write under its own name is listed as the catalog has it", func(t *testing.T) {
 				got, err := run(t, inTransaction, DbOptions{StructuredQueryDialect: "postgres", IdentifierCase: IdentifierCaseFoldLower}, album, func(mock sqlmock.Sqlmock) {
 					mock.ExpectQuery(postgresCatalogQuery(1)).WithArgs(`"album"`).WillReturnRows(sqlmock.NewRows(postgresCatalogColumns).
-						AddRow(`"album"`, "albumid", "integer", "N", int64(23), int64(0), true, false, false).
-						AddRow(`"album"`, "Title", "text", "S", int64(25), int64(0), false, false, false))
+						AddRow(`"album"`, "albumid", "integer", "N", int64(23), int64(0), true, false, false, int64(0)).
+						AddRow(`"album"`, "Title", "text", "S", int64(25), int64(0), false, false, false, int64(0)))
 				})
 				if want := []string{"albumid", "Title"}; err != nil || !reflect.DeepEqual(got, want) {
 					t.Fatalf("JoinFields() = %v, %v; want %v", got, err, want)

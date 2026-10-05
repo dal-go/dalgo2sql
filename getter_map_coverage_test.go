@@ -31,8 +31,8 @@ func TestIsMapData(t *testing.T) {
 	}
 }
 
-// TestMapDataGetIntoNilMapPointer covers scanRowIntoMap initializing a nil map
-// when the record data is a *map[string]any pointing to a nil map.
+// TestMapDataGetIntoNilMapPointer covers the read into a *map[string]any that points to a nil
+// map: checkReadTarget makes the map before the statement.
 func TestMapDataGetIntoNilMapPointer(t *testing.T) {
 	ctx := context.Background()
 
@@ -70,7 +70,7 @@ func TestMapDataGetIntoNilMapPointer(t *testing.T) {
 }
 
 // TestMapDataGetBlobAsString covers the []byte -> string conversion in
-// scanRowIntoMap: BLOB columns are returned as []byte by the driver and should
+// scanRowIntoMapWithOptions: BLOB columns are returned as []byte by the driver and should
 // be converted to a string for usability.
 func TestMapDataGetBlobAsString(t *testing.T) {
 	ctx := context.Background()

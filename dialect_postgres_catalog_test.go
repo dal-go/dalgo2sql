@@ -12,7 +12,7 @@ import (
 	"github.com/dal-go/dalgo/dal"
 )
 
-var postgresCatalogColumns = []string{"name", "attname", "data_type", "category", "type_oid", "type_elem", "attnotnull", "nondeterministic", "pk"}
+var postgresCatalogColumns = []string{"name", "attname", "data_type", "category", "type_oid", "type_elem", "attnotnull", "nondeterministic", "pk", "collation"}
 
 // newPostgresCatalogMock returns a database that answers only what the test
 // expects, matching the query text exactly.
@@ -88,7 +88,7 @@ func TestPostgresCatalogQueryResolvesADomainToItsBaseType(t *testing.T) {
 	}
 }
 
-// TestPostgresCatalogQueryAsksForThePrimaryKey: the last column says whether the column is
+// TestPostgresCatalogQueryAsksForThePrimaryKey: the column before the last says whether the column is
 // one of those the PRIMARY KEY constraint of its relation constrains, and nothing else: not
 // a column that a unique index holds, nor one that only the index behind the key carries
 // (pg_index.indkey lists the INCLUDE columns of the index too, since PostgreSQL 11, so a
@@ -98,7 +98,7 @@ func TestPostgresCatalogQueryAsksForThePrimaryKey(t *testing.T) {
 	query := postgresCatalogQuery(1)
 	for _, fragment := range []string{
 		"EXISTS (SELECT 1 FROM pg_catalog.pg_constraint k WHERE k.conrelid = r.oid AND k.contype = 'p' AND a.attnum = ANY (k.conkey)) AS pk",
-		"), c.pk FROM c JOIN d",
+		"), c.pk, CASE WHEN c.attcollation = 100 THEN 0 ELSE c.attcollation::bigint END FROM c JOIN d",
 	} {
 		if !strings.Contains(query, fragment) {
 			t.Fatalf("catalog query does not contain %q:\n%s", fragment, query)
@@ -109,8 +109,30 @@ func TestPostgresCatalogQueryAsksForThePrimaryKey(t *testing.T) {
 			t.Errorf("the catalog query reads %s, which lists the INCLUDE columns of the index behind the key as well as its key columns:\n%s", index, query)
 		}
 	}
-	if len(postgresCatalogColumns) != 9 || postgresCatalogColumns[8] != "pk" {
-		t.Fatalf("the fixtures name the columns of the answer %v, want the primary-key flag last", postgresCatalogColumns)
+	if len(postgresCatalogColumns) != 10 || postgresCatalogColumns[8] != "pk" || postgresCatalogColumns[9] != "collation" {
+		t.Fatalf("the fixtures name the columns of the answer %v, want the primary-key flag and the collation last", postgresCatalogColumns)
+	}
+}
+
+// The last column of the answer is the OID of the column's collation when it is not the
+// database's default (OID 100), and 0 for the default and for a type with no collation.
+func TestPostgresCatalogFactsCarryTheCollationOfAColumn(t *testing.T) {
+	ctx := context.Background()
+	execute, mock := newPostgresCatalogMock(t)
+	mock.ExpectQuery(postgresCatalogQuery(1)).WithArgs(`"Album"`).WillReturnRows(sqlmock.NewRows(postgresCatalogColumns).
+		AddRow(`"Album"`, "Id", "integer", "N", int64(23), int64(0), true, false, true, int64(0)).
+		AddRow(`"Album"`, "Title", "text", "S", int64(25), int64(0), false, false, false, int64(0)).
+		AddRow(`"Album"`, "Name", "text", "S", int64(25), int64(0), false, false, false, int64(12345)))
+	facts, err := newPostgresDialect(postgresExact).catalogFacts(ctx, execute, []typedSourceName{{Name: "Album"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []int64
+	for _, column := range facts.Sources[typedSourceName{Name: "Album"}].Columns {
+		got = append(got, column.Collation)
+	}
+	if want := []int64{0, 0, 12345}; !reflect.DeepEqual(got, want) {
+		t.Errorf("collations = %v, want %v", got, want)
 	}
 }
 
@@ -120,11 +142,11 @@ func TestPostgresCatalogFactsReadsOneQueryForEverySource(t *testing.T) {
 	mock.ExpectQuery(postgresCatalogQuery(2)).
 		WithArgs(`"Album"`, `"sales"."Artist"`).
 		WillReturnRows(sqlmock.NewRows(postgresCatalogColumns).
-			AddRow(`"Album"`, "AlbumId", "integer", "N", int64(23), int64(0), true, false, true).
-			AddRow(`"Album"`, "Title", "text", "S", int64(25), int64(0), true, false, false).
-			AddRow(`"Album"`, "Cover", "bytea", "U", int64(17), int64(0), false, false, false).
-			AddRow(`"sales"."Artist"`, "ArtistId", "bigint", "N", int64(20), int64(0), true, false, true).
-			AddRow(`"sales"."Artist"`, "Name", "citext", "S", int64(16400), int64(0), false, true, false))
+			AddRow(`"Album"`, "AlbumId", "integer", "N", int64(23), int64(0), true, false, true, int64(0)).
+			AddRow(`"Album"`, "Title", "text", "S", int64(25), int64(0), true, false, false, int64(0)).
+			AddRow(`"Album"`, "Cover", "bytea", "U", int64(17), int64(0), false, false, false, int64(0)).
+			AddRow(`"sales"."Artist"`, "ArtistId", "bigint", "N", int64(20), int64(0), true, false, true, int64(0)).
+			AddRow(`"sales"."Artist"`, "Name", "citext", "S", int64(16400), int64(0), false, true, false, int64(0)))
 	facts, err := newPostgresDialect(postgresExact).catalogFacts(ctx, execute, []typedSourceName{{Name: "Album"}, {Schema: "sales", Name: "Artist"}})
 	if err != nil {
 		t.Fatal(err)
@@ -170,7 +192,7 @@ func TestPostgresCatalogFactsAreKeyedByTheQuerysOwnSpelling(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			execute, mock := newPostgresCatalogMock(t)
 			mock.ExpectQuery(postgresCatalogQuery(1)).WithArgs(c.wantText).
-				WillReturnRows(sqlmock.NewRows(postgresCatalogColumns).AddRow(c.wantText, "id", "integer", "N", int64(23), int64(0), true, false, false))
+				WillReturnRows(sqlmock.NewRows(postgresCatalogColumns).AddRow(c.wantText, "id", "integer", "N", int64(23), int64(0), true, false, false, int64(0)))
 			facts, err := newPostgresDialect(c.mode).catalogFacts(context.Background(), execute, []typedSourceName{c.source})
 			if err != nil {
 				t.Fatal(err)
@@ -189,7 +211,7 @@ func TestPostgresCatalogFactsAreKeyedByTheQuerysOwnSpelling(t *testing.T) {
 func TestPostgresCatalogFactsAsksOnceForSpellingsThatWriteTheSameName(t *testing.T) {
 	execute, mock := newPostgresCatalogMock(t)
 	mock.ExpectQuery(postgresCatalogQuery(1)).WithArgs(`"album"`).
-		WillReturnRows(sqlmock.NewRows(postgresCatalogColumns).AddRow(`"album"`, "id", "integer", "N", int64(23), int64(0), false, false, false))
+		WillReturnRows(sqlmock.NewRows(postgresCatalogColumns).AddRow(`"album"`, "id", "integer", "N", int64(23), int64(0), false, false, false, int64(0)))
 	facts, err := newPostgresDialect(postgresFoldLower).catalogFacts(context.Background(), execute, []typedSourceName{{Name: "Album"}, {Name: "ALBUM"}, {Name: "album"}})
 	if err != nil {
 		t.Fatal(err)
@@ -205,7 +227,7 @@ func TestPostgresCatalogFactsAsksOnceForSpellingsThatWriteTheSameName(t *testing
 func TestPostgresCatalogFactsLeavesOutWhatTheServerDoesNotResolve(t *testing.T) {
 	execute, mock := newPostgresCatalogMock(t)
 	mock.ExpectQuery(postgresCatalogQuery(2)).WithArgs(`"Album"`, `"Nowhere"`).
-		WillReturnRows(sqlmock.NewRows(postgresCatalogColumns).AddRow(`"Album"`, "AlbumId", "integer", "N", int64(23), int64(0), true, false, false))
+		WillReturnRows(sqlmock.NewRows(postgresCatalogColumns).AddRow(`"Album"`, "AlbumId", "integer", "N", int64(23), int64(0), true, false, false, int64(0)))
 	facts, err := newPostgresDialect(postgresExact).catalogFacts(context.Background(), execute, []typedSourceName{{Name: "Album"}, {Name: "Nowhere"}})
 	if err != nil {
 		t.Fatal(err)
@@ -279,7 +301,7 @@ func TestPostgresCatalogFactsRefusesANameTheDialectRefusesBeforeAnyQuery(t *test
 func TestPostgresCatalogFactsReportsWhatGoesWrongWithTheQuery(t *testing.T) {
 	boom := errors.New("boom")
 	badRow := func() *sqlmock.Rows {
-		return sqlmock.NewRows(postgresCatalogColumns).AddRow(`"Album"`, "AlbumId", "integer", "N", int64(23), int64(0), "not a bool", false, false)
+		return sqlmock.NewRows(postgresCatalogColumns).AddRow(`"Album"`, "AlbumId", "integer", "N", int64(23), int64(0), "not a bool", false, false, int64(0))
 	}
 	cases := []struct {
 		name     string
@@ -291,11 +313,11 @@ func TestPostgresCatalogFactsReportsWhatGoesWrongWithTheQuery(t *testing.T) {
 		{"a row does not scan", func(q *sqlmock.ExpectedQuery) { q.WillReturnRows(badRow()) }, "catalog facts", nil},
 		{"the rows fail midway", func(q *sqlmock.ExpectedQuery) {
 			q.WillReturnRows(sqlmock.NewRows(postgresCatalogColumns).
-				AddRow(`"Album"`, "AlbumId", "integer", "N", int64(23), int64(0), true, false, false).
+				AddRow(`"Album"`, "AlbumId", "integer", "N", int64(23), int64(0), true, false, false, int64(0)).
 				RowError(0, boom))
 		}, "catalog facts", boom},
 		{"the catalog answers for a relation nobody asked for", func(q *sqlmock.ExpectedQuery) {
-			q.WillReturnRows(sqlmock.NewRows(postgresCatalogColumns).AddRow(`"Other"`, "id", "integer", "N", int64(23), int64(0), true, false, false))
+			q.WillReturnRows(sqlmock.NewRows(postgresCatalogColumns).AddRow(`"Other"`, "id", "integer", "N", int64(23), int64(0), true, false, false, int64(0)))
 		}, "not asked for", nil},
 	}
 	for _, c := range cases {
@@ -357,7 +379,7 @@ func TestPostgresCatalogFactsFlagsTheTypesThatCannotKeyAJoin(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			execute, mock := newPostgresCatalogMock(t)
 			mock.ExpectQuery(postgresCatalogQuery(1)).WithArgs(`"T"`).
-				WillReturnRows(sqlmock.NewRows(postgresCatalogColumns).AddRow(`"T"`, "k", c.dataType, c.category, c.oid, c.elem, true, false, false))
+				WillReturnRows(sqlmock.NewRows(postgresCatalogColumns).AddRow(`"T"`, "k", c.dataType, c.category, c.oid, c.elem, true, false, false, int64(0)))
 			facts, err := newPostgresDialect(postgresExact).catalogFacts(context.Background(), execute, []typedSourceName{{Name: "T"}})
 			if err != nil {
 				t.Fatal(err)
@@ -407,12 +429,12 @@ func TestPostgresTypeCategory(t *testing.T) {
 func TestPostgresCatalogFactsFeedTheCompiler(t *testing.T) {
 	answer := func(mock sqlmock.Sqlmock, first, second string) {
 		rows := sqlmock.NewRows(postgresCatalogColumns).
-			AddRow(`"Album"`, "AlbumId", "integer", "N", int64(23), int64(0), true, false, false).
-			AddRow(`"Album"`, "Title", "text", "S", int64(25), int64(0), true, false, false).
-			AddRow(`"Album"`, "ArtistId", "integer", "N", int64(23), int64(0), true, false, false).
-			AddRow(`"Album"`, "Secret", "text", "S", int64(25), int64(0), false, false, false).
-			AddRow(`"Artist"`, "ArtistId", "integer", "N", int64(23), int64(0), true, false, false).
-			AddRow(`"Artist"`, "Name", "text", "S", int64(25), int64(0), false, false, false)
+			AddRow(`"Album"`, "AlbumId", "integer", "N", int64(23), int64(0), true, false, false, int64(0)).
+			AddRow(`"Album"`, "Title", "text", "S", int64(25), int64(0), true, false, false, int64(0)).
+			AddRow(`"Album"`, "ArtistId", "integer", "N", int64(23), int64(0), true, false, false, int64(0)).
+			AddRow(`"Album"`, "Secret", "text", "S", int64(25), int64(0), false, false, false, int64(0)).
+			AddRow(`"Artist"`, "ArtistId", "integer", "N", int64(23), int64(0), true, false, false, int64(0)).
+			AddRow(`"Artist"`, "Name", "text", "S", int64(25), int64(0), false, false, false, int64(0))
 		mock.ExpectQuery(postgresCatalogQuery(2)).WithArgs(first, second).WillReturnRows(rows)
 	}
 	run := func(t *testing.T, q dal.StructuredQuery) (string, []any, error) {
@@ -435,9 +457,9 @@ func TestPostgresCatalogFactsFeedTheCompiler(t *testing.T) {
 		q := typedTestFrom("Album", "").NewQuery().OrderBy(dal.Ascending(typedTestField("AlbumId"))).SelectColumns(dal.AllColumnsExcept("Secret"))
 		execute, mock := newPostgresCatalogMock(t)
 		mock.ExpectQuery(postgresCatalogQuery(1)).WithArgs(`"Album"`).WillReturnRows(sqlmock.NewRows(postgresCatalogColumns).
-			AddRow(`"Album"`, "AlbumId", "integer", "N", int64(23), int64(0), true, false, false).
-			AddRow(`"Album"`, "Title", "text", "S", int64(25), int64(0), true, false, false).
-			AddRow(`"Album"`, "Secret", "text", "S", int64(25), int64(0), false, false, false))
+			AddRow(`"Album"`, "AlbumId", "integer", "N", int64(23), int64(0), true, false, false, int64(0)).
+			AddRow(`"Album"`, "Title", "text", "S", int64(25), int64(0), true, false, false, int64(0)).
+			AddRow(`"Album"`, "Secret", "text", "S", int64(25), int64(0), false, false, false, int64(0)))
 		dialect := newPostgresDialect(postgresExact)
 		facts, err := dialect.catalogFacts(context.Background(), execute, typedQuerySources(q.From()))
 		if err != nil {

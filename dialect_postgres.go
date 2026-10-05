@@ -140,12 +140,15 @@ var postgresNoJoinKeyOIDs = map[int64]bool{
 // (TestPostgresDialectFoldIsTheFoldQuoteIdentApplies pins it). A column of the
 // relation's PRIMARY KEY constraint is marked PrimaryKey: a view, a materialized view and
 // a foreign table have none, and the records reader keys a record read from a source
-// nobody declared by the key when it is one column (typedSourceFacts.primaryKeyColumn).
+// nobody declared by the key when it is one column (typedSourceFacts.primaryKeyPosition).
 type postgresDialect struct {
 	mode postgresIdentifierMode
 }
 
-var _ typedDialect = postgresDialect{}
+var (
+	_ typedDialect      = postgresDialect{}
+	_ typedColumnBinder = postgresDialect{}
+)
 
 func newPostgresDialect(mode postgresIdentifierMode) postgresDialect {
 	return postgresDialect{mode: mode}
@@ -219,6 +222,27 @@ func (postgresDialect) bind(value any) (string, any, error) {
 	// the marker from the place it stands in.
 	return "?", value, nil
 }
+
+// bindAgainst binds a float compared with a column that is a real (float4) as ?::real, from its
+// decimal text, so that the comparison runs in the column's own type: a real stores 0.1 as the
+// nearest float4, and compared as a numeric it is not the number 0.1, so the equality finds
+// nothing. A column of any other type, and a constant that is not a float, are bound as bind
+// binds them, and so is a finite float that a real cannot hold (past its range, or too small for
+// a normal float4), which the server would refuse as out of range where a numeric holds it.
+func (postgresDialect) bindAgainst(value any, column typedColumnFact) (string, any, bool) {
+	if kind, _ := typedKindOf(value); kind != typedValueFloat || column.DataType != "real" {
+		return "", nil, false
+	}
+	v := reflect.ValueOf(value)
+	if magnitude := math.Abs(v.Float()); !math.IsInf(magnitude, 0) && !math.IsNaN(magnitude) && magnitude != 0 &&
+		(magnitude > math.MaxFloat32 || magnitude < postgresSmallestNormalReal) {
+		return "", nil, false
+	}
+	return "?::real", postgresNumericText(v.Float(), v.Type().Bits()), true
+}
+
+// postgresSmallestNormalReal is the smallest positive normal float4, 2^-126.
+const postgresSmallestNormalReal = 1.17549435082228750796873653722224568e-38
 
 // postgresNumericText is the shortest decimal text that reads back as the same
 // float of the given size (32 or 64 bits), in the plain form numeric accepts.
@@ -330,7 +354,10 @@ func (postgresDialect) window(string, []string, []string, []string) (string, err
 // is one of those the relation's PRIMARY KEY constraint constrains (pg_constraint with
 // contype 'p', whose conkey lists the key columns only, which a view, a materialized view
 // and a foreign table never have, and which a unique index is not): a record read from
-// a source nobody declared is keyed by it. The index behind the key is not asked:
+// a source nobody declared is keyed by it. The very last column, collation, is the OID of the
+// column's collation when it is not the database's default (OID 100) and 0 otherwise, which a
+// join needs: the server refuses to compare two columns whose collations are different and
+// both not the default (SQLSTATE 42P22). The index behind the key is not asked:
 // pg_index.indkey lists the INCLUDE columns of the index as well, since PostgreSQL 11, so
 // a key declared PRIMARY KEY (id) INCLUDE (payload) would show two columns.
 //
@@ -349,7 +376,8 @@ const (
 		`UNION ALL ` +
 		`SELECT d.start, p.oid, p.typtype, p.typbasetype FROM d JOIN pg_catalog.pg_type p ON d.typtype = 'd' AND p.oid = d.typbasetype) ` +
 		`SELECT c.name, c.attname::text, pg_catalog.format_type(c.atttypid, NULL), bt.typcategory::text, bt.oid::bigint, bt.typelem::bigint, c.attnotnull, ` +
-		`(NOT COALESCE(co.collisdeterministic, TRUE) OR bt.typname = 'citext'), c.pk ` +
+		`(NOT COALESCE(co.collisdeterministic, TRUE) OR bt.typname = 'citext'), c.pk, ` +
+		`CASE WHEN c.attcollation = 100 THEN 0 ELSE c.attcollation::bigint END ` +
 		`FROM c ` +
 		`JOIN d ON d.start = c.atttypid AND d.typtype <> 'd' ` +
 		`JOIN pg_catalog.pg_type bt ON bt.oid = d.base ` +
@@ -512,9 +540,9 @@ func (d postgresDialect) catalogFacts(ctx context.Context, execute executeQueryF
 	facts.Sources = make(map[typedSourceName]typedSourceFacts, len(names))
 	for rows.Next() {
 		var relation, column, dataType, category string
-		var typeOID, elementOID int64
+		var typeOID, elementOID, collation int64
 		var notNull, nonDeterministic, primaryKey bool
-		if err := rows.Scan(&relation, &column, &dataType, &category, &typeOID, &elementOID, &notNull, &nonDeterministic, &primaryKey); err != nil {
+		if err := rows.Scan(&relation, &column, &dataType, &category, &typeOID, &elementOID, &notNull, &nonDeterministic, &primaryKey, &collation); err != nil {
 			return typedCatalogFacts{}, fmt.Errorf("catalog facts: %w", err)
 		}
 		key, asked := keys[relation]
@@ -530,6 +558,7 @@ func (d postgresDialect) catalogFacts(ctx context.Context, execute executeQueryF
 			NonDeterministicCollation: nonDeterministic,
 			NoJoinKey:                 postgresNoJoinKey(category, typeOID, elementOID),
 			PrimaryKey:                primaryKey,
+			Collation:                 collation,
 		})
 		facts.Sources[key] = source
 	}

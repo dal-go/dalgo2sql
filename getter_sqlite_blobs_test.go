@@ -252,7 +252,7 @@ func TestSQLiteMapReadScanFailureIsReturned(t *testing.T) {
 	defer func() { _ = rows.Close() }()
 	got := map[string]any{}
 	if err := scanRowIntoMapWithOptions(rows, got, false, DbOptions{StructuredQueryDialect: "sqlite"}); err == nil {
-		t.Fatal("scanRowIntoMap should return the error when Scan is called before advancing Rows")
+		t.Fatal("scanRowIntoMapWithOptions should return the error when Scan is called before advancing Rows")
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

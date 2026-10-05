@@ -161,9 +161,9 @@ func (r *endingRows) Next(dest []driver.Value) error {
 		r.script.end()
 		return driver.ErrBadConn
 	case r.catalog && r.next == 1:
-		copy(dest, []driver.Value{`"Album"`, "AlbumId", "integer", "N", int64(23), int64(0), true, false, true})
+		copy(dest, []driver.Value{`"Album"`, "AlbumId", "integer", "N", int64(23), int64(0), true, false, true, int64(0)})
 	case r.catalog && r.next == 2:
-		copy(dest, []driver.Value{`"Album"`, "Title", "text", "S", int64(25), int64(0), false, false, false})
+		copy(dest, []driver.Value{`"Album"`, "Title", "text", "S", int64(25), int64(0), false, false, false, int64(0)})
 	case !r.catalog && r.next == 1:
 		copy(dest, []driver.Value{int64(1), "One"})
 	case !r.catalog && r.next == 2 && r.script.point == endWhileStreaming:
