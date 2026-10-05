@@ -208,23 +208,32 @@ func getMulti(ctx context.Context, options DbOptions, records []dalrecord.Record
 			return refuseRecords(records, err)
 		}
 	}
-	for _, recs := range byRecordset {
-		if err := ctx.Err(); err != nil {
-			return refuseRecords(records, err)
+	// Only unstarted groups remain here. The active group annotates its own
+	// unfinished records; completed rows keep their results on a later failure.
+	refusePending := func(err error) error {
+		for _, recs := range byRecordset {
+			_ = refuseRecords(recs, err)
 		}
+		return err
+	}
+	for name, recs := range byRecordset {
+		if err := ctx.Err(); err != nil {
+			return refusePending(err)
+		}
+		delete(byRecordset, name)
 		if len(recs) == 1 {
 			if err := getSingle(ctx, options, recs[0], exec); err != nil {
 				recs[0].SetError(err)
 				if !errors.Is(err, dalrecord.ErrRecordNotFound) {
-					return err
+					return refusePending(err)
 				}
 			}
 		} else if err := getMultiFromSingleTable(ctx, options, recs, exec); err != nil {
-			return err
+			return refusePending(err)
 		}
 	}
 	if err := ctx.Err(); err != nil {
-		return refuseRecords(records, err)
+		return refusePending(err)
 	}
 	return nil
 }
@@ -337,7 +346,7 @@ func renderMultiGet(options DbOptions, records []dalrecord.Record) (names multiG
 	return names, nil, nil
 }
 
-func getMultiFromSingleTable(ctx context.Context, options DbOptions, records []dalrecord.Record, exec executeQueryFunc) error {
+func getMultiFromSingleTable(ctx context.Context, options DbOptions, records []dalrecord.Record, exec executeQueryFunc) (err error) {
 	if err := ctx.Err(); err != nil {
 		return refuseRecords(records, err)
 	}
@@ -345,6 +354,13 @@ func getMultiFromSingleTable(ctx context.Context, options DbOptions, records []d
 		return nil
 	}
 	records = append(make([]dalrecord.Record, 0, len(records)), records...)
+	// records tracks rows not yet filled. A nil record error cannot track this:
+	// preparation clears errors before any row has been read.
+	defer func() {
+		if err != nil {
+			_ = refuseRecords(records, err)
+		}
+	}()
 	names, noPrimaryKey, err := renderMultiGet(options, records)
 	if noPrimaryKey != nil {
 		for _, record := range records {
@@ -391,16 +407,16 @@ func getMultiFromSingleTable(ctx context.Context, options DbOptions, records []d
 	if dataIsMap {
 		// For map data: scan each row generically, then match by PK value.
 		pkCol := primaryKey[0]
-		var remaining []dalrecord.Record
+		remaining := records
 		err = withMapColumnMetadata(rows, func(columns []string, columnTypes []*sql.ColumnType) error {
 			var scanErr error
 			remaining, scanErr = fillMapRecords(rows, columns, columnTypes, records, pkCol, options.StructuredQueryDialect)
 			return scanErr
 		})
+		records = remaining
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		records = remaining
 	} else {
 		// Struct data path: use the struct-field-aware scan.
 		val := reflect.ValueOf(records[0].Data()).Elem()
@@ -426,10 +442,10 @@ func getMultiFromSingleTable(ctx context.Context, options DbOptions, records []d
 			}
 			for i, record := range records {
 				if record.Key().ID == id {
-					records = append(records[:i], records[i+1:]...)
 					if err = rowIntoRecord(rows, record, true); err != nil {
 						return err
 					}
+					records = append(records[:i], records[i+1:]...)
 					break
 				}
 			}
