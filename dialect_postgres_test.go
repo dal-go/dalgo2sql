@@ -226,6 +226,15 @@ func TestPostgresDialectArithmeticAggregatesAndEmptyIn(t *testing.T) {
 	if got, want := dialect.divide(`"a"`, `"b"`), `(("a")::double precision / NULLIF(("b")::double precision, 0))`; got != want {
 		t.Fatalf("divide() = %s, want %s", got, want)
 	}
+	// +, - and * read both operands as double precision, so integer overflow cannot
+	// differ from DALgo's generic engine (float64) and the SQLite path (REAL). The
+	// fragment is self-delimiting and writes its operand once, verbatim.
+	if got, want := dialect.arithmeticOperand(`"a"`), `(("a")::double precision)`; got != want {
+		t.Fatalf("arithmeticOperand() = %s, want %s", got, want)
+	}
+	if got, want := dialect.arithmeticOperand(`("a" + ?::bigint)`), `((("a" + ?::bigint))::double precision)`; got != want {
+		t.Fatalf("arithmeticOperand() = %s, want %s", got, want)
+	}
 	for function, want := range map[string]string{
 		dal.SUM:     `((SUM("x"))::double precision)`,
 		dal.AVERAGE: `((AVG("x"))::double precision)`,
@@ -243,6 +252,9 @@ func TestPostgresDialectArithmeticAggregatesAndEmptyIn(t *testing.T) {
 }
 
 func TestPostgresDialectCapabilities(t *testing.T) {
+	// FIRST and LAST need an input order no SQL engine guarantees, and the compiler
+	// does not render a group-key order or promise a stable row order: want leaves
+	// those flags false, so the comparison below pins all of them off.
 	want := dal.QueryCapabilities{
 		GroupBy: true, Having: true, OrderBy: true,
 		Aggregate: dal.AggregateCapabilities{
@@ -256,11 +268,6 @@ func TestPostgresDialectCapabilities(t *testing.T) {
 		if got := newPostgresDialect(mode.mode).capabilities(); got != want {
 			t.Fatalf("%s: capabilities() = %+v, want %+v", mode.name, got, want)
 		}
-	}
-	// FIRST and LAST need an input order no SQL engine guarantees, and the compiler
-	// does not render a group-key order; the declaration must keep all three off.
-	if want.Aggregate.First || want.Aggregate.Last || want.GroupKeyOrder || want.StableRowOrder || want.Aggregate.OrderBy {
-		t.Fatal("the PostgreSQL declaration must not claim FIRST, LAST, group-key order, stable row order or aggregate ordering")
 	}
 }
 

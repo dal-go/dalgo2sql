@@ -325,7 +325,6 @@ func TestCompileTypedSQLRejectsInvalidQueriesWithoutClaimingUnsupported(t *testi
 		{"table name over the limit", typedTestFrom(longName, "").NewQuery().SelectColumns(), nil, "limit"},
 		{"schema name over the limit", dal.From(dal.NewQualifiedRootCollectionRef(longName, "t", "")).NewQuery().SelectColumns(), nil, "limit"},
 		{"source alias over the limit", typedTestFrom("t", longName).NewQuery().SelectColumns(), nil, "limit"},
-		{"unaliased expression whose text is too long", album().SelectColumns(typedTestColumn(dal.Binary(typedTestField(strings.Repeat("a", 40)), dal.Add, typedTestField(strings.Repeat("b", 40))), "")), nil, "limit"},
 		{"aggregate in WHERE", album().Where(dal.NewComparison(dal.NewAggregate(dal.COUNT, false, dal.Star()), dal.GreaterThen, typedTestConst(1))).SelectColumns(), nil, "aggregate"},
 		{"empty condition group", album().Where(dal.NewGroupCondition(dal.And)).SelectColumns(), nil, "empty condition group"},
 		{"dialect refuses a value", album().Where(typedTestEq(typedTestField("a"), fakeTypedFailingValuer{})).SelectColumns(), nil, "refuses"},
@@ -524,6 +523,42 @@ func TestCompileTypedSQLRefusesADialectThatBreaksTheOperandRules(t *testing.T) {
 			dividedValues, "verbatim and in argument order",
 		},
 		{
+			"arithmeticOperand renders the operand twice",
+			func(d *fakeTypedDialect) {
+				d.arithmeticOverride = func(operand string) string { return "(" + operand + " + " + operand + ")" }
+			},
+			orderedByValue, "the dialect wrote",
+		},
+		{
+			"arithmeticOperand rewrites an operand that carries a value",
+			func(d *fakeTypedDialect) {
+				d.arithmeticOverride = func(operand string) string { return strings.Replace(operand, "?::bigint", "?", 1) }
+			},
+			orderedByValue, "verbatim and in argument order",
+		},
+		{
+			// The left operand carries the value here, so it is the left check that fails.
+			"arithmeticOperand rewrites the left operand when it carries a value",
+			func(d *fakeTypedDialect) {
+				d.arithmeticOverride = func(operand string) string { return strings.Replace(operand, "?::bigint", "?", 1) }
+			},
+			album().SelectColumns(typedTestColumn(dal.Binary(typedTestConst(1), dal.Add, typedTestField("a")), "s")), "verbatim and in argument order",
+		},
+		{
+			"arithmeticOperand adds a string literal",
+			func(d *fakeTypedDialect) {
+				d.arithmeticOverride = func(operand string) string { return "(" + operand + " || 'x')" }
+			},
+			orderedByValue, "string literal",
+		},
+		{
+			"arithmeticOperand adds a comment",
+			func(d *fakeTypedDialect) {
+				d.arithmeticOverride = func(operand string) string { return "(" + operand + ") /* x */" }
+			},
+			orderedByValue, "comment",
+		},
+		{
 			"aggregateResult renders the aggregate twice",
 			func(d *fakeTypedDialect) {
 				d.aggregateOverride = func(function, aggregate string) string { return "(" + aggregate + " + " + aggregate + ")" }
@@ -626,6 +661,23 @@ func TestCompileTypedSQLRefusesADialectThatBreaksTheOperandRules(t *testing.T) {
 		})
 	}
 
+	// +, - and * hand each operand to the dialect, left then right, so a dialect can
+	// cast both (PostgreSQL runs them on double precision, as division does).
+	t.Run("the operands of + - * go through the dialect hook in text order", func(t *testing.T) {
+		dialect := newFakeTypedDialect()
+		dialect.arithmeticOverride = func(operand string) string { return "CAST(" + operand + " AS double precision)" }
+		typedGolden{
+			dialect: dialect,
+			query: album().SelectColumns(
+				typedTestColumn(dal.Binary(typedTestField("a"), dal.Add, typedTestConst(1)), "s"),
+				typedTestColumn(dal.Binary(typedTestConst(2), dal.Subtract, typedTestField("b")), "d"),
+				typedTestColumn(dal.Binary(dal.Binary(typedTestField("a"), dal.Multiply, typedTestConst(3)), dal.Multiply, typedTestConst(4)), "m")),
+			wantSQL: `SELECT (CAST("a" AS double precision) + CAST($1::bigint AS double precision)) AS "s", ` +
+				`(CAST($2::bigint AS double precision) - CAST("b" AS double precision)) AS "d", ` +
+				`(CAST((CAST("a" AS double precision) * CAST($3::bigint AS double precision)) AS double precision) * CAST($4::bigint AS double precision)) AS "m" FROM "Album"`,
+			wantArgs: []any{1, 2, 3, 4},
+		}.run(t)
+	})
 	// Rule 1 binds only operands that carry a value; one that does not may be
 	// repeated, which a CASE form of divide does.
 	t.Run("a dialect may repeat or move an operand that carries no value", func(t *testing.T) {
@@ -758,6 +810,51 @@ func TestCompileTypedSQLCheckedJoinKeyTypes(t *testing.T) {
 	}
 	t.Run("without facts nothing is checked", func(t *testing.T) {
 		if _, _, err := compileTypedSQL(join("ArtistId", "Name"), newFakeTypedDialect(), typedCatalogFacts{}); err != nil {
+			t.Fatalf("compileTypedSQL() error = %v", err)
+		}
+	})
+}
+
+// A column whose type cannot key a join (json has no equality operator, oid and the
+// reg* types compare in their own way) is refused even against a column of the very
+// same type, which typedJoinKeysComparable would otherwise accept.
+func TestCompileTypedSQLRefusesAJoinKeyOfATypeThatCannotKeyAJoin(t *testing.T) {
+	facts := typedCatalogFacts{Sources: map[typedSourceName]typedSourceFacts{
+		{Name: "Album"}: {Columns: []typedColumnFact{
+			{Name: "Doc", DataType: "json", Category: typedTypeOther, NoJoinKey: true},
+			{Name: "Ref", DataType: "oid", Category: typedTypeOther, NoJoinKey: true},
+			{Name: "Id", DataType: "integer", Category: typedTypeNumber},
+		}},
+		{Name: "Artist"}: {Columns: []typedColumnFact{
+			{Name: "Doc", DataType: "json", Category: typedTypeOther, NoJoinKey: true},
+			{Name: "Ref", DataType: "oid", Category: typedTypeOther, NoJoinKey: true},
+			{Name: "Id", DataType: "integer", Category: typedTypeNumber},
+			{Name: "Other", DataType: "integer", Category: typedTypeNumber, NoJoinKey: true},
+		}},
+	}}
+	join := func(albumField, artistField string) dal.StructuredQuery {
+		return typedTestFrom("Album", "a").Join(
+			dal.NewJoinedSource(dal.NewRootCollectionRef("Artist", "r"), dal.JoinInner, typedTestJoinOn("a", albumField, "r", artistField)),
+		).NewQuery().SelectColumns(typedTestColumn(typedTestQualified("r", "Id"), ""))
+	}
+	for _, tc := range []struct{ name, album, artist string }{
+		{"json against json", "Doc", "Doc"},
+		{"oid against oid", "Ref", "Ref"},
+		{"an integer against a column flagged on the other side only", "Id", "Other"},
+		{"a flagged column on the left only", "Ref", "Id"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			expectTypedUnsupported(t, join(tc.album, tc.artist), nil, facts, "cannot be compared in a JOIN")
+		})
+	}
+	t.Run("the message names the type and no value", func(t *testing.T) {
+		_, _, err := compileTypedSQL(join("Doc", "Doc"), newFakeTypedDialect(), facts)
+		if err == nil || !strings.Contains(err.Error(), `"json"`) {
+			t.Fatalf("error = %v, want the key type named", err)
+		}
+	})
+	t.Run("an ordinary pair still compiles", func(t *testing.T) {
+		if _, _, err := compileTypedSQL(join("Id", "Id"), newFakeTypedDialect(), facts); err != nil {
 			t.Fatalf("compileTypedSQL() error = %v", err)
 		}
 	})

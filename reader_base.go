@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sync"
 
 	"github.com/dal-go/dalgo/access"
 	"github.com/dal-go/dalgo/dal"
@@ -11,7 +12,48 @@ import (
 
 type executeQueryFunc func(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 
+// connLease holds the connection one read runs on, from the catalog lookup to the
+// last row of its statement. It is given back, once, when the reader is done with the
+// rows: closed, or read to its end. It is also given back when the context of the read
+// ends, as the pool does for a read of its own: database/sql closes the rows then, and a
+// caller that stopped on ctx.Done() need not close the reader to free the connection.
+type connLease struct {
+	once sync.Once
+	conn *sql.Conn
+	// stopHook unregisters the hook that gives the connection back when the context
+	// ends. Only release reads it, and only after the lease is built; the hook itself
+	// calls giveBack.
+	stopHook func() bool
+}
+
+// newConnLease takes conn for the read that runs on ctx.
+func newConnLease(ctx context.Context, conn *sql.Conn) *connLease {
+	l := &connLease{conn: conn}
+	l.stopHook = context.AfterFunc(ctx, l.giveBack)
+	return l
+}
+
+// giveBack closes the connection, which returns it to the pool, once. Closing waits for
+// the rows that ran on the connection, which close themselves when their context ends.
+func (l *connLease) giveBack() {
+	l.once.Do(func() { _ = l.conn.Close() })
+}
+
+// release gives the connection back to the pool. It is safe on a nil lease (a read on
+// the pool holds none) and to call twice. It must follow the close of the rows that
+// ran on the connection: closing a connection waits for them.
+func (l *connLease) release() {
+	if l == nil {
+		return
+	}
+	l.stopHook()
+	l.giveBack()
+}
+
 type readerBase struct {
+	// lease, when set, is the connection the rows run on; the reader releases it when
+	// it is done (see connLease).
+	lease          *connLease
 	rows           *sql.Rows
 	colNames       []string
 	colTypes       []*sql.ColumnType
@@ -35,6 +77,9 @@ func getReaderBaseWithOptions(ctx context.Context, query dal.Query, execute exec
 	var a []any
 	var text string
 	var projection *wildcardProjectionPlan
+	// askedNames, when set, names each column of the result as the query asked for
+	// it (typedStatement.outputs), in place of the name the server returns.
+	var askedNames []string
 	switch q := query.(type) {
 	case dal.TextQuery:
 		text = q.Text()
@@ -91,6 +136,21 @@ func getReaderBaseWithOptions(ctx context.Context, query dal.Query, execute exec
 						projection = nil
 					}
 				}
+			case "postgres":
+				dialect, err := postgresDialectFor(options)
+				if err != nil {
+					return readerBase{}, err
+				}
+				// Every source's catalog facts, then the typed compiler. The compiler
+				// lists a wildcard's columns from the facts and applies its exclusions
+				// itself, so no column is filtered out of the result afterwards. The facts
+				// are read through execute, which the caller binds to the connection or
+				// transaction the statement runs on.
+				statement, err := compileTypedRead(ctx, q, dialect, execute)
+				if err != nil {
+					return readerBase{}, err
+				}
+				text, a, askedNames, projection = statement.text, statement.args, statement.outputs, nil
 			default:
 				return readerBase{}, fmt.Errorf("unsupported structured query dialect %q", options.StructuredQueryDialect)
 			}
@@ -108,6 +168,10 @@ func getReaderBaseWithOptions(ctx context.Context, query dal.Query, execute exec
 		_ = rb.rows.Close()
 		return rb, fmt.Errorf("failed to read column names: %w", err)
 	}
+	if askedNames != nil && len(askedNames) != len(rb.scanColNames) {
+		_ = rb.rows.Close()
+		return rb, fmt.Errorf("the statement returned %d columns where the query asked for %d", len(rb.scanColNames), len(askedNames))
+	}
 	rb.scanColTypes, _ = rb.rows.ColumnTypes()
 	rb.visibleIndexes = make([]int, len(rb.scanColNames))
 	for i := range rb.visibleIndexes {
@@ -123,6 +187,9 @@ func getReaderBaseWithOptions(ctx context.Context, query dal.Query, execute exec
 	rb.colTypes = make([]*sql.ColumnType, len(rb.visibleIndexes))
 	for i, sourceIndex := range rb.visibleIndexes {
 		rb.colNames[i] = rb.scanColNames[sourceIndex]
+		if askedNames != nil {
+			rb.colNames[i] = askedNames[sourceIndex]
+		}
 		rb.colTypes[i] = rb.scanColTypes[sourceIndex]
 	}
 	return rb, nil

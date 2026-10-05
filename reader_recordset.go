@@ -33,8 +33,10 @@ func getRecordsetReaderWithOptions(ctx context.Context, query dal.Query, execute
 	rsOptions := recordset.NewOptions(options...)
 
 	var cols []recordset.Column[any]
-	for _, col := range rr.colTypes {
-		name := col.Name()
+	for i, col := range rr.colTypes {
+		// The name the reader gives the column: the server's, or, for a statement
+		// compiled with a folding dialect, the name the query asked for.
+		name := rr.colNames[i]
 		var c recordset.Column[any]
 		scanType := col.ScanType()
 		dbTypeName := col.DatabaseTypeName()
@@ -127,14 +129,17 @@ func (r *recordsetReader) Cursor() (string, error) {
 }
 
 func (r *recordsetReader) Close() error {
+	var err error
 	if r.rows != nil {
-		return r.rows.Close()
+		err = r.rows.Close()
 	}
-	return nil
+	r.lease.release()
+	return err
 }
 
 func (r *recordsetReader) Next() (row recordset.Row, rs recordset.Recordset, err error) {
 	if !r.rows.Next() {
+		r.lease.release() // the rows closed themselves at the end: the connection goes back
 		err = dal.ErrNoMoreRecords
 		return
 	}

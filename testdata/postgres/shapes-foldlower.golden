@@ -8,15 +8,41 @@ sql: SELECT "a"."title" FROM "public"."album" AS "a"
 sql: SELECT "customerid", "firstname", "lastname", "country" FROM "customer"
 === a select-all with a mask and an explicit column after it
 sql: SELECT "customerid", "firstname", "lastname", "country", "email" AS "mail" FROM "customer"
+=== a select-all whose exclusion is in the catalog's own spelling
+sql: SELECT "customerid", "firstname", "lastname", "country" FROM "customer"
 === a select-all needs the catalog facts
 refused: column 0: not supported: a wildcard projection needs catalog facts for its source
 === an unaliased expression is named by its text
-sql: SELECT ("a" + "b") AS "(a + b)" FROM "album"
+sql: SELECT ((("a")::double precision) + (("b")::double precision)) AS "(a + b)" FROM "album"
 === a constant in the select list needs an alias
 sql: SELECT $1::bigint AS "five" FROM "album"
 $1 int64 5
 === an unaliased expression carrying a constant is refused
 refused: column 0: not supported: an expression carrying a constant needs an alias
+=== an alias of 63 bytes is accepted
+sql: SELECT "title" AS "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" FROM "album"
+=== an alias over 63 bytes is declined, the generic engine labels the column
+refused: column 0: not supported: an output name is too long for the engine, which cannot spell it as a column label: identifier is 64 bytes, over the engine limit of 63 once folded to lower case
+=== the text of an unaliased expression over 63 bytes is declined
+refused: column 0: not supported: an output name is too long for the engine, which cannot spell it as a column label: identifier is 65 bytes, over the engine limit of 63 once folded to lower case
+=== two outputs that are one name once folded
+refused: not supported: the select list names "Title" and "TITLE", which are one name once the dialect writes them ("title")
+=== count(*) is named as DALgo names it
+sql: SELECT COUNT(*) AS "count(*)" FROM "invoice"
+=== dal.ID names a real column and is read as one
+sql: SELECT * FROM "album" WHERE "albumid" = $1::bigint
+$1 int64 7
+=== dal.ID with a string key
+sql: SELECT * FROM "album" WHERE "title" = $1
+$1 string "Ada"
+=== a scan-bounded source whose scan the statement restates
+sql: SELECT "invoiceid", "total" FROM "invoice" ORDER BY "invoicedate" DESC LIMIT $1
+$1 int64 10
+=== a scan-bounded source with a statement limit below the scan's
+sql: SELECT * FROM "invoice" ORDER BY "invoicedate" DESC LIMIT $1
+$1 int64 4
+=== a scan-bounded source with a WHERE is declined
+refused: not supported: from: a scan-bounded source compiles only when the statement restates its scan: WHERE filters after the scan, not before it
 === equality
 sql: SELECT * FROM "album" WHERE "albumid" = $1::bigint
 $1 int64 7
@@ -54,17 +80,17 @@ sql: SELECT * FROM "album" WHERE FALSE
 === empty NOT IN is TRUE
 sql: SELECT * FROM "album" WHERE TRUE
 === add subtract multiply
-sql: SELECT ("a" + "b") AS "s", ("a" - $1::bigint) AS "d", ($2::numeric * "b") AS "m" FROM "album"
+sql: SELECT ((("a")::double precision) + (("b")::double precision)) AS "s", ((("a")::double precision) - (($1::bigint)::double precision)) AS "d", ((($2::numeric)::double precision) * (("b")::double precision)) AS "m" FROM "album"
 $1 int64 2
 $2 string "2.5"
 === divide is on double precision with a zero divisor read as NULL
 sql: SELECT (("a")::double precision / NULLIF(("b")::double precision, 0)) AS "q" FROM "album"
 === nested division keeps argument order
-sql: SELECT ((("a" + $1::bigint))::double precision / NULLIF((("b" - $2::bigint))::double precision, 0)) AS "q" FROM "album"
+sql: SELECT ((((("a")::double precision) + (($1::bigint)::double precision)))::double precision / NULLIF((((("b")::double precision) - (($2::bigint)::double precision)))::double precision, 0)) AS "q" FROM "album"
 $1 int64 1
 $2 int64 2
 === division where both operands render the same text
-sql: SELECT ((("a" + $1::bigint))::double precision / NULLIF((("a" + $2::bigint))::double precision, 0)) AS "q" FROM "album"
+sql: SELECT ((((("a")::double precision) + (($1::bigint)::double precision)))::double precision / NULLIF((((("a")::double precision) + (($2::bigint)::double precision)))::double precision, 0)) AS "q" FROM "album"
 $1 int64 1
 $2 int64 2
 === COUNT(*)
@@ -78,7 +104,7 @@ sql: SELECT "billingcountry" AS "country", ((SUM("total"))::double precision) AS
 $1 int64 1000
 $2 int64 10
 === a grouped expression carrying a constant is referenced by position
-sql: SELECT ("total" + $1::bigint) AS "bucket", COUNT("invoiceid") AS "n" FROM "invoice" GROUP BY 1 ORDER BY 1 ASC NULLS FIRST
+sql: SELECT ((("total")::double precision) + (($1::bigint)::double precision)) AS "bucket", COUNT("invoiceid") AS "n" FROM "invoice" GROUP BY 1 ORDER BY 1 ASC NULLS FIRST
 $1 int64 100
 === GROUP BY without selected columns groups by its keys
 sql: SELECT "billingcountry" FROM "invoice" GROUP BY "billingcountry"
@@ -105,7 +131,7 @@ sql: SELECT * FROM "album" LIMIT $1 OFFSET $2
 $1 int64 10
 $2 int64 5
 === numbering follows the text across clauses
-sql: SELECT "g", (COUNT(*) + $1::bigint) AS "n" FROM "invoice" WHERE "a" = $2::bigint GROUP BY "g" HAVING ((SUM("t"))::double precision) > $3::bigint ORDER BY ("g" + $4::bigint) ASC NULLS FIRST LIMIT $5 OFFSET $6
+sql: SELECT "g", (((COUNT(*))::double precision) + (($1::bigint)::double precision)) AS "n" FROM "invoice" WHERE "a" = $2::bigint GROUP BY "g" HAVING ((SUM("t"))::double precision) > $3::bigint ORDER BY ((("g")::double precision) + (($4::bigint)::double precision)) ASC NULLS FIRST LIMIT $5 OFFSET $6
 $1 int64 6
 $2 int64 1
 $3 int64 2

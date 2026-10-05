@@ -25,6 +25,7 @@ type fakeTypedDialect struct {
 	bindMarkers         string
 	bindOverride        func(value any) (marker string, arg any, err error)
 	divideOverride      func(left, right string) string
+	arithmeticOverride  func(operand string) string
 	aggregateOverride   func(function, aggregate string) string
 	orderItemOverride   func(expression string, descending, notNull bool) string
 	emptyInOverride     func(negated bool) string
@@ -66,6 +67,8 @@ type foldingTypedDialect struct {
 	fold func(string) string
 	// arg is the argument the dialect sends beside the marker of a Go constant.
 	arg func(value any) any
+	// operand is how the dialect writes one operand of +, - and *.
+	operand func(operand string) string
 }
 
 // foldingTypedDialects lists every dialect whose quoteIdent folds case: the fake
@@ -76,8 +79,8 @@ func foldingTypedDialects(t *testing.T) []foldingTypedDialect {
 	t.Helper()
 	postgres := newPostgresDialect(postgresFoldLower)
 	return []foldingTypedDialect{
-		{name: "fake", dialect: newFoldingFakeTypedDialect(), fold: strings.ToLower, arg: func(value any) any { return value }},
-		{name: "PostgreSQL FoldLower", dialect: postgres, fold: postgresTestFolding(t, postgres).Fold, arg: func(value any) any { return typedBoundArgument(t, postgres, value) }},
+		{name: "fake", dialect: newFoldingFakeTypedDialect(), fold: strings.ToLower, arg: func(value any) any { return value }, operand: func(operand string) string { return operand }},
+		{name: "PostgreSQL FoldLower", dialect: postgres, fold: postgresTestFolding(t, postgres).Fold, arg: func(value any) any { return typedBoundArgument(t, postgres, value) }, operand: postgres.arithmeticOperand},
 	}
 }
 
@@ -182,6 +185,16 @@ func (d *fakeTypedDialect) divide(left, right string) string {
 	return "(CAST(" + left + " AS double precision) / NULLIF(CAST(" + right + " AS double precision), 0))"
 }
 
+// arithmeticOperand is the identity: the fake adds no cast to the operands of +, -
+// and *, so the many goldens of the compiler's own tests keep reading as plain
+// arithmetic. A test that needs the cast overrides it (see arithmeticOverride).
+func (d *fakeTypedDialect) arithmeticOperand(operand string) string {
+	if d.arithmeticOverride != nil {
+		return d.arithmeticOverride(operand)
+	}
+	return operand
+}
+
 func (d *fakeTypedDialect) aggregateResult(function, aggregate string) string {
 	if d.aggregateOverride != nil {
 		return d.aggregateOverride(function, aggregate)
@@ -206,6 +219,10 @@ func (d *fakeTypedDialect) capabilities() dal.QueryCapabilities { return d.caps 
 
 func (d *fakeTypedDialect) catalogFacts(context.Context, executeQueryFunc, []typedSourceName) (typedCatalogFacts, error) {
 	return typedCatalogFacts{}, nil
+}
+
+func (d *fakeTypedDialect) suggestSource(context.Context, executeQueryFunc, typedSourceName) (typedSourceName, bool, error) {
+	return typedSourceName{}, false, nil
 }
 
 func (d *fakeTypedDialect) window(string, []string, []string, []string) (string, error) {

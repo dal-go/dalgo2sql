@@ -24,6 +24,7 @@ const recordIDHelperColumn = "__dalgo_record_id"
 
 func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute executeQueryFunc, options DbOptions) (rr *recordsReader, err error) {
 	rr = &recordsReader{
+		fold:                recordNameFold(options),
 		identityColumnIndex: -1,
 		newRecord: func() dalrecord.Record {
 			return dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("Unknown", ""), make(map[string]any))
@@ -63,10 +64,10 @@ func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute e
 				query = q
 			}
 			rr.identityColumn = primaryKey
-			if selected := q.Columns(); len(selected) > 0 && !selectsIdentityField(selected, primaryKey) {
+			if selected := q.Columns(); len(selected) > 0 && !selectsIdentityField(selected, primaryKey, rr.fold) {
 				columns := append([]dal.Column(nil), selected...)
 				helper := unusedHelperColumn(selected)
-				columns = append(columns, dal.Column{Expression: dal.Field(primaryKey), Alias: helper})
+				columns = append(columns, dal.Column{Expression: recordIdentityField(options, q, primaryKey), Alias: helper})
 				query = dal.WithColumns(q, columns)
 				rr.identityColumn = helper
 				rr.hideIdentityColumn = true
@@ -83,6 +84,57 @@ func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute e
 	}
 
 	return
+}
+
+// readsWithTypedPostgres reports whether a structured read is compiled by the typed
+// PostgreSQL compiler: a native compiler of the caller's takes precedence over the
+// dialect (see getReaderBaseWithOptions).
+func readsWithTypedPostgres(options DbOptions) bool {
+	return options.NativeStructuredQueryCompiler == nil && options.StructuredQueryDialect == "postgres"
+}
+
+// recordIdentityField is the field the reader adds to the select list to key each
+// record by the primary key. It is unqualified, as it always was, except for a JOIN
+// read by the typed PostgreSQL compiler: that compiler refuses an unqualified field in
+// a JOIN, so the field names the base source, the table the key belongs to. Without
+// that, a join CanExecuteJoin accepted would fail once DALgo has chosen the native
+// plan, which it does not retry. A native compiler of the caller's keeps the
+// unqualified field it was given.
+func recordIdentityField(options DbOptions, q dal.StructuredQuery, primaryKey string) dal.FieldRef {
+	if readsWithTypedPostgres(options) && len(q.From().Joins()) != 0 {
+		return dal.NewFieldRef(typedIdentity(q.From().Base()), primaryKey)
+	}
+	return dal.Field(primaryKey)
+}
+
+// nameFold is the rule a read applies to the names it compares, which is the rule its
+// statement was written with: the fold of the PostgreSQL dialect on a fold-lower
+// mount. The zero value compares names as they are.
+type nameFold func(string) string
+
+// of folds name.
+func (f nameFold) of(name string) string {
+	if f == nil {
+		return name
+	}
+	return f(name)
+}
+
+// recordNameFold is the fold of the read's statement: the typed PostgreSQL compiler's,
+// when it folds names, else none. A configured primary key is spelt as the caller
+// chose, and the statement returns the column under the name it wrote, so the two are
+// compared folded or the key is never found.
+func recordNameFold(options DbOptions) nameFold {
+	if !readsWithTypedPostgres(options) {
+		return nil
+	}
+	// An IdentifierCase the package does not define fails the read itself, before any
+	// name is compared.
+	dialect, _ := postgresDialectFor(options)
+	if dialect.mode != postgresFoldLower {
+		return nil
+	}
+	return dialect.fold
 }
 
 // isKeysOnlyQuery reports whether q was built with SelectKeysOnly: it selects
@@ -121,6 +173,8 @@ type recordsReader struct {
 	identityColumnIndex int
 	hideIdentityColumn  bool
 	validateFinite      bool
+	// fold is applied to a column name and to the key's name before they are compared.
+	fold nameFold
 }
 
 // decimalText matches the text PostgreSQL prints for a finite NUMERIC: an
@@ -176,14 +230,23 @@ func normalizeValueByDatabaseType(databaseTypeName string, value any) any {
 	return text
 }
 
-func selectsIdentityField(columns []dal.Column, name string) bool {
+// selectsIdentityField reports whether the select list returns the column name, under
+// the names fold gives (nil: as they are). A wildcard returns it unless an exclusion
+// names it, and the compiler folds the exclusions it applies, so they are folded here.
+func selectsIdentityField(columns []dal.Column, name string, fold nameFold) bool {
+	name = fold.of(name)
 	for _, column := range columns {
 		if column.Wildcard != nil {
-			if !column.Wildcard.Excludes(name) {
+			projection := *column.Wildcard
+			projection.Exclude = make([]string, len(column.Wildcard.Exclude))
+			for i, exclusion := range column.Wildcard.Exclude {
+				projection.Exclude[i] = fold.of(exclusion)
+			}
+			if !projection.Excludes(name) {
 				return true
 			}
 		}
-		if field, ok := column.Expression.(dal.FieldRef); ok && field.Name() == name && (column.Alias == "" || column.Alias == name) {
+		if field, ok := column.Expression.(dal.FieldRef); ok && fold.of(field.Name()) == name && (column.Alias == "" || fold.of(column.Alias) == name) {
 			return true
 		}
 	}
@@ -217,6 +280,7 @@ func unusedHelperColumn(columns []dal.Column) string {
 
 func (r recordsReader) Next() (record dalrecord.Record, err error) {
 	if !r.rows.Next() {
+		r.lease.release() // the rows closed themselves at the end: the connection goes back
 		if err := r.rows.Err(); err != nil {
 			return nil, err
 		}
@@ -260,7 +324,7 @@ func (r recordsReader) Next() (record dalrecord.Record, err error) {
 			}
 		}
 		v := textValue(normalized)
-		identityValue := n == r.identityColumn
+		identityValue := r.fold.of(n) == r.fold.of(r.identityColumn)
 		if r.hideIdentityColumn {
 			identityValue = i == r.identityColumnIndex
 		}
@@ -284,7 +348,9 @@ func (r recordsReader) Cursor() (string, error) {
 }
 
 func (r recordsReader) Close() error {
-	return r.rows.Close()
+	err := r.rows.Close()
+	r.lease.release()
+	return err
 }
 
 // recordsReaderProvider is embedded into database and transaction
