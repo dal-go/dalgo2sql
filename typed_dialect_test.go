@@ -222,6 +222,12 @@ func TestTypedJoinKeysComparable(t *testing.T) {
 		{"the same type that cannot key a join", typedColumnFact{DataType: "json", Category: typedTypeOther, NoJoinKey: true}, typedColumnFact{DataType: "json", Category: typedTypeOther, NoJoinKey: true}, false},
 		{"a scalar category with one side that cannot key a join", typedColumnFact{DataType: "oid", Category: typedTypeNumber, NoJoinKey: true}, col("int4", typedTypeNumber), false},
 		{"a scalar category with the other side that cannot key a join", col("int4", typedTypeNumber), typedColumnFact{DataType: "oid", Category: typedTypeNumber, NoJoinKey: true}, false},
+		{"two texts with the same collation of their own", typedColumnFact{DataType: "text", Category: typedTypeText, Collation: 12345}, typedColumnFact{DataType: "varchar", Category: typedTypeText, Collation: 12345}, true},
+		{"two texts with different collations of their own", typedColumnFact{DataType: "text", Category: typedTypeText, Collation: 12345}, typedColumnFact{DataType: "text", Category: typedTypeText, Collation: 67890}, false},
+		{"two texts of one type with different collations of their own", typedColumnFact{DataType: "text", Category: typedTypeText, Collation: 12345}, typedColumnFact{DataType: "text", Category: typedTypeText, Collation: 67890}, false},
+		{"a collation of its own against the default, in either order", typedColumnFact{DataType: "text", Category: typedTypeText, Collation: 12345}, col("text", typedTypeText), true},
+		{"the default against a collation of its own", col("text", typedTypeText), typedColumnFact{DataType: "text", Category: typedTypeText, Collation: 12345}, true},
+		{"two defaults", col("text", typedTypeText), col("text", typedTypeText), true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

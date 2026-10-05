@@ -330,7 +330,10 @@ func (postgresDialect) window(string, []string, []string, []string) (string, err
 // is one of those the relation's PRIMARY KEY constraint constrains (pg_constraint with
 // contype 'p', whose conkey lists the key columns only, which a view, a materialized view
 // and a foreign table never have, and which a unique index is not): a record read from
-// a source nobody declared is keyed by it. The index behind the key is not asked:
+// a source nobody declared is keyed by it. The very last column, collation, is the OID of the
+// column's collation when it is not the database's default (OID 100) and 0 otherwise, which a
+// join needs: the server refuses to compare two columns whose collations are different and
+// both not the default (SQLSTATE 42P22). The index behind the key is not asked:
 // pg_index.indkey lists the INCLUDE columns of the index as well, since PostgreSQL 11, so
 // a key declared PRIMARY KEY (id) INCLUDE (payload) would show two columns.
 //
@@ -349,7 +352,8 @@ const (
 		`UNION ALL ` +
 		`SELECT d.start, p.oid, p.typtype, p.typbasetype FROM d JOIN pg_catalog.pg_type p ON d.typtype = 'd' AND p.oid = d.typbasetype) ` +
 		`SELECT c.name, c.attname::text, pg_catalog.format_type(c.atttypid, NULL), bt.typcategory::text, bt.oid::bigint, bt.typelem::bigint, c.attnotnull, ` +
-		`(NOT COALESCE(co.collisdeterministic, TRUE) OR bt.typname = 'citext'), c.pk ` +
+		`(NOT COALESCE(co.collisdeterministic, TRUE) OR bt.typname = 'citext'), c.pk, ` +
+		`CASE WHEN c.attcollation = 100 THEN 0 ELSE c.attcollation::bigint END ` +
 		`FROM c ` +
 		`JOIN d ON d.start = c.atttypid AND d.typtype <> 'd' ` +
 		`JOIN pg_catalog.pg_type bt ON bt.oid = d.base ` +
@@ -512,9 +516,9 @@ func (d postgresDialect) catalogFacts(ctx context.Context, execute executeQueryF
 	facts.Sources = make(map[typedSourceName]typedSourceFacts, len(names))
 	for rows.Next() {
 		var relation, column, dataType, category string
-		var typeOID, elementOID int64
+		var typeOID, elementOID, collation int64
 		var notNull, nonDeterministic, primaryKey bool
-		if err := rows.Scan(&relation, &column, &dataType, &category, &typeOID, &elementOID, &notNull, &nonDeterministic, &primaryKey); err != nil {
+		if err := rows.Scan(&relation, &column, &dataType, &category, &typeOID, &elementOID, &notNull, &nonDeterministic, &primaryKey, &collation); err != nil {
 			return typedCatalogFacts{}, fmt.Errorf("catalog facts: %w", err)
 		}
 		key, asked := keys[relation]
@@ -530,6 +534,7 @@ func (d postgresDialect) catalogFacts(ctx context.Context, execute executeQueryF
 			NonDeterministicCollation: nonDeterministic,
 			NoJoinKey:                 postgresNoJoinKey(category, typeOID, elementOID),
 			PrimaryKey:                primaryKey,
+			Collation:                 collation,
 		})
 		facts.Sources[key] = source
 	}

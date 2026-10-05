@@ -38,9 +38,9 @@ func keyCatalogRelations(relations ...keyRelation) *sqlmock.Rows {
 	for _, relation := range relations {
 		for _, column := range relation.columns {
 			if strings.HasSuffix(strings.ToLower(column.name), "id") {
-				rows.AddRow(relation.name, column.name, "integer", "N", int64(23), int64(0), column.primaryKey, false, column.primaryKey)
+				rows.AddRow(relation.name, column.name, "integer", "N", int64(23), int64(0), column.primaryKey, false, column.primaryKey, int64(0))
 			} else {
-				rows.AddRow(relation.name, column.name, "text", "S", int64(25), int64(0), false, false, column.primaryKey)
+				rows.AddRow(relation.name, column.name, "text", "S", int64(25), int64(0), false, false, column.primaryKey, int64(0))
 			}
 		}
 	}

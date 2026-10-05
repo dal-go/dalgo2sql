@@ -54,8 +54,8 @@ func streamReads(t *testing.T, failure error, check func(t *testing.T, next func
 		}},
 		{"postgres", "postgres", structured, func(mock sqlmock.Sqlmock) {
 			mock.ExpectQuery(postgresCatalogQuery(1)).WithArgs(`"album"`).WillReturnRows(sqlmock.NewRows(postgresCatalogColumns).
-				AddRow(`"album"`, "id", "integer", "N", int64(23), int64(0), true, false, false).
-				AddRow(`"album"`, "title", "text", "S", int64(25), int64(0), false, false, false))
+				AddRow(`"album"`, "id", "integer", "N", int64(23), int64(0), true, false, false, int64(0)).
+				AddRow(`"album"`, "title", "text", "S", int64(25), int64(0), false, false, false, int64(0)))
 			mock.ExpectQuery(`SELECT "id", "title" FROM "album"`).WillReturnRows(streamRows(failure))
 		}},
 	} {

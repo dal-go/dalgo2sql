@@ -1010,6 +1010,9 @@ func (c *typedCompiler) joinOn(conditions []dal.Condition, visible map[string]ty
 			if leftColumn.NoJoinKey || rightColumn.NoJoinKey {
 				return "", typedUnsupported("%s: join_plan: key types %q and %q cannot be compared in a JOIN", pair, leftColumn.DataType, rightColumn.DataType)
 			}
+			if typedCollationsConflict(leftColumn, rightColumn) {
+				return "", typedUnsupported("%s: join_plan: the keys have different collations of their own, so the server cannot compare them", pair)
+			}
 			return "", typedUnsupported("%s: join_plan: key types differ (%q against %q)", pair, leftColumn.DataType, rightColumn.DataType)
 		}
 		parts[i] = leftSQL + " = " + rightSQL

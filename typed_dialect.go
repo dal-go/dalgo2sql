@@ -226,6 +226,12 @@ type typedColumnFact struct {
 	// equality (citext, ICU nondeterministic collations). The compiler carries
 	// it for dialect helpers; it does not act on it.
 	NonDeterministicCollation bool
+	// Collation identifies the column's collation when it is not the database's default:
+	// the OID of its pg_collation row, and 0 for the default collation and for a type that
+	// has none. Two columns whose collations are both not the default and are not the same
+	// cannot be compared by the server, which cannot choose between them
+	// (typedCollationsConflict).
+	Collation int64
 	// NoJoinKey marks a type that must not key a join even against a column of the
 	// very same type: the engine has no equality operator for it (PostgreSQL json,
 	// xml, point), or compares it in a way DALgo does not mean (a box by area, an oid
@@ -312,12 +318,20 @@ func (f typedCatalogFacts) column(name typedSourceName, column string) (typedCol
 	return typedColumnFact{}, false
 }
 
+// typedCollationsConflict reports whether two columns have collations the server cannot
+// choose between when it compares them: each has one of its own, not the database's default
+// (which gives way to any other), and they are not the same. PostgreSQL refuses that
+// comparison with SQLSTATE 42P22 (indeterminate collation), whatever the types' category says.
+func typedCollationsConflict(a, b typedColumnFact) bool {
+	return a.Collation != 0 && b.Collation != 0 && a.Collation != b.Collation
+}
+
 // typedJoinKeysComparable reports whether a join may equate two columns on a
 // statically typed engine: they share a scalar category, or they are the same
 // named type. A column of unknown type is comparable only to the same type. A
 // column whose type cannot key a join (NoJoinKey) is comparable to nothing.
 func typedJoinKeysComparable(a, b typedColumnFact) bool {
-	if a.NoJoinKey || b.NoJoinKey {
+	if a.NoJoinKey || b.NoJoinKey || typedCollationsConflict(a, b) {
 		return false
 	}
 	if a.Category == b.Category && a.Category != typedTypeUnknown && a.Category != typedTypeOther {
