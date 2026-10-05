@@ -52,6 +52,16 @@ func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute e
 			}
 		}
 		if primaryKey := primaryKeyForQuery(options, query); primaryKey != "" && !dal.HasAggregation(q) {
+			if isKeysOnlyQuery(q) && len(q.OrderBy()) == 0 && len(q.From().Joins()) == 0 && canOrderByKey(options, primaryKey) {
+				// A keys-only query names no order, and SQL returns rows in no
+				// defined order without one, so callers would see a different
+				// order from one run or database to the next. Order by the key.
+				// A JOIN query keeps its statement: the key is unqualified, which
+				// the SQLite compiler refuses for a JOIN and which is ambiguous
+				// when both tables have a column of that name.
+				q = orderedByKey{StructuredQuery: q, key: primaryKey}
+				query = q
+			}
 			rr.identityColumn = primaryKey
 			if selected := q.Columns(); len(selected) > 0 && !selectsIdentityField(selected, primaryKey) {
 				columns := append([]dal.Column(nil), selected...)
@@ -74,6 +84,35 @@ func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute e
 
 	return
 }
+
+// isKeysOnlyQuery reports whether q was built with SelectKeysOnly: it selects
+// no columns, reads into no record and names a key kind.
+func isKeysOnlyQuery(q dal.StructuredQuery) bool {
+	return len(q.Columns()) == 0 && q.IDKind() != reflect.Invalid && q.IntoRecord() == nil
+}
+
+// canOrderByKey reports whether the statement for the configured emitter can
+// carry an ORDER BY on the key. The legacy text emitter refuses names that are
+// not plain identifiers, so for those keys it keeps the unordered statement it
+// always produced; the SQLite compiler and native compilers quote the name.
+func canOrderByKey(options DbOptions, primaryKey string) bool {
+	legacy := options.NativeStructuredQueryCompiler == nil && options.StructuredQueryDialect == ""
+	return !legacy || isPlainSQLIdentifier(primaryKey)
+}
+
+// orderedByKey is a query that sorts ascending by one field, the primary key.
+type orderedByKey struct {
+	dal.StructuredQuery
+	key string
+}
+
+func (o orderedByKey) OrderBy() []dal.OrderExpression {
+	return []dal.OrderExpression{dal.AscendingField(o.key)}
+}
+
+// String renders the wrapper itself, order included, like dalgo's own query
+// wrappers; the embedded query would render without the order.
+func (o orderedByKey) String() string { return dal.QueryString(o) }
 
 type recordsReader struct {
 	readerBase
@@ -191,45 +230,52 @@ func (r recordsReader) Next() (record dalrecord.Record, err error) {
 		data = make(map[string]any)
 		record = dalrecord.NewRecordWithData(record.Key(), data)
 	}
-	switch d := data.(type) {
-	case map[string]any:
-		var values []any
-		if values, err = r.scanValues(); err != nil {
-			return nil, err
-		}
-		for i, n := range r.colNames {
-			v := normalizeValueByDatabaseType(r.colTypes[i].DatabaseTypeName(), values[i])
-			if r.validateFinite {
-				if number, ok := v.(float64); ok && (math.IsNaN(number) || math.IsInf(number, 0)) {
-					return nil, fmt.Errorf("non-finite aggregate result in column %q", n)
-				}
-			}
+	var set func(column string, raw, normalized any) error
+	if d, isMap := data.(map[string]any); isMap {
+		set = func(column string, _, normalized any) error {
 			// database/sql returns []byte for TEXT/VARCHAR columns with some
 			// drivers (notably go-sql-driver/mysql); store as string so the
 			// map is usable and JSON-serializes as text, not base64. Matches
 			// scanRowIntoMap on the Get path.
-			if b, ok := v.([]byte); ok {
-				v = string(b)
-			}
-			identityValue := n == r.identityColumn
-			if r.hideIdentityColumn {
-				identityValue = i == r.identityColumnIndex
-			}
-			if identityValue {
-				record.Key().ID = v
-				if v != nil {
-					record.Key().IDKind = reflect.TypeOf(v).Kind()
-				}
-			}
-			if !r.hideIdentityColumn || i != r.identityColumnIndex {
-				d[n] = v
+			d[column] = textValue(normalized)
+			return nil
+		}
+	} else if structSet, isStruct := structSetter(data); isStruct {
+		// A struct target takes the same normalised values as a map, and the
+		// driver's own value where the field type needs it (see
+		// assignColumnValue).
+		set = structSet
+	} else {
+		// TODO: implement Scan into `[]any`
+		return nil, fmt.Errorf("unsupported data type %T", data)
+	}
+	var values []any
+	if values, err = r.scanValues(); err != nil {
+		return nil, err
+	}
+	for i, n := range r.colNames {
+		normalized := normalizeValueByDatabaseType(r.colTypes[i].DatabaseTypeName(), values[i])
+		if r.validateFinite {
+			if number, ok := normalized.(float64); ok && (math.IsNaN(number) || math.IsInf(number, 0)) {
+				return nil, fmt.Errorf("non-finite aggregate result in column %q", n)
 			}
 		}
-	default:
-		// TODO: implement Scan into `*struct` and into `[]any`
-
-		err = fmt.Errorf("unsupported data type %T", data)
-		return nil, err
+		v := textValue(normalized)
+		identityValue := n == r.identityColumn
+		if r.hideIdentityColumn {
+			identityValue = i == r.identityColumnIndex
+		}
+		if identityValue {
+			record.Key().ID = v
+			if v != nil {
+				record.Key().IDKind = reflect.TypeOf(v).Kind()
+			}
+		}
+		if !r.hideIdentityColumn || i != r.identityColumnIndex {
+			if err = set(n, values[i], normalized); err != nil {
+				return nil, err
+			}
+		}
 	}
 	return
 }
