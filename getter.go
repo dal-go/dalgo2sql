@@ -16,30 +16,33 @@ import (
 type queryExecutor = func(query string, args ...interface{}) (*sql.Rows, error)
 
 func (dtb *database) Exists(ctx context.Context, key *dalrecord.Key) (exists bool, err error) {
-	return executeExists(ctx, dtb.options, key, dtb.db.Query)
+	return executeExists(ctx, dtb.options, key, dtb.db.QueryContext)
 }
 
 func (t transaction) Exists(ctx context.Context, key *dalrecord.Key) (exists bool, err error) {
-	return executeExists(ctx, t.sqlOptions, key, t.tx.Query)
+	return executeExists(ctx, t.sqlOptions, key, t.tx.QueryContext)
 }
 
 func (dtb *database) Get(ctx context.Context, record dalrecord.Record) error {
-	return getSingle(ctx, dtb.options, record, dtb.db.Query)
+	return getSingle(ctx, dtb.options, record, dtb.db.QueryContext)
 }
 
 func (t transaction) Get(ctx context.Context, record dalrecord.Record) error {
-	return getSingle(ctx, t.sqlOptions, record, t.tx.Query)
+	return getSingle(ctx, t.sqlOptions, record, t.tx.QueryContext)
 }
 
 func (dtb *database) GetMulti(ctx context.Context, records []dalrecord.Record) error {
-	return getMulti(ctx, dtb.options, records, dtb.db.Query)
+	return getMulti(ctx, dtb.options, records, dtb.db.QueryContext)
 }
 
 func (t transaction) GetMulti(ctx context.Context, records []dalrecord.Record) error {
-	return getMulti(ctx, t.sqlOptions, records, t.tx.Query)
+	return getMulti(ctx, t.sqlOptions, records, t.tx.QueryContext)
 }
 
-func executeExists(_ context.Context, options DbOptions, key *dalrecord.Key, exec queryExecutor) (exists bool, err error) {
+func executeExists(ctx context.Context, options DbOptions, key *dalrecord.Key, exec executeQueryFunc) (exists bool, err error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	table, err := options.recordsetIdentifier(key)
 	if err != nil {
 		return false, err
@@ -62,14 +65,14 @@ func executeExists(_ context.Context, options DbOptions, key *dalrecord.Key, exe
 	queryText += pkName + " = " + options.Placeholder.placeholder(1)
 
 	var rows *sql.Rows
-	if rows, err = exec(queryText, key.ID); err != nil {
+	if rows, err = exec(ctx, queryText, key.ID); err != nil {
 		return
 	}
 	defer func() {
 		_ = rows.Close()
 	}()
 	if !rows.Next() {
-		return false, nil
+		return false, rows.Err()
 	}
 	return true, nil
 }
@@ -109,9 +112,13 @@ func renderSingleGet(options DbOptions, record dalrecord.Record) (names singleGe
 	return names, false, nil
 }
 
-func getSingle(_ context.Context, options DbOptions, record dalrecord.Record, exec queryExecutor) error {
+func getSingle(ctx context.Context, options DbOptions, record dalrecord.Record, exec executeQueryFunc) error {
 	if record == nil {
 		return errNilRecord()
+	}
+	if err := ctx.Err(); err != nil {
+		record.SetError(err)
+		return err
 	}
 	key := record.Key()
 	if err := checkReadTarget(record); err != nil {
@@ -127,7 +134,7 @@ func getSingle(_ context.Context, options DbOptions, record dalrecord.Record, ex
 	}
 	queryText := fmt.Sprintf("SELECT %s FROM %s WHERE %s = %s", names.fields, names.table, names.pk, options.Placeholder.placeholder(1))
 
-	rows, err := exec(queryText, key.ID)
+	rows, err := exec(ctx, queryText, key.ID)
 	if err != nil {
 		record.SetError(err)
 		return err
@@ -137,6 +144,10 @@ func getSingle(_ context.Context, options DbOptions, record dalrecord.Record, ex
 	}()
 
 	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			record.SetError(err)
+			return err
+		}
 		notFound := dal.NewErrNotFoundByKey(key, nil)
 		record.SetError(notFound)
 		return notFound
@@ -155,12 +166,21 @@ func getSingle(_ context.Context, options DbOptions, record dalrecord.Record, ex
 		return err
 	}
 	if rows.Next() {
-		return errors.New("expected to get single row but got multiple")
+		err := errors.New("expected to get single row but got multiple")
+		record.SetError(err)
+		return err
+	}
+	if err := rows.Err(); err != nil {
+		record.SetError(err)
+		return err
 	}
 	return nil
 }
 
-func getMulti(ctx context.Context, options DbOptions, records []dalrecord.Record, exec queryExecutor) error {
+func getMulti(ctx context.Context, options DbOptions, records []dalrecord.Record, exec executeQueryFunc) error {
+	if err := ctx.Err(); err != nil {
+		return refuseRecords(records, err)
+	}
 	// The whole batch is checked before its first read: the recordsets below are
 	// read one after the other in map order, so a refusal found half way would
 	// leave it to chance which of the valid ones had been sent. Every name a read
@@ -189,16 +209,22 @@ func getMulti(ctx context.Context, options DbOptions, records []dalrecord.Record
 		}
 	}
 	for _, recs := range byRecordset {
+		if err := ctx.Err(); err != nil {
+			return refuseRecords(records, err)
+		}
 		if len(recs) == 1 {
 			if err := getSingle(ctx, options, recs[0], exec); err != nil {
 				recs[0].SetError(err)
-				if errors.Is(err, ErrUnsafeName) {
+				if !errors.Is(err, dalrecord.ErrRecordNotFound) {
 					return err
 				}
 			}
 		} else if err := getMultiFromSingleTable(ctx, options, recs, exec); err != nil {
 			return err
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return refuseRecords(records, err)
 	}
 	return nil
 }
@@ -311,7 +337,10 @@ func renderMultiGet(options DbOptions, records []dalrecord.Record) (names multiG
 	return names, nil, nil
 }
 
-func getMultiFromSingleTable(_ context.Context, options DbOptions, records []dalrecord.Record, exec queryExecutor) error {
+func getMultiFromSingleTable(ctx context.Context, options DbOptions, records []dalrecord.Record, exec executeQueryFunc) error {
+	if err := ctx.Err(); err != nil {
+		return refuseRecords(records, err)
+	}
 	if len(records) == 0 {
 		return nil
 	}
@@ -353,7 +382,7 @@ func getMultiFromSingleTable(_ context.Context, options DbOptions, records []dal
 	}
 
 	// EXECUTE QUERY
-	rows, err := exec(queryText, args...)
+	rows, err := exec(ctx, queryText, args...)
 	if err != nil {
 		return err
 	}
