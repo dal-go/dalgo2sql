@@ -16,7 +16,11 @@ func TestSQLiteDecimalFunctions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close SQLite database: %v", err)
+		}
+	}()
 	db.SetMaxOpenConns(2)
 
 	for _, tc := range []struct{ query, want string }{
@@ -92,8 +96,7 @@ func TestSQLiteDecimalFunctions(t *testing.T) {
 			t.Errorf("%s unexpectedly succeeded", query)
 		}
 	}
-	var badAggregateErr error
-	badAggregateErr = db.QueryRow(`SELECT decimal_sum('1e3')`).Scan(&sum)
+	badAggregateErr := db.QueryRow(`SELECT decimal_sum('1e3')`).Scan(&sum)
 	if badAggregateErr == nil || !strings.Contains(strings.ToLower(badAggregateErr.Error()), "decimal") {
 		t.Errorf("malformed aggregate input error = %v", badAggregateErr)
 	}
@@ -107,12 +110,20 @@ func TestSQLiteDecimalFunctions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn1.Close()
+	defer func() {
+		if err := conn1.Close(); err != nil {
+			t.Errorf("close SQLite connection 1: %v", err)
+		}
+	}()
 	conn2, err := db.Conn(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn2.Close()
+	defer func() {
+		if err := conn2.Close(); err != nil {
+			t.Errorf("close SQLite connection 2: %v", err)
+		}
+	}()
 	for i, conn := range []*sql.Conn{conn1, conn2} {
 		var result string
 		if err := conn.QueryRowContext(t.Context(), `SELECT decimal_add('0.1','0.2')`).Scan(&result); err != nil || result != "0.3" {
