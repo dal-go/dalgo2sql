@@ -55,7 +55,7 @@ func TestPostgresCatalogQueryTextDependsOnTheNumberOfSourcesOnly(t *testing.T) {
 // with another column list. Every one is spelt pg_catalog.x.
 func TestPostgresCatalogQueryQualifiesEverySystemObject(t *testing.T) {
 	query := postgresCatalogQuery(3)
-	for _, name := range []string{"pg_class", "pg_attribute", "pg_type", "pg_collation", "pg_index", "to_regclass", "format_type"} {
+	for _, name := range []string{"pg_class", "pg_attribute", "pg_type", "pg_collation", "pg_constraint", "to_regclass", "format_type"} {
 		found := false
 		for from := 0; ; {
 			at := strings.Index(query[from:], name)
@@ -89,16 +89,24 @@ func TestPostgresCatalogQueryResolvesADomainToItsBaseType(t *testing.T) {
 }
 
 // TestPostgresCatalogQueryAsksForThePrimaryKey: the last column says whether the column is
-// one of those of the PRIMARY KEY constraint of its relation, and nothing else (a unique
-// index, a view, which the catalog gives no pg_index row, is none).
+// one of those the PRIMARY KEY constraint of its relation constrains, and nothing else: not
+// a column that a unique index holds, nor one that only the index behind the key carries
+// (pg_index.indkey lists the INCLUDE columns of the index too, since PostgreSQL 11, so a
+// table declared PRIMARY KEY (id) INCLUDE (payload) would show two key columns). A view, which has
+// no constraint, is none.
 func TestPostgresCatalogQueryAsksForThePrimaryKey(t *testing.T) {
 	query := postgresCatalogQuery(1)
 	for _, fragment := range []string{
-		"EXISTS (SELECT 1 FROM pg_catalog.pg_index i WHERE i.indrelid = r.oid AND i.indisprimary AND a.attnum = ANY (i.indkey)) AS pk",
+		"EXISTS (SELECT 1 FROM pg_catalog.pg_constraint k WHERE k.conrelid = r.oid AND k.contype = 'p' AND a.attnum = ANY (k.conkey)) AS pk",
 		"), c.pk FROM c JOIN d",
 	} {
 		if !strings.Contains(query, fragment) {
 			t.Fatalf("catalog query does not contain %q:\n%s", fragment, query)
+		}
+	}
+	for _, index := range []string{"pg_index", "indkey", "indisprimary"} {
+		if strings.Contains(query, index) {
+			t.Errorf("the catalog query reads %s, which lists the INCLUDE columns of the index behind the key as well as its key columns:\n%s", index, query)
 		}
 	}
 	if len(postgresCatalogColumns) != 9 || postgresCatalogColumns[8] != "pk" {

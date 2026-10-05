@@ -327,9 +327,12 @@ func (postgresDialect) window(string, []string, []string, []string) (string, err
 // (PostgreSQL 12 and later; NULL for a type with no collation) says whether the
 // column compares by bytes. A citext column is flagged like a non-deterministic
 // collation: its equality ignores case. The last column, pk, says whether the column
-// is one of those of the relation's PRIMARY KEY constraint (pg_index.indisprimary,
-// which a view, a materialized view and a foreign table never have, and which a unique
-// index is not): a record read from a source nobody declared is keyed by it.
+// is one of those the relation's PRIMARY KEY constraint constrains (pg_constraint with
+// contype 'p', whose conkey lists the key columns only, which a view, a materialized view
+// and a foreign table never have, and which a unique index is not): a record read from
+// a source nobody declared is keyed by it. The index behind the key is not asked:
+// pg_index.indkey lists the INCLUDE columns of the index as well, since PostgreSQL 11, so
+// a key declared PRIMARY KEY (id) INCLUDE (payload) would show two columns.
 //
 // The query was written by reading the PostgreSQL catalog documentation; no server
 // has run it. SQL-08 pins it against PostgreSQL 12, 17 and 18.
@@ -337,7 +340,7 @@ const (
 	postgresCatalogHead = `WITH RECURSIVE s(name) AS (VALUES `
 	postgresCatalogTail = `), ` +
 		`c AS (SELECT s.name, a.attnum, a.attname, a.atttypid, a.attnotnull, a.attcollation, ` +
-		`EXISTS (SELECT 1 FROM pg_catalog.pg_index i WHERE i.indrelid = r.oid AND i.indisprimary AND a.attnum = ANY (i.indkey)) AS pk ` +
+		`EXISTS (SELECT 1 FROM pg_catalog.pg_constraint k WHERE k.conrelid = r.oid AND k.contype = 'p' AND a.attnum = ANY (k.conkey)) AS pk ` +
 		`FROM s ` +
 		`JOIN pg_catalog.pg_class r ON r.oid = pg_catalog.to_regclass(s.name) AND r.relkind IN ('r', 'p', 'v', 'm', 'f') ` +
 		`JOIN pg_catalog.pg_attribute a ON a.attrelid = r.oid AND a.attnum > 0 AND NOT a.attisdropped), ` +
