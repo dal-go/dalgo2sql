@@ -128,9 +128,8 @@ func (dtb *database) RunReadonlyTransaction(ctx context.Context, f dal.ROTxWorke
 // finishTransaction runs worker in dbTx and ends the transaction: it commits when
 // the worker returns no error, and rolls back when it returns one. A worker that
 // panics, or ends its goroutine (runtime.Goexit, as t.FailNow does), is rolled back
-// too and then left to go on: the transaction is not left open, where it would hold
-// its connection and, on SQLite, the lock of the file for as long as its context lives,
-// which with context.Background() is for good.
+// too and then left to go on: the transaction is not left open, holding its connection
+// until its context ends.
 func finishTransaction(dbTx *sql.Tx, worker func() error) error {
 	returned := false
 	defer func() {

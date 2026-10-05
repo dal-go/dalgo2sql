@@ -370,8 +370,8 @@ func TestProcessPrimaryKey_IDThatDoesNotFitIsAnError(t *testing.T) {
 }
 
 // The transaction runners roll the transaction back when the worker panics, and
-// panic again: a panicking worker leaves no open transaction, which on SQLite would
-// hold the lock of the file for good.
+// panic again: a panicking worker leaves no open transaction, and so no lock of the
+// file; another handle can write.
 func TestTransactionRunners_APanickingWorkerLeavesNoOpenTransaction(t *testing.T) {
 	type runner struct {
 		name string

@@ -175,9 +175,8 @@ func TestNestedKey_DeclaredRecordsetIsWritten(t *testing.T) {
 
 // Delete follows the declared primary key: a nested key whose joined recordset is
 // declared with no primary key column, or with several, is refused as Update
-// refuses it, before any statement. It used to send the ID of the key alone,
-// as DELETE ... WHERE ID = ?, against the column named ID: the natural schema of
-// nested rows has a composite key, and the statement matched the row of every parent.
+// refuses it, before any statement. It used to send the leaf ID alone, as
+// DELETE ... WHERE ID = ?, whatever the declaration said.
 func TestNestedKey_DeleteFollowsTheDeclaredPrimaryKey(t *testing.T) {
 	nested, plain := nestedNames(), validNames()
 	operations := []nestedKeyOperation{
