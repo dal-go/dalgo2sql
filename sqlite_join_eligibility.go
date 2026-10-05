@@ -33,6 +33,11 @@ func (dtb *database) CanExecuteJoin(ctx context.Context, q dal.StructuredQuery) 
 		}
 		return dtb.options.NativeJoinEligibility(ctx, q)
 	}
+	if dtb.options.StructuredQueryDialect == "postgres" {
+		// PostgreSQL's check reads the catalog, not the data, so a pool query is as good
+		// as a transaction: see canExecutePostgresJoin.
+		return canExecutePostgresJoin(ctx, q, dtb.options, dtb.db.QueryContext)
+	}
 	// A pool query can move to a different connection after a preflight. The
 	// adapter therefore declines direct native execution rather than claiming
 	// a runtime key check it cannot keep atomic with the JOIN itself.
@@ -48,6 +53,9 @@ func (t transaction) CanExecuteJoin(ctx context.Context, q dal.StructuredQuery) 
 		}
 		return t.sqlOptions.NativeJoinEligibility(ctx, q)
 	}
+	if t.sqlOptions.StructuredQueryDialect == "postgres" {
+		return canExecutePostgresJoin(ctx, q, t.sqlOptions, t.tx.QueryContext)
+	}
 	return canExecuteSQLiteJoin(ctx, q, t.sqlOptions.StructuredQueryDialect, t.tx.QueryContext)
 }
 
@@ -55,10 +63,16 @@ func (t transaction) CanExecuteJoin(ctx context.Context, q dal.StructuredQuery) 
 // expansion. A direct database read may inspect its pool connection; a generic
 // transaction read uses its transaction snapshot instead.
 func (dtb *database) JoinFields(ctx context.Context, source dal.RecordsetSource) ([]string, error) {
+	if dtb.options.StructuredQueryDialect == "postgres" {
+		return postgresJoinFields(ctx, source, dtb.options, dtb.db.QueryContext)
+	}
 	return sqliteJoinFields(ctx, source, dtb.options.StructuredQueryDialect, dtb.db.QueryContext)
 }
 
 func (t transaction) JoinFields(ctx context.Context, source dal.RecordsetSource) ([]string, error) {
+	if t.sqlOptions.StructuredQueryDialect == "postgres" {
+		return postgresJoinFields(ctx, source, t.sqlOptions, t.tx.QueryContext)
+	}
 	return sqliteJoinFields(ctx, source, t.sqlOptions.StructuredQueryDialect, t.tx.QueryContext)
 }
 
@@ -84,6 +98,72 @@ func canExecuteSQLiteJoin(ctx context.Context, q dal.StructuredQuery, dialect st
 	}
 	sources, _ := sqliteJoinSources(q.From())
 	return preflightSQLiteJoinKeys(ctx, q.From(), sources, execute, "from")
+}
+
+// canExecutePostgresJoin accepts a join the PostgreSQL dialect can run as one
+// statement, and declines every other with an error DALgo reads as "use the generic
+// engine". It is decided from the catalog alone, with one lookup of the sources'
+// columns, so it needs no read transaction and answers the same on the database handle
+// and in a transaction: SQLite's data preflight has to run in a transaction because a
+// pool query could move to another connection between the check and the JOIN, but a
+// catalog type cannot be made wrong by the rows. If the types change between the
+// check and the read, the read compiles against the facts of its own connection and
+// refuses the join itself.
+//
+// What it accepts is exactly what the compiler compiles: the whole query is compiled,
+// not only the relation tree, so an unsupported wildcard, FIRST or LAST, or expression
+// takes the generic path instead of failing after a native plan was chosen. A join
+// key pair is accepted when both columns have the same type category (numbers with
+// numbers, text with text, and so on) or are the same type, and declined when the
+// types differ or a key's type has no usable equality (json, xml, geometric types,
+// oid and the reg* types): see typedJoinKeysComparable. A table that is not there is
+// the same error the read would return, *TableNotFoundError.
+func canExecutePostgresJoin(ctx context.Context, q dal.StructuredQuery, options DbOptions, execute executeQueryFunc) error {
+	dialect, err := postgresDialectFor(options)
+	if err != nil {
+		return err
+	}
+	if q == nil || q.From() == nil {
+		return fmt.Errorf("join_shape: from is required")
+	}
+	if err := dal.ValidateJoinTree(q.From()); err != nil {
+		return err
+	}
+	if len(q.From().Joins()) == 0 {
+		return nil
+	}
+	if _, err := compileTypedRead(ctx, q, dialect, execute); err != nil {
+		return fmt.Errorf("join_plan: PostgreSQL cannot natively compile query: %w", err)
+	}
+	return nil
+}
+
+// postgresJoinFields lists a source's columns in table order, from the catalog, for
+// DALgo's generic JOIN wildcard expansion. A column the dialect cannot write under its
+// own name (a mixed-case column under the fold-lower mode) is declined: the
+// expansion would name it in a leaf read the dialect cannot compile.
+func postgresJoinFields(ctx context.Context, source dal.RecordsetSource, options DbOptions, execute executeQueryFunc) ([]string, error) {
+	dialect, err := postgresDialectFor(options)
+	if err != nil {
+		return nil, err
+	}
+	collection, err := typedCollection(source)
+	if err != nil {
+		return nil, err
+	}
+	facts, err := typedFactsForQuery(ctx, dialect, execute, dal.From(source))
+	if err != nil {
+		return nil, err
+	}
+	known, _ := facts.source(typedSourceName{Schema: collection.Schema(), Name: collection.Name()})
+	fields := make([]string, len(known.Columns))
+	for i, column := range known.Columns {
+		if !facts.addressable(column.Name) {
+			return nil, typedUnsupported("join_plan: column %q cannot be addressed: the dialect writes its name in another form", column.Name)
+		}
+		fields[i] = column.Name
+	}
+	return fields, nil
 }
 
 func sqliteJoinSources(from dal.FromSource) (map[string]sqliteJoinSource, error) {

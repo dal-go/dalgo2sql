@@ -36,32 +36,77 @@ using unspecified SQLite row order would not be deterministic.
 
 ## Which path compiles a structured query
 
-A structured DALgo query reaches SQL by one of three paths, and which one is
-decided by the engine, not by the query.
+A structured DALgo query reaches SQL by one of four paths. They are tried in this
+order, and which one runs is decided by how the source was opened, not by the query.
 
-- **SQLite** (`DbOptions.StructuredQueryDialect: "sqlite"`) uses the SQLite
-  structured emitter, `compileStructuredSQL`, described above. It is built around
-  SQLite's dynamic typing and has its own path; the typed compiler does not touch
-  it.
-- **PostgreSQL** uses the typed SQL compiler, not the legacy emitter.
-  `compileTypedSQL(query, dialect, facts)` renders one `SELECT` for a statically
-  typed engine, `newPostgresDialect(mode)` supplies PostgreSQL's spelling, and
-  `dialect.catalogFacts` reads the `facts` (every column of each source, their type
-  categories and NOT NULL flags) with one catalog query. Every constant is a bound
-  argument and every name goes through the dialect's quoting, so no value is
-  written into the statement text. The two identifier modes are exact (names as the
-  query spells them, for databases created with quoted mixed-case names) and fold
-  to lower case (for databases created by dalgo2postgres, which stores lower-case
-  names). A query the compiler cannot run faithfully in one statement is refused
-  with an error matching `dal.ErrNotSupported`, which is the signal for DALgo's
-  generic engine; it is never handed to the legacy emitter. The exact SQL and
-  arguments of every supported shape are in `testdata/postgres`. The compiler and
-  the dialect are in the package but `DbOptions` does not select them yet:
-  `StructuredQueryDialect: "postgres"` is refused as an unsupported dialect until
-  the readers dispatch to the typed compiler.
-- **No dialect, no native compiler** uses the legacy text emitter, described next.
-  PostgreSQL is not meant to be served by it; a PostgreSQL source stays on it only
-  until it is opened with the dialect above.
+1. **A native compiler** (`DbOptions.NativeStructuredQueryCompiler`). When one is
+   set it writes the whole statement, and `StructuredQueryDialect` is not
+   consulted. It is for trusted adapter dialects that bring their own compiler.
+2. **SQLite** (`DbOptions.StructuredQueryDialect: "sqlite"`) uses the SQLite
+   structured emitter, `compileStructuredSQL`, described above. It is built around
+   SQLite's dynamic typing and has its own path; the typed compiler does not touch
+   it.
+3. **PostgreSQL** (`DbOptions.StructuredQueryDialect: "postgres"`) uses the typed SQL
+   compiler, not the legacy emitter. It is described in the next section.
+4. **No dialect, no native compiler** uses the legacy text emitter, described after
+   that. A PostgreSQL source should not stay on it; open it with the dialect above.
+
+Any other non-empty dialect is refused with an error when a structured query is
+read.
+
+### PostgreSQL
+
+With `StructuredQueryDialect: "postgres"` a structured read runs in two steps on
+one connection: one catalog query that reads every column of each source the query
+names (their types, NOT NULL flags and collations), then the one `SELECT` the typed
+compiler writes from that answer. `compileTypedSQL(query, dialect, facts)` is the
+compiler and `newPostgresDialect(mode)` is PostgreSQL's spelling; the exact SQL and
+arguments of every supported shape are in `testdata/postgres`.
+
+- **No value is written into the statement.** Every constant is a bound argument and
+  every name goes through the dialect's quoting (`"` doubled, NUL and names over 63
+  bytes refused). Pass Go integers for whole numbers: a whole number that arrives as
+  a `float64` binds as `numeric`, which is correct but cannot use an index on an
+  integer column. A constant that does not match its column (a number against text)
+  is a server error, not an empty result.
+- **Identifier case** is `DbOptions.IdentifierCase`: `IdentifierCaseExact` (the
+  default) writes names as the query spells them, for databases created with quoted
+  mixed-case names; `IdentifierCaseFoldLower` writes them lower-cased, for databases
+  created by dalgo2postgres. The result keeps the names the query asked for in both
+  modes (`Total` comes back as `Total`, an unaliased `COUNT(*)` as `COUNT(*)`). A select list
+  whose names differ only in case is refused under `IdentifierCaseFoldLower`. Do not
+  put a field mask or access check on such a mount unless the names it compares are
+  folded first.
+- **A table that is not there** fails with `*TableNotFoundError` (it matches
+  `ErrTableNotFound`), which names the table and the nearest name that exists:
+  `table "album" not found; did you mean "Album"? Table names are case-sensitive.`
+  A sequence, a name that resolves to nothing and a relation with no readable column
+  are all "not found"; a source is never compiled without its catalog facts.
+- **Native aggregation and joins.** The adapter reports GROUP BY, HAVING, ORDER BY,
+  COUNT, SUM and AVG with their DISTINCT forms, MIN and MAX as native
+  (`QueryCapabilities`), so DALgo runs them on the server. FIRST and LAST, and any
+  query with a subquery, stay in DALgo's generic engine. A join is accepted
+  (`CanExecuteJoin`) when each ON pair has the same type category (numbers with
+  numbers, text with text) or the same type, on the database handle as in a
+  transaction; it is declined when the types differ or a key's type has no usable
+  equality (json, xml, geometric types, `oid` and the `reg*` types), when the
+  catalog does not hold a key, or when the compiler cannot write the query.
+  `JoinFields` lists a table's columns from the catalog.
+- **Arithmetic** is on double precision: `+`, `-`, `*` and `/` read both operands as
+  `double precision`, as DALgo's generic engine does, so an integer overflow cannot
+  differ between engines; division by zero is NULL. SUM and AVG are cast to double
+  precision. NULLs sort first ascending and last descending, as in DALgo, and the
+  `NULLS` clause is left out for a NOT NULL column.
+- **A query the compiler cannot run faithfully in one statement** is refused with an
+  error matching `dal.ErrNotSupported`, which is the signal for DALgo's generic
+  engine, among them a result column whose alias, or whose expression text, is over
+  63 bytes. It is never handed to the legacy emitter.
+- **No protected-write factory.** `NewDatabase` returns the plain adapter for
+  PostgreSQL; the protected read/write profile exists for SQLite only.
+
+The catalog query and the statement need the same connection, so the database handle
+takes one connection for the life of a structured read and gives it back when the
+reader is closed or read to its end.
 
 ### Legacy text path
 

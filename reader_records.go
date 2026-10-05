@@ -178,6 +178,7 @@ func unusedHelperColumn(columns []dal.Column) string {
 
 func (r recordsReader) Next() (record dalrecord.Record, err error) {
 	if !r.rows.Next() {
+		r.lease.release() // the rows closed themselves at the end: the connection goes back
 		if err := r.rows.Err(); err != nil {
 			return nil, err
 		}
@@ -238,7 +239,9 @@ func (r recordsReader) Cursor() (string, error) {
 }
 
 func (r recordsReader) Close() error {
-	return r.rows.Close()
+	err := r.rows.Close()
+	r.lease.release()
+	return err
 }
 
 // recordsReaderProvider is embedded into database and transaction

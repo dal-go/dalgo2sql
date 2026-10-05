@@ -23,13 +23,18 @@ const (
 	// postgresFoldLower writes strings.ToLower(name) inside double quotes. It is the
 	// rule of dalgo2postgres's DDL (sql_gen.go quoteIdent), which stores every name
 	// in lower case, so a database it created is read back with any spelling
-	// (OVDB).
+	// (OVDB). A field mask or access check applied on such a mount must fold the
+	// names it compares first, or Total passes a mask that names total.
 	postgresFoldLower
 )
 
 // postgresMaxIdentifierBytes is NAMEDATALEN-1. PostgreSQL truncates a longer
 // identifier silently, so two long names that share their first 63 bytes would be
-// one name to the server; the dialect refuses them instead.
+// one name to the server; the dialect refuses them instead. The limit is counted in
+// bytes of the server's encoding, and the dialect counts the UTF-8 bytes it writes:
+// the two agree only when the server encoding is UTF8, which is the encoding the
+// dialect assumes. On a server in another encoding a name of 63 UTF-8 bytes can
+// still be longer than the server's limit and be truncated.
 const postgresMaxIdentifierBytes = 63
 
 // Builtin pg_type OIDs (src/include/catalog/pg_type.dat) whose catalog category
@@ -43,13 +48,47 @@ const (
 	postgresOIDTimeTZ = 1266
 )
 
-// postgresDialect is the typedDialect for PostgreSQL 12 and later. It writes SQL
-// for compileTypedSQL; nothing here reads a value into the text.
+// Builtin pg_type OIDs of the types that cannot key a join (see postgresNoJoinKey).
+// The geometric ones are listed too, for the array types whose element is one; a
+// scalar of category G is caught by its category.
+var postgresNoJoinKeyOIDs = map[int64]bool{
+	114:  true, // json: no equality operator
+	142:  true, // xml: no equality operator
+	4072: true, // jsonpath: no equality operator
+	2970: true, // txid_snapshot: no equality operator
+	5038: true, // pg_snapshot: no equality operator
+	600:  true, // point: no = (only the "same as" operator ~=)
+	601:  true, // lseg
+	602:  true, // path
+	603:  true, // box: = compares area
+	604:  true, // polygon
+	628:  true, // line
+	718:  true, // circle: = compares area
+	26:   true, // oid
+	24:   true, // regproc
+	2202: true, // regprocedure
+	2203: true, // regoper
+	2204: true, // regoperator
+	2205: true, // regclass
+	2206: true, // regtype
+	3734: true, // regconfig
+	3769: true, // regdictionary
+	4089: true, // regnamespace
+	4096: true, // regrole
+	4191: true, // regcollation
+}
+
+// postgresDialect is the typedDialect for PostgreSQL 12 and later, with one
+// exception: NUMERIC accepts Infinity and -Infinity from PostgreSQL 14, so a float
+// infinity constant is a server error on 12 and 13. It writes SQL for
+// compileTypedSQL; nothing here reads a value into the text.
 //
 // Identifiers. Every name is double-quoted with inner quotes doubled (quoteIdent).
 // In postgresFoldLower mode the name is lower-cased first. The 63-byte limit is
 // read on the name as written, that is after folding, which can be longer or
-// shorter than the query's spelling (U+023A is 2 bytes and folds to 3).
+// shorter than the query's spelling (U+023A is 2 bytes and folds to 3). It counts
+// UTF-8 bytes, which is the server's count when its encoding is UTF8
+// (postgresMaxIdentifierBytes).
 //
 // Constants. A constant is typed like a literal typed in psql, by its Go type and
 // never by what it holds (the contract in typed_dialect.go): a signed integer is
@@ -60,13 +99,24 @@ const (
 // server reads it as a date, a UUID or an enum where the column says so. A nil is
 // an untyped NULL; `== nil` never reaches here, the compiler writes IS NULL for it.
 // A mismatch between a constant and a column (a number against text) is a server
-// error, not an empty result. An untyped string with nothing to infer its type from
-// (a lone constant in the select list) is a server error too.
+// error, not an empty result. An untyped string is typed by the place it stands
+// in: the column it is compared to, or text in the select list (PostgreSQL 10 and
+// later resolve an unknown-typed output column to text; not verified against a
+// server here). Where nothing types it, as an aggregate's argument, the server
+// refuses the statement (error 42P18).
+//
+// Pass Go integers for whole numbers. A whole number that arrives as a float64, as
+// every number in a JSON-decoded value does, is bound ?::numeric like any float,
+// not ?::bigint: the comparison is then numeric, correct but unable to use an index
+// on an integer column. The dialect does not turn a float64 into an integer, which
+// would make the cast depend on the value (the contract in typed_dialect.go).
 //
 // Statements. LIMIT and OFFSET are bound. NULLs sort first ascending and last
 // descending, as in DALgo; the NULLS clause is dropped for a NOT NULL column so an
-// index can serve the order. Division is on double precision with a zero divisor
-// read as NULL. SUM and AVG are cast to double precision, as DALgo's generic
+// index can serve the order. Arithmetic is on double precision: division reads a
+// zero divisor as NULL, and +, - and * cast both operands, so an integer
+// overflow cannot differ from DALgo's generic engine and the SQLite path (arithmetic
+// is float64 there). SUM and AVG are cast to double precision, as DALgo's generic
 // engine returns float64; COUNT, MIN and MAX are native.
 //
 // Catalog facts. catalogFacts reads one catalog query (see postgresCatalogQuery)
@@ -96,6 +146,19 @@ var _ typedDialect = postgresDialect{}
 
 func newPostgresDialect(mode postgresIdentifierMode) postgresDialect {
 	return postgresDialect{mode: mode}
+}
+
+// postgresDialectFor builds the dialect DbOptions asks for. An IdentifierCase this
+// package does not define is refused rather than read as the default: a mount that
+// meant to fold names must not run in the exact mode.
+func postgresDialectFor(options DbOptions) (postgresDialect, error) {
+	switch options.IdentifierCase {
+	case "", IdentifierCaseExact:
+		return newPostgresDialect(postgresExact), nil
+	case IdentifierCaseFoldLower:
+		return newPostgresDialect(postgresFoldLower), nil
+	}
+	return postgresDialect{}, fmt.Errorf("unsupported identifier case %q: use %q or %q", options.IdentifierCase, IdentifierCaseExact, IdentifierCaseFoldLower)
 }
 
 // fold is the one case rule of the dialect: quoteIdent writes its result and the
@@ -199,6 +262,14 @@ func (postgresDialect) divide(left, right string) string {
 	return "((" + left + ")::double precision / NULLIF((" + right + ")::double precision, 0))"
 }
 
+// arithmeticOperand reads one operand of +, - and * as double precision, as divide
+// does: integer * integer would fail with error 22003 past the range of the type
+// where DALgo's generic engine and the SQLite path return a float. The cast is
+// wrapped so the operand stands next to any operator, as the contract asks.
+func (postgresDialect) arithmeticOperand(operand string) string {
+	return "((" + operand + ")::double precision)"
+}
+
 // aggregateResult casts SUM and AVG, which PostgreSQL returns as bigint or numeric
 // for integer input, to the float64 DALgo's generic engine returns. The cast is
 // wrapped so the result stands next to any operator, as the contract asks.
@@ -237,26 +308,43 @@ func (postgresDialect) window(string, []string, []string, []string) (string, err
 // postgresCatalogHead and postgresCatalogTail surround the VALUES list of
 // postgresCatalogQuery.
 //
-// to_regclass resolves the bound text exactly as the statement's FROM clause will,
-// search_path included, and gives NULL for a name that is not a relation; the
-// join then drops that source. pg_class limits the answer to what a SELECT can
-// read. pg_attribute lists every column of the relation, a view's as a table's
-// (attnum above zero skips system columns, attisdropped the dropped ones). pg_type
-// gives the category of the column's type, taken from the base type for a domain.
-// pg_collation says whether the column compares by bytes (collisdeterministic,
-// PostgreSQL 12 and later; NULL for a type with no collation). A citext column is
-// flagged like a non-deterministic collation: its equality ignores case.
+// Every system object is spelt pg_catalog.x: an unqualified name is looked up through
+// search_path, where a temporary relation of the same name, or a schema listed before
+// pg_catalog, would answer with another column list.
+//
+// CTE s holds the bound relation texts. CTE c is the columns: pg_catalog.to_regclass
+// resolves the bound text exactly as the statement's FROM clause will, search_path
+// included, and gives NULL for a name that is not a relation, so that source has no
+// row; relkind limits the answer to what a SELECT can read; pg_attribute lists every
+// column of the relation, a view's as a table's (attnum above zero skips system
+// columns, attisdropped the dropped ones). Recursive CTE d walks each column's type
+// down the chain of domains to the base type that is not a domain, however deep the
+// chain (typbasetype of a domain names its parent), and the final select reads the
+// category, the OID and the element type of that base type. collisdeterministic
+// (PostgreSQL 12 and later; NULL for a type with no collation) says whether the
+// column compares by bytes. A citext column is flagged like a non-deterministic
+// collation: its equality ignores case.
+//
+// The query was written by reading the PostgreSQL catalog documentation; no server
+// has run it. SQL-08 pins it against PostgreSQL 12, 17 and 18.
 const (
-	postgresCatalogHead = `SELECT s.name, a.attname::text, format_type(a.atttypid, NULL), bt.typcategory::text, bt.oid::bigint, a.attnotnull, ` +
+	postgresCatalogHead = `WITH RECURSIVE s(name) AS (VALUES `
+	postgresCatalogTail = `), ` +
+		`c AS (SELECT s.name, a.attnum, a.attname, a.atttypid, a.attnotnull, a.attcollation ` +
+		`FROM s ` +
+		`JOIN pg_catalog.pg_class r ON r.oid = pg_catalog.to_regclass(s.name) AND r.relkind IN ('r', 'p', 'v', 'm', 'f') ` +
+		`JOIN pg_catalog.pg_attribute a ON a.attrelid = r.oid AND a.attnum > 0 AND NOT a.attisdropped), ` +
+		`d(start, base, typtype, typbasetype) AS (` +
+		`SELECT t.oid, t.oid, t.typtype, t.typbasetype FROM pg_catalog.pg_type t WHERE t.oid IN (SELECT c.atttypid FROM c) ` +
+		`UNION ALL ` +
+		`SELECT d.start, p.oid, p.typtype, p.typbasetype FROM d JOIN pg_catalog.pg_type p ON d.typtype = 'd' AND p.oid = d.typbasetype) ` +
+		`SELECT c.name, c.attname::text, pg_catalog.format_type(c.atttypid, NULL), bt.typcategory::text, bt.oid::bigint, bt.typelem::bigint, c.attnotnull, ` +
 		`(NOT COALESCE(co.collisdeterministic, TRUE) OR bt.typname = 'citext') ` +
-		`FROM (VALUES `
-	postgresCatalogTail = `) AS s(name) ` +
-		`JOIN pg_class c ON c.oid = to_regclass(s.name) AND c.relkind IN ('r', 'p', 'v', 'm', 'f') ` +
-		`JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped ` +
-		`JOIN pg_type t ON t.oid = a.atttypid ` +
-		`JOIN pg_type bt ON bt.oid = CASE WHEN t.typtype = 'd' THEN t.typbasetype ELSE t.oid END ` +
-		`LEFT JOIN pg_collation co ON co.oid = a.attcollation ` +
-		`ORDER BY s.name, a.attnum`
+		`FROM c ` +
+		`JOIN d ON d.start = c.atttypid AND d.typtype <> 'd' ` +
+		`JOIN pg_catalog.pg_type bt ON bt.oid = d.base ` +
+		`LEFT JOIN pg_catalog.pg_collation co ON co.oid = c.attcollation ` +
+		`ORDER BY c.name, c.attnum`
 )
 
 // postgresCatalogQuery is the one query catalogFacts sends, for n sources whose
@@ -272,6 +360,47 @@ func postgresCatalogQuery(n int) string {
 	}
 	query.WriteString(postgresCatalogTail)
 	return query.String()
+}
+
+// postgresSuggestionQuery lists the names suggestSource chooses from, as (schema,
+// table) pairs of what the session can SELECT. $1 is the schema the query wrote,
+// folded, or empty when it wrote none. With no schema the candidates are the
+// relations search_path makes visible, minus the system schemas; with one, the
+// relations of the schema that has that name in any case. The query depends on
+// nothing the caller wrote: the schema travels as an argument.
+const postgresSuggestionQuery = `SELECT n.nspname::text, c.relname::text ` +
+	`FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace ` +
+	`WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f') AND pg_catalog.has_table_privilege(c.oid, 'SELECT') ` +
+	`AND CASE WHEN $1::text = '' THEN pg_catalog.pg_table_is_visible(c.oid) AND n.nspname NOT IN ('pg_catalog', 'information_schema') ` +
+	`ELSE pg_catalog.lower(n.nspname::text) = pg_catalog.lower($1::text) END ` +
+	`ORDER BY n.nspname, c.relname LIMIT 5000`
+
+func (d postgresDialect) suggestSource(ctx context.Context, execute executeQueryFunc, source typedSourceName) (typedSourceName, bool, error) {
+	rows, err := execute(ctx, postgresSuggestionQuery, d.fold(source.Schema))
+	if err != nil {
+		return typedSourceName{}, false, fmt.Errorf("suggest a table: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var found []typedSourceName
+	var names []string
+	for rows.Next() {
+		var schema, name string
+		if err := rows.Scan(&schema, &name); err != nil {
+			return typedSourceName{}, false, fmt.Errorf("suggest a table: %w", err)
+		}
+		if source.Schema == "" {
+			schema = ""
+		}
+		found = append(found, typedSourceName{Schema: schema, Name: name})
+		names = append(names, name)
+	}
+	if err := rows.Err(); err != nil {
+		return typedSourceName{}, false, fmt.Errorf("suggest a table: %w", err)
+	}
+	if nearest := typedNearestName(d.fold(source.Name), names); nearest >= 0 {
+		return found[nearest], true, nil
+	}
+	return typedSourceName{}, false, nil
 }
 
 // postgresTypeCategory maps a pg_type category letter to the compiler's coarse
@@ -297,6 +426,18 @@ func postgresTypeCategory(category string, typeOID int64) typedTypeCategory {
 	return typedTypeOther
 }
 
+// postgresNoJoinKey reports whether a column of a base type with this category,
+// OID and element type must not key a join: its type has no equality operator, or
+// compares in a way DALgo does not mean (postgresNoJoinKeyOIDs). An array is as good
+// as its element, which the catalog gives as the element type; any other type with
+// an element type (name, point) is judged by itself.
+func postgresNoJoinKey(category string, typeOID, elementOID int64) bool {
+	if category == "A" {
+		typeOID = elementOID
+	}
+	return category == "G" || postgresNoJoinKeyOIDs[typeOID]
+}
+
 // relation is the text the statement writes for a source: its quoted schema, when
 // the query names one, and its quoted name.
 func (d postgresDialect) relation(source typedSourceName) (string, error) {
@@ -315,7 +456,13 @@ func (d postgresDialect) relation(source typedSourceName) (string, error) {
 }
 
 func (d postgresDialect) catalogFacts(ctx context.Context, execute executeQueryFunc, sources []typedSourceName) (typedCatalogFacts, error) {
-	facts := typedCatalogFacts{Fold: d.fold}
+	// Fold is the rule quoteIdent applies, and nil when it applies none: in the exact
+	// mode names are matched as written, which is what nil says (and what tells a
+	// reader that table names are case-sensitive).
+	facts := typedCatalogFacts{}
+	if d.mode == postgresFoldLower {
+		facts.Fold = d.fold
+	}
 	if len(sources) == 0 {
 		return facts, nil
 	}
@@ -340,9 +487,9 @@ func (d postgresDialect) catalogFacts(ctx context.Context, execute executeQueryF
 	facts.Sources = make(map[typedSourceName]typedSourceFacts, len(names))
 	for rows.Next() {
 		var relation, column, dataType, category string
-		var typeOID int64
+		var typeOID, elementOID int64
 		var notNull, nonDeterministic bool
-		if err := rows.Scan(&relation, &column, &dataType, &category, &typeOID, &notNull, &nonDeterministic); err != nil {
+		if err := rows.Scan(&relation, &column, &dataType, &category, &typeOID, &elementOID, &notNull, &nonDeterministic); err != nil {
 			return typedCatalogFacts{}, fmt.Errorf("catalog facts: %w", err)
 		}
 		key, asked := keys[relation]
@@ -356,6 +503,7 @@ func (d postgresDialect) catalogFacts(ctx context.Context, execute executeQueryF
 			Category:                  postgresTypeCategory(category, typeOID),
 			NotNull:                   notNull,
 			NonDeterministicCollation: nonDeterministic,
+			NoJoinKey:                 postgresNoJoinKey(category, typeOID, elementOID),
 		})
 		facts.Sources[key] = source
 	}

@@ -76,6 +76,14 @@ func TestCompileTypedSQLWildcardExpansion(t *testing.T) {
 			wantSQL: `SELECT "AlbumId", "Title", "Title" AS "again" FROM "Album"`,
 		},
 	})
+	// Without a fold the dialect matches names exactly, and so does an exclusion.
+	t.Run("an exclusion is exact when nothing folds", func(t *testing.T) {
+		typedGolden{
+			facts:   facts,
+			query:   typedTestFrom("Album", "").NewQuery().SelectColumns(dal.AllColumnsExcept("secret", "SECRETNOTE")),
+			wantSQL: `SELECT "AlbumId", "Title", "Secret", "SecretNote" FROM "Album"`,
+		}.run(t)
+	})
 	t.Run("without facts the wildcard is unsupported", func(t *testing.T) {
 		q := typedTestFrom("Album", "").NewQuery().SelectColumns(dal.AllColumnsExcept("Secret"))
 		expectTypedUnsupported(t, q, nil, typedCatalogFacts{}, "catalog facts")
@@ -634,7 +642,7 @@ func checkBareNamesUnderAFoldingDialect(t *testing.T, folding foldingTypedDialec
 			dialect: folding.dialect,
 			query: invoice().OrderBy(dal.Ascending(dal.Binary(typedTestField("a"), dal.Add, typedTestConst(1)))).
 				SelectColumns(typedTestColumn(typedTestField("Total"), "a"), typedTestColumn(typedTestField("Name"), "total")),
-			wantSQL:  `SELECT "total" AS "a", "name" AS "total" FROM "invoice" ORDER BY ("total" + $1::bigint) ASC NULLS FIRST`,
+			wantSQL:  `SELECT "total" AS "a", "name" AS "total" FROM "invoice" ORDER BY (` + folding.operand(`"total"`) + ` + ` + folding.operand(`$1::bigint`) + `) ASC NULLS FIRST`,
 			wantArgs: []any{folding.arg(1)},
 		},
 		{
@@ -959,7 +967,7 @@ func TestCompileTypedSQLNamesThatAreColumnsOfAKnownSource(t *testing.T) {
 		{
 			// Only a bare name can be the whole row. A qualified name is not compared
 			// with the identity, and without facts it is not checked at all, which is why
-			// the typedDialect contract makes SQL-04 pass facts for every source.
+			// the typedDialect contract has the readers pass facts for every source.
 			name:    "a qualified name written like its alias, without facts",
 			query:   typedTestFrom("Invoice", "x").NewQuery().SelectColumns(typedTestColumn(typedTestQualified("x", "x"), "")),
 			wantSQL: `SELECT "x"."x" FROM "Invoice" AS "x"`,
@@ -1017,6 +1025,32 @@ func checkFactsLookupsUseTheNameTheDialectWrites(t *testing.T, folding foldingTy
 	t.Run("a select-all is refused even when it excludes the column the dialect cannot write", func(t *testing.T) {
 		q := invoice().SelectColumns(dal.AllColumnsExcept("Total"))
 		expectTypedUnsupported(t, q, folding.dialect, colliding, `catalog column "Total"`)
+	})
+	// An exclusion is matched against the catalog's names after both are folded with
+	// the dialect's rule: the statement writes the folded name, so catalog email with
+	// the exclusion Email must leave the column out. Matched as written it fails open
+	// and the column is returned.
+	t.Run("an exclusion in another case than the catalog name excludes it", func(t *testing.T) {
+		facts := typedCatalogFacts{Fold: folding.fold, Sources: map[typedSourceName]typedSourceFacts{
+			{Name: "invoice"}: {Columns: []typedColumnFact{{Name: "total"}, {Name: "email"}, {Name: "emailnote"}, {Name: "secret"}}},
+		}}
+		runTypedGoldens(t, []typedGolden{
+			{
+				name: "exact name, other case", dialect: folding.dialect, facts: facts,
+				query:   invoice().SelectColumns(dal.AllColumnsExcept("Email")),
+				wantSQL: `SELECT "total", "emailnote", "secret" FROM "invoice"`,
+			},
+			{
+				name: "upper case", dialect: folding.dialect, facts: facts,
+				query:   invoice().SelectColumns(dal.AllColumnsExcept("SECRET", "EMAIL")),
+				wantSQL: `SELECT "total", "emailnote" FROM "invoice"`,
+			},
+			{
+				name: "mask in capitals", dialect: folding.dialect, facts: facts,
+				query:   invoice().SelectColumns(dal.AllColumnsExcept("EMAIL*")),
+				wantSQL: `SELECT "total", "secret" FROM "invoice"`,
+			},
+		})
 	})
 	t.Run("a select-all over names that are their own folded form compiles", func(t *testing.T) {
 		lower := typedCatalogFacts{Fold: folding.fold, Sources: map[typedSourceName]typedSourceFacts{

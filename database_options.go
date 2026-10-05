@@ -18,16 +18,20 @@ type DbOptions struct {
 	// for PostgreSQL, which requires "$1", "$2", … positional markers.
 	Placeholder PlaceholderDialect
 	// StructuredQueryDialect names the SQL dialect whose identifier quoting has
-	// been reviewed. Empty preserves legacy emission; "sqlite" is supported. It
-	// decides two things:
+	// been reviewed. Empty preserves legacy emission; "sqlite" and "postgres" are
+	// supported; any other value makes a structured read fail. It decides two
+	// things:
 	//
 	//   - Structured reads: "sqlite" opts them into safe dialect-specific
-	//     compilation.
+	//     compilation, and so does "postgres", which reads the catalog facts of every
+	//     source first, on the connection the statement runs on, and compiles with
+	//     bound values only (see IdentifierCase and the README).
 	//   - The collection, field and primary-key names of every key read and write
 	//     (Exists, Get, GetMulti, Insert, Set, SetMulti, Update, UpdateMulti,
 	//     Delete, DeleteMulti): with "sqlite" a name is written quoted, and only an
 	//     empty name, a control character, invalid UTF-8 or more than 255 bytes is
-	//     refused; with an empty or any other value a name must be a plain
+	//     refused; with an empty or any other value, "postgres" included (its
+	//     reviewed quoting covers structured reads, not these), a name must be a plain
 	//     identifier (letters, digits and underscores, not starting with a digit,
 	//     at most 255 bytes), or the call fails with ErrUnsafeName and sends no
 	//     statement.
@@ -53,6 +57,11 @@ type DbOptions struct {
 	// trusted adapter dialect. It receives translated JOIN hint fragments on the
 	// actual read path. dalgo2sql provides no SQL Server or Oracle compiler.
 	NativeStructuredQueryCompiler NativeStructuredQueryCompiler
+	// IdentifierCase is read with StructuredQueryDialect "postgres" and picks how
+	// names are written: as the query spells them (the default), or folded to lower
+	// case. Any other value makes every structured read, join check and JoinFields
+	// call fail with an error that names it. See IdentifierCase.
+	IdentifierCase IdentifierCase
 
 	// IsAlreadyExists reports whether err — the raw error returned by the
 	// underlying database/sql driver for a failed INSERT — represents a
@@ -72,6 +81,28 @@ type DbOptions struct {
 	// on error text or type keep working.
 	IsAlreadyExists func(err error) bool
 }
+
+// IdentifierCase says how a SQL dialect that quotes every name writes the names a
+// query spells. It is read with StructuredQueryDialect "postgres"; the other dialects
+// ignore it. The zero value is IdentifierCaseExact.
+//
+// A mount that folds case matches names by their lower-case form on both sides of
+// every check, and the result of a query keeps the names the query asked for: a
+// field written Total is selected as "total" and comes back as Total. No field mask
+// or access check may be applied on such a mount unless the names it compares are
+// folded first, or Total would pass a mask that names total.
+type IdentifierCase string
+
+const (
+	// IdentifierCaseExact writes every name as the query spells it, inside quotes,
+	// so Album and album are two tables. It is the mode for databases whose objects
+	// were created with quoted mixed-case names, and the default.
+	IdentifierCaseExact IdentifierCase = "exact"
+	// IdentifierCaseFoldLower writes every name lower-cased, inside quotes, as
+	// dalgo2postgres's DDL stores them, so a database it created is read back with
+	// any spelling of a name.
+	IdentifierCaseFoldLower IdentifierCase = "fold-lower"
+)
 
 // NativeJoinEligibility lets a concrete adapter validate whether its native
 // compiler can preserve DALgo JOIN semantics for one complete query.

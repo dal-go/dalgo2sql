@@ -32,8 +32,8 @@ import (
 //     compiler numbers the markers once, at the end, with placeholderStyle.
 //     bind and limitOffset write exactly one marker per argument they return;
 //     every other method writes none of its own (checked).
-//   - Operand rule 1, count and order (checked): divide, aggregateResult and
-//     orderItem receive operands already rendered as SQL text. The compiler
+//   - Operand rule 1, count and order (checked): divide, arithmeticOperand,
+//     aggregateResult and orderItem receive operands already rendered as SQL text. The compiler
 //     appends the operands' arguments in the order it passes them, and the
 //     numbering pass gives the nth marker of the final text the nth argument.
 //     So an operand that carries a marker must be written verbatim, exactly
@@ -47,15 +47,15 @@ import (
 //     once with two different probe operands that carry one marker each and
 //     applies the check to that fragment. divide must therefore be a function
 //     of its two operand texts alone; it is called more than once per
-//     statement. aggregateResult and orderItem take one operand, so they have
-//     no order to get wrong.
+//     statement. arithmeticOperand, aggregateResult and orderItem take one
+//     operand, so they have no order to get wrong.
 //   - Operand rule 2, no literal and no comment (checked): a fragment is
 //     quoted identifiers, keywords, punctuation and the marker, never a string
 //     literal and never a comment. The numbering pass understands quoted
 //     identifiers only, so a "?" inside a literal or a comment would be
 //     numbered as a parameter. Write constants with bind.
-//   - Fragments that stand for an expression (divide, aggregateResult) must be
-//     self-delimiting, that is wrapped in parentheses or a function call, so
+//   - Fragments that stand for an expression (divide, arithmeticOperand,
+//     aggregateResult) must be self-delimiting, that is wrapped in parentheses or a function call, so
 //     the compiler can place them next to any operator.
 //   - An error a dialect returns must not quote a value: the compiler passes it
 //     on, and a server logs it. Name the type or the rule, never the content.
@@ -77,8 +77,11 @@ import (
 //     dialect those treat Total and TOTAL as different names, which makes them
 //     refuse or leave a name as the column, never pick another expression, and the
 //     ORDER BY check above catches the written names that then meet. The second
-//     matches a wildcard exclusion against the catalog's names exactly, as
-//     dal.WildcardProjection.Excludes defines. The third is the catalog facts
+//     matches a wildcard exclusion against the catalog's names, both folded with
+//     typedCatalogFacts.Fold (exactly when nothing folds, as
+//     dal.WildcardProjection.Excludes defines), because the statement writes the
+//     folded name: an exclusion Email must leave catalog column email out, and
+//     matched as written it would not. The third is the catalog facts
 //     lookup, which folds the query's name with typedCatalogFacts.Fold and matches
 //     a column only when the catalog's own name equals the result: Fold must be
 //     the case rule quoteIdent applies, a catalog column whose name is not its own
@@ -102,9 +105,11 @@ import (
 //     plain error naming the column; and when the facts do not know the source, an
 //     unqualified field written as the base source's identity is refused with
 //     dal.ErrNotSupported. A qualified name without facts cannot be checked, so
-//     the caller (SQL-04) must pass catalog facts for every source it compiles,
-//     and each source's Columns must list every column a query may name (a system
-//     column such as ctid is not one unless the dialect lists it).
+//     the caller must pass catalog facts for every source it compiles: the readers
+//     do, through typedFactsForQuery, which fails with table-not-found for a source
+//     the facts do not know instead of compiling it. Each source's Columns must list
+//     every column a query may name (a system column such as ctid is not one unless
+//     the dialect lists it).
 //
 // The interface stays unexported until three dialects exist.
 type typedDialect interface {
@@ -137,6 +142,15 @@ type typedDialect interface {
 	// divides as floating point and a zero divisor yields NULL.
 	divide(left, right string) string
 
+	// arithmeticOperand renders one operand of +, - or * so the operation runs on the
+	// engine's floating-point type, as DALgo's generic engine computes (float64) and
+	// as division does: a statically typed engine would otherwise run integer
+	// arithmetic and fail on overflow where DALgo returns a number. It takes one
+	// operand, so it has no order to get wrong; the compiler calls it for the left
+	// and then the right operand and joins them, and the operand rules below apply
+	// (verbatim, once, self-delimiting, no literal and no comment).
+	arithmeticOperand(operand string) string
+
 	// aggregateResult wraps one rendered aggregate (function is dal.SUM,
 	// dal.COUNT, ...) so its result type matches DALgo's, for example a cast of
 	// SUM and AVG to double precision.
@@ -163,6 +177,14 @@ type typedDialect interface {
 	// (see the name-resolution rules above). The PostgreSQL dialect
 	// (dialect_postgres.go) documents how it does this.
 	catalogFacts(ctx context.Context, execute executeQueryFunc, sources []typedSourceName) (typedCatalogFacts, error)
+
+	// suggestSource names the existing source nearest to a name that catalogFacts
+	// did not resolve, for the "did you mean" of a not-found error: one that differs
+	// only in case first, else a near spelling. It returns false when none is near.
+	// It runs on the same connection or transaction as catalogFacts, only when a
+	// source was not found, offers only what the session can read, and names a source
+	// with the schema the query wrote when the query named one.
+	suggestSource(ctx context.Context, execute executeQueryFunc, source typedSourceName) (typedSourceName, bool, error)
 
 	// window is reserved for window functions. DTQL has none today and the
 	// compiler never calls it; the seam exists so a dialect can add them later
@@ -204,6 +226,11 @@ type typedColumnFact struct {
 	// equality (citext, ICU nondeterministic collations). The compiler carries
 	// it for dialect helpers; it does not act on it.
 	NonDeterministicCollation bool
+	// NoJoinKey marks a type that must not key a join even against a column of the
+	// very same type: the engine has no equality operator for it (PostgreSQL json,
+	// xml, point), or compares it in a way DALgo does not mean (a box by area, an oid
+	// as a number that names an object). typedJoinKeysComparable refuses the pair.
+	NoJoinKey bool
 }
 
 // typedSourceFacts holds a source's columns in table order.
@@ -268,12 +295,26 @@ func (f typedCatalogFacts) column(name typedSourceName, column string) (typedCol
 
 // typedJoinKeysComparable reports whether a join may equate two columns on a
 // statically typed engine: they share a scalar category, or they are the same
-// named type. A column of unknown type is comparable only to the same type.
+// named type. A column of unknown type is comparable only to the same type. A
+// column whose type cannot key a join (NoJoinKey) is comparable to nothing.
 func typedJoinKeysComparable(a, b typedColumnFact) bool {
+	if a.NoJoinKey || b.NoJoinKey {
+		return false
+	}
 	if a.Category == b.Category && a.Category != typedTypeUnknown && a.Category != typedTypeOther {
 		return true
 	}
 	return a.DataType != "" && a.DataType == b.DataType
+}
+
+// typedIdentifierTooLongError is the error for a name over the engine's length
+// limit. The compiler tells it from the other identifier faults: a name that only
+// labels a result column is no malformed query when it is merely too long for the
+// engine (typedCompiler.quoteOutputName).
+type typedIdentifierTooLongError struct{ length, limit int }
+
+func (e *typedIdentifierTooLongError) Error() string {
+	return fmt.Sprintf("identifier is %d bytes, over the engine limit of %d", e.length, e.limit)
 }
 
 // checkTypedIdentifier is the validation every dialect's quoteIdent starts
@@ -287,7 +328,7 @@ func checkTypedIdentifier(name string, maxBytes int) error {
 	case !utf8.ValidString(name):
 		return fmt.Errorf("identifier is not valid UTF-8")
 	case len(name) > maxBytes:
-		return fmt.Errorf("identifier is %d bytes, over the engine limit of %d", len(name), maxBytes)
+		return &typedIdentifierTooLongError{length: len(name), limit: maxBytes}
 	}
 	return nil
 }

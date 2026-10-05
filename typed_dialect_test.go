@@ -219,6 +219,9 @@ func TestTypedJoinKeysComparable(t *testing.T) {
 		{"boolean and boolean", col("bool", typedTypeBoolean), col("boolean", typedTypeBoolean), true},
 		{"time and time", col("timestamptz", typedTypeTime), col("date", typedTypeTime), true},
 		{"binary and binary", col("bytea", typedTypeBinary), col("blob", typedTypeBinary), true},
+		{"the same type that cannot key a join", typedColumnFact{DataType: "json", Category: typedTypeOther, NoJoinKey: true}, typedColumnFact{DataType: "json", Category: typedTypeOther, NoJoinKey: true}, false},
+		{"a scalar category with one side that cannot key a join", typedColumnFact{DataType: "oid", Category: typedTypeNumber, NoJoinKey: true}, col("int4", typedTypeNumber), false},
+		{"a scalar category with the other side that cannot key a join", col("int4", typedTypeNumber), typedColumnFact{DataType: "oid", Category: typedTypeNumber, NoJoinKey: true}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

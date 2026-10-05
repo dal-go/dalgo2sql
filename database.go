@@ -23,28 +23,66 @@ type database struct {
 	options DbOptions
 }
 
-// QueryCapabilities advertises the SQLite structured-query subset. FIRST and
-// LAST remain local until aggregate-local ORDER BY can be rendered without
-// relying on unspecified row order.
+// QueryCapabilities advertises what the structured-query dialect runs on the server.
+// With the PostgreSQL dialect that is GROUP BY, HAVING, ORDER BY, COUNT, SUM and AVG
+// with their DISTINCT forms, MIN and MAX; with SQLite, the same subset. Any other
+// dialect declares nothing, and DALgo aggregates in its own engine. FIRST and LAST
+// remain local until aggregate-local ORDER BY can be rendered without relying on
+// unspecified row order, and neither dialect promises a group-key order or a stable
+// row order.
 func (dtb *database) QueryCapabilities() dal.QueryCapabilities {
-	if dtb.options.StructuredQueryDialect != "sqlite" {
-		return dal.QueryCapabilities{}
+	switch dtb.options.StructuredQueryDialect {
+	case "postgres":
+		return postgresDialect{}.capabilities()
+	case "sqlite":
+		return dal.QueryCapabilities{
+			GroupBy: true,
+			Having:  true,
+			OrderBy: true,
+			Aggregate: dal.AggregateCapabilities{
+				Count: true, CountDistinct: true,
+				Sum: true, SumDistinct: true,
+				Avg: true, AvgDistinct: true,
+				Min: true, Max: true,
+			},
+		}
 	}
-	return dal.QueryCapabilities{
-		GroupBy: true,
-		Having:  true,
-		OrderBy: true,
-		Aggregate: dal.AggregateCapabilities{
-			Count: true, CountDistinct: true,
-			Sum: true, SumDistinct: true,
-			Avg: true, AvgDistinct: true,
-			Min: true, Max: true,
-		},
-	}
+	return dal.QueryCapabilities{}
 }
 
 func (dtb *database) ExecuteQueryToRecordsetReader(ctx context.Context, query dal.Query, options ...recordset.Option) (dal.RecordsetReader, error) {
-	return getRecordsetReaderWithOptions(ctx, query, dtb.executeQuery, dtb.options, options...)
+	execute, lease, err := dtb.readExecutor(ctx, query, dtb.executeQuery)
+	if err != nil {
+		return nil, err
+	}
+	reader, err := getRecordsetReaderWithOptions(ctx, query, execute, dtb.options, options...)
+	if lease == nil {
+		return reader, err
+	}
+	if err != nil {
+		lease.release()
+		return nil, err
+	}
+	reader.lease = lease
+	return reader, nil
+}
+
+// readExecutor says where a read runs its statements. With the PostgreSQL dialect a
+// structured read runs two: the catalog lookup that tells the compiler what the
+// sources are, and the statement it compiles from the answer. Each PostgreSQL
+// connection has its own search_path, and database/sql hands each call of a pool to
+// any connection, so the two could describe different relations. The read therefore
+// takes one connection for both, and the lease the reader releases when it is done
+// with the rows. Any other read runs on pool, as before, and holds no lease.
+func (dtb *database) readExecutor(ctx context.Context, query dal.Query, pool executeQueryFunc) (executeQueryFunc, *connLease, error) {
+	if _, structured := query.(dal.StructuredQuery); !structured || dtb.options.StructuredQueryDialect != "postgres" {
+		return pool, nil, nil
+	}
+	conn, err := dtb.db.Conn(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	return conn.QueryContext, &connLease{conn: conn}, nil
 }
 
 //func (dtb *database) Connect(ctx context.Context) (dal.Connection, error) {
@@ -115,7 +153,20 @@ func (dtb *database) RunReadwriteTransaction(ctx context.Context, f dal.RWTxWork
 }
 
 func (dtb *database) ExecuteQueryToRecordsReader(ctx context.Context, query dal.Query) (dal.RecordsReader, error) {
-	return getRecordsReaderWithOptions(ctx, query, dtb.db.QueryContext, dtb.options)
+	execute, lease, err := dtb.readExecutor(ctx, query, dtb.db.QueryContext)
+	if err != nil {
+		return nil, err
+	}
+	reader, err := getRecordsReaderWithOptions(ctx, query, execute, dtb.options)
+	if lease == nil {
+		return reader, err
+	}
+	if err != nil {
+		lease.release()
+		return nil, err
+	}
+	reader.lease = lease
+	return reader, nil
 }
 
 // NewDatabase creates a new instance of DALgo adapter to SQL database.

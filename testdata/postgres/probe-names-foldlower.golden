@@ -1,0 +1,39 @@
+=== probe 1 as every kind of name
+sql: SELECT "x"."o'brien'; drop table ""album""; --" AS "renamed", COUNT("x"."o'brien'; drop table ""album""; --") AS "o'brien'; drop table ""album""; --" FROM "o'brien'; drop table ""album""; --"."invoice" AS "x" WHERE "x"."o'brien'; drop table ""album""; --" = $1::bigint GROUP BY "x"."o'brien'; drop table ""album""; --" ORDER BY "x"."o'brien'; drop table ""album""; --" ASC NULLS FIRST
+$1 int64 1
+=== probe 2 as every kind of name
+sql: SELECT "x"."x') or 1=1 --" AS "renamed", COUNT("x"."x') or 1=1 --") AS "x') or 1=1 --" FROM "x') or 1=1 --"."invoice" AS "x" WHERE "x"."x') or 1=1 --" = $1::bigint GROUP BY "x"."x') or 1=1 --" ORDER BY "x"."x') or 1=1 --" ASC NULLS FIRST
+$1 int64 1
+=== probe 3 as every kind of name
+sql: SELECT "x"."'; select pg_sleep(10); --" AS "renamed", COUNT("x"."'; select pg_sleep(10); --") AS "'; select pg_sleep(10); --" FROM "'; select pg_sleep(10); --"."invoice" AS "x" WHERE "x"."'; select pg_sleep(10); --" = $1::bigint GROUP BY "x"."'; select pg_sleep(10); --" ORDER BY "x"."'; select pg_sleep(10); --" ASC NULLS FIRST
+$1 int64 1
+=== probe 4 as every kind of name
+sql: SELECT "x"."$1" AS "renamed", COUNT("x"."$1") AS "$1" FROM "$1"."invoice" AS "x" WHERE "x"."$1" = $1::bigint GROUP BY "x"."$1" ORDER BY "x"."$1" ASC NULLS FIRST
+$1 int64 1
+=== probe 5 as every kind of name
+sql: SELECT "x"."?" AS "renamed", COUNT("x"."?") AS "?" FROM "?"."invoice" AS "x" WHERE "x"."?" = $1::bigint GROUP BY "x"."?" ORDER BY "x"."?" ASC NULLS FIRST
+$1 int64 1
+=== probe 6 as every kind of name
+sql: SELECT "x"."\" AS "renamed", COUNT("x"."\") AS "\" FROM "\"."invoice" AS "x" WHERE "x"."\" = $1::bigint GROUP BY "x"."\" ORDER BY "x"."\" ASC NULLS FIRST
+$1 int64 1
+=== probe 7 as every kind of name
+sql: SELECT "x"."%" AS "renamed", COUNT("x"."%") AS "%" FROM "%"."invoice" AS "x" WHERE "x"."%" = $1::bigint GROUP BY "x"."%" ORDER BY "x"."%" ASC NULLS FIRST
+$1 int64 1
+=== probe 8 as every kind of name
+sql: SELECT "x"."""; drop table x; --" AS "renamed", COUNT("x"."""; drop table x; --") AS """; drop table x; --" FROM """; drop table x; --"."invoice" AS "x" WHERE "x"."""; drop table x; --" = $1::bigint GROUP BY "x"."""; drop table x; --" ORDER BY "x"."""; drop table x; --" ASC NULLS FIRST
+$1 int64 1
+=== probe 9 as every kind of name
+sql: SELECT "x"."line
+break " AS "renamed", COUNT("x"."line
+break ") AS "line
+break " FROM "line
+break "."invoice" AS "x" WHERE "x"."line
+break " = $1::bigint GROUP BY "x"."line
+break " ORDER BY "x"."line
+break " ASC NULLS FIRST
+$1 int64 1
+=== probe 10 as every kind of name
+error: from: schema name: identifier contains a NUL byte
+=== probe 11 as every kind of name
+sql: SELECT "x"."/* c */" AS "renamed", COUNT("x"."/* c */") AS "/* c */" FROM "/* c */"."invoice" AS "x" WHERE "x"."/* c */" = $1::bigint GROUP BY "x"."/* c */" ORDER BY "x"."/* c */" ASC NULLS FIRST
+$1 int64 1

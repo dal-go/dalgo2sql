@@ -69,56 +69,79 @@ func typedUnsupported(format string, args ...any) error {
 // catalog facts of a known source do not list is a plain error, not a refusal:
 // the table has no such column.
 func compileTypedSQL(q dal.StructuredQuery, dialect typedDialect, facts typedCatalogFacts) (string, []any, error) {
+	statement, err := compileTypedStatement(q, dialect, facts)
+	if err != nil {
+		return "", nil, err
+	}
+	return statement.text, statement.args, nil
+}
+
+// typedStatement is a compiled query.
+type typedStatement struct {
+	text string
+	args []any
+	// outputs names each column of the result, in order, as the query asked for it:
+	// the alias, else the field's own name, else the expression's text, and for a
+	// column a wildcard expanded, the catalog's name. The server names a column as
+	// the dialect wrote it, and a dialect that folds case writes Total as "total", so
+	// the reader keys each record by outputs, not by the name the server returns. It
+	// is nil when the statement selects *, whose columns are the catalog's own.
+	outputs []string
+}
+
+// compileTypedStatement is compileTypedSQL with the names the query asked for each
+// result column. It is what a reader calls.
+func compileTypedStatement(q dal.StructuredQuery, dialect typedDialect, facts typedCatalogFacts) (typedStatement, error) {
 	if dialect == nil {
-		return "", nil, errors.New("typed SQL compiler requires a dialect")
+		return typedStatement{}, errors.New("typed SQL compiler requires a dialect")
 	}
 	if q == nil || q.From() == nil || q.From().Base() == nil {
-		return "", nil, errors.New("typed SQL query requires a source")
+		return typedStatement{}, errors.New("typed SQL query requires a source")
 	}
 	if q.StartFrom() != "" || q.StartAfter() != "" {
-		return "", nil, typedUnsupported("cursors (startFrom, startAfter)")
+		return typedStatement{}, typedUnsupported("cursors (startFrom, startAfter)")
 	}
 	if dal.HasSubquery(q) {
-		return "", nil, typedUnsupported("subqueries run in the generic engine, not in one statement")
+		return typedStatement{}, typedUnsupported("subqueries run in the generic engine, not in one statement")
 	}
 	// A DTQL query can ask for exact decimal results (dtql/query.go, Money()).
 	// DALgo computes those in its federated engine, in decimal text with half-even
 	// rounding; the statement would compute SUM, AVG and division in double
 	// precision, so honouring the option here would be approximating it.
 	if m, ok := q.(interface{ Money() *dal.MoneyConfig }); ok && m.Money() != nil {
-		return "", nil, typedUnsupported("the money option (exact decimal results) is computed by DALgo's federated engine, not in one statement")
+		return typedStatement{}, typedUnsupported("the money option (exact decimal results) is computed by DALgo's federated engine, not in one statement")
 	}
 	if q.Limit() < 0 || q.Offset() < 0 {
-		return "", nil, errors.New("limit and offset must be non-negative")
+		return typedStatement{}, errors.New("limit and offset must be non-negative")
 	}
 	if err := validateTypedAggregation(q, dialect); err != nil {
-		return "", nil, err
+		return typedStatement{}, err
 	}
 	if len(q.From().Joins()) != 0 {
 		if err := validateTypedJoins(q.From()); err != nil {
-			return "", nil, err
+			return typedStatement{}, err
 		}
 		if err := validateTypedJoinSources(q.From(), "from"); err != nil {
-			return "", nil, err
+			return typedStatement{}, err
 		}
 	} else if err := validateTypedScanRestated(q); err != nil {
-		return "", nil, err
+		return typedStatement{}, err
 	}
 	c := &typedCompiler{dialect: dialect, facts: facts}
-	text, args, err := c.query(q)
+	statement, err := c.query(q)
 	if err != nil {
-		return "", nil, err
+		return typedStatement{}, err
 	}
 	// The bound is on the statement, not on one IN list: lists and constants add
 	// up, and the driver would fail the whole statement past the limit.
-	if len(args) > typedMaxArguments {
-		return "", nil, typedUnsupported("the statement binds %d values, over the %d one statement may bind", len(args), typedMaxArguments)
+	if len(statement.args) > typedMaxArguments {
+		return typedStatement{}, typedUnsupported("the statement binds %d values, over the %d one statement may bind", len(statement.args), typedMaxArguments)
 	}
-	text, err = numberTypedPlaceholders(text, dialect.placeholderStyle(), len(args))
+	statement.text, err = numberTypedPlaceholders(statement.text, dialect.placeholderStyle(), len(statement.args))
 	if err != nil {
-		return "", nil, err
+		return typedStatement{}, err
 	}
-	return text, args, nil
+	return statement, nil
 }
 
 // errTypedInvalidAggregation is the whole of what the compiler says when
@@ -226,8 +249,9 @@ func validateTypedJoinSources(from dal.FromSource, path string) error {
 // Database() is not checked. A lone source in a named database is right only
 // because the federated executor already routed the leaf to that database's
 // connection, which the compiler cannot verify: it renders the table by its own
-// name. SQL-04 must give the compiler the connection's own database name so it
-// can compare.
+// name. The compiler would need the connection's own database name to compare, and
+// neither the readers nor DbOptions have one (DbOptions.ID names the adapter, not a
+// database), so the check is not made.
 func validateTypedScanRestated(q dal.StructuredQuery) error {
 	collection, err := typedCollection(q.From().Base())
 	if err != nil || (collection.ScanLimit() == 0 && len(collection.ScanOrders()) == 0) {
@@ -310,6 +334,11 @@ type typedSelectItem struct {
 	// because the server compares what is written: a dialect that folds case in
 	// quoteIdent writes Total and TOTAL as one identifier.
 	output string
+	// asked is the name the query asked for this output: the alias, else the field's
+	// own name, else the expression's text; for a column a wildcard expanded, the
+	// catalog's name. Two items can write one output name while asking two different
+	// ones when the dialect folds case. Empty for the bare "*".
+	asked string
 	// column is, when expression is a field, that field's quoted name on its own
 	// (no source qualifier, no alias), as the dialect wrote it. Empty otherwise.
 	// An item whose output equals the bare quoted name of a column and whose
@@ -320,10 +349,10 @@ type typedSelectItem struct {
 // query assembles the statement. FROM is rendered first because it fixes which
 // sources are visible, but it binds no value, so the arguments still follow the
 // text order: select list, WHERE, GROUP BY, HAVING, ORDER BY, LIMIT and OFFSET.
-func (c *typedCompiler) query(q dal.StructuredQuery) (string, []any, error) {
+func (c *typedCompiler) query(q dal.StructuredQuery) (typedStatement, error) {
 	relation, err := c.relation(q.From(), "from", nil)
 	if err != nil {
-		return "", nil, err
+		return typedStatement{}, err
 	}
 	c.sources, c.nullable = relation.sources, relation.nullable
 	c.base = typedIdentity(q.From().Base())
@@ -335,7 +364,7 @@ func (c *typedCompiler) query(q dal.StructuredQuery) (string, []any, error) {
 	}
 	items, err := c.selectItems(q, columns)
 	if err != nil {
-		return "", nil, err
+		return typedStatement{}, err
 	}
 	aliases := typedAliases(columns)
 
@@ -371,12 +400,20 @@ func (c *typedCompiler) query(q dal.StructuredQuery) (string, []any, error) {
 	} {
 		clauseText, clauseArgs, err := clause()
 		if err != nil {
-			return "", nil, err
+			return typedStatement{}, err
 		}
 		text.WriteString(clauseText)
 		args = append(args, clauseArgs...)
 	}
-	return text.String(), args, nil
+	statement := typedStatement{text: text.String(), args: args}
+	for _, item := range items {
+		if item.asked == "" { // the bare *: its columns are the catalog's own
+			statement.outputs = nil
+			break
+		}
+		statement.outputs = append(statement.outputs, item.asked)
+	}
+	return statement, nil
 }
 
 // selectItems renders the SELECT list. Aggregate queries pass their effective
@@ -408,7 +445,24 @@ func (c *typedCompiler) selectItems(q dal.StructuredQuery, columns []dal.Column)
 	if len(items) == 0 {
 		return nil, typedUnsupported("the wildcard projection excludes every column")
 	}
-	return items, nil
+	return items, c.checkOutputsStayApart(items)
+}
+
+// checkOutputsStayApart refuses a select list in which two outputs the query names
+// differently are one name once the dialect writes them: a dialect that folds case
+// writes Total and TOTAL as "total". The server then returns two columns of one name
+// and the reader, which keys a record by name, keeps one of them. Naming the same
+// output twice is not new (the query asked for one name), and with a dialect that
+// writes names as asked two names are never one, so neither is refused.
+func (c *typedCompiler) checkOutputsStayApart(items []typedSelectItem) error {
+	asked := make(map[string]string, len(items))
+	for _, item := range items {
+		if previous, seen := asked[item.output]; seen && previous != item.asked {
+			return typedUnsupported("the select list names %q and %q, which are one name once the dialect writes them (%s)", previous, item.asked, item.output)
+		}
+		asked[item.output] = item.asked
+	}
+	return nil
 }
 
 // expandWildcard replaces `*` with the source's columns from the catalog
@@ -417,6 +471,18 @@ func (c *typedCompiler) expandWildcard(wildcard *wildcardProjectionPlan) ([]type
 	source, ok := c.facts.source(c.sources[c.base].table)
 	if !ok {
 		return nil, typedUnsupported("a wildcard projection needs catalog facts for its source")
+	}
+	// The statement writes the dialect's folded names, so an exclusion is matched
+	// against them folded the same way. Matched as the query spells it, an exclusion
+	// Email would leave catalog column email in the list of a dialect that folds case
+	// (dal.WildcardProjection.Excludes is exact for a plain exclusion), and the select-all
+	// would return a column its caller excluded. A mask is case-insensitive already.
+	projection := *wildcard.projection
+	if c.facts.Fold != nil {
+		projection.Exclude = make([]string, len(wildcard.projection.Exclude))
+		for i, exclusion := range wildcard.projection.Exclude {
+			projection.Exclude[i] = c.facts.fold(exclusion)
+		}
 	}
 	items := make([]typedSelectItem, 0, len(source.Columns))
 	for _, column := range source.Columns {
@@ -430,14 +496,14 @@ func (c *typedCompiler) expandWildcard(wildcard *wildcardProjectionPlan) ([]type
 		if !c.facts.addressable(column.Name) {
 			return nil, typedUnsupported("a wildcard projection cannot list catalog column %q: the dialect writes its name in another form", column.Name)
 		}
-		if wildcard.projection.Excludes(column.Name) {
+		if projection.Excludes(column.Name) {
 			continue
 		}
 		quoted, err := c.quote(column.Name)
 		if err != nil {
 			return nil, err
 		}
-		items = append(items, typedSelectItem{expression: dal.NewFieldRef("", column.Name), sql: quoted, output: quoted, column: quoted})
+		items = append(items, typedSelectItem{expression: dal.NewFieldRef("", column.Name), sql: quoted, output: quoted, column: quoted, asked: column.Name})
 	}
 	return items, nil
 }
@@ -465,7 +531,7 @@ func (c *typedCompiler) selectItem(column dal.Column) (typedSelectItem, error) {
 	name := column.Alias
 	if name == "" {
 		if isField {
-			item.output = item.column
+			item.output, item.asked = item.column, field.Name()
 			return item, nil
 		}
 		if len(args) != 0 {
@@ -473,13 +539,29 @@ func (c *typedCompiler) selectItem(column dal.Column) (typedSelectItem, error) {
 		}
 		name = column.Expression.String()
 	}
-	quoted, err := c.quote(name)
+	quoted, err := c.quoteOutputName(name)
 	if err != nil {
 		return typedSelectItem{}, err
 	}
 	item.sql += " AS " + quoted
-	item.output = quoted
+	item.output, item.asked = quoted, name
 	return item, nil
+}
+
+// quoteOutputName quotes the name of a result column: an alias, or the text of an
+// unaliased expression. Such a name only labels the column. A name the engine
+// cannot spell because it is too long is therefore no malformed query, and DALgo's
+// generic engine, which writes no name into a statement, can label the column
+// itself: it is refused as unsupported. Any other fault (empty, a NUL byte, not
+// UTF-8) stays a plain error, as for every other name. The message carries the
+// length and the limit, never the name.
+func (c *typedCompiler) quoteOutputName(name string) (string, error) {
+	quoted, err := c.quote(name)
+	var tooLong *typedIdentifierTooLongError
+	if errors.As(err, &tooLong) {
+		return "", typedUnsupported("an output name is too long for the engine, which cannot spell it as a column label: %v", err)
+	}
+	return quoted, err
 }
 
 func (c *typedCompiler) where(condition dal.Condition) (string, []any, error) {
@@ -851,6 +933,9 @@ func (c *typedCompiler) joinOn(conditions []dal.Condition, visible map[string]ty
 		leftColumn, _, leftKnown := c.columnFact(left, visible)
 		rightColumn, _, rightKnown := c.columnFact(right, visible)
 		if leftKnown && rightKnown && !typedJoinKeysComparable(leftColumn, rightColumn) {
+			if leftColumn.NoJoinKey || rightColumn.NoJoinKey {
+				return "", typedUnsupported("%s: join_plan: key types %q and %q cannot be compared in a JOIN", pair, leftColumn.DataType, rightColumn.DataType)
+			}
 			return "", typedUnsupported("%s: join_plan: key types differ (%q against %q)", pair, leftColumn.DataType, rightColumn.DataType)
 		}
 		parts[i] = leftSQL + " = " + rightSQL
@@ -1146,7 +1231,25 @@ func (c *typedCompiler) binary(expression dal.BinaryExpression) (string, []any, 
 		}
 		return quotient, args, nil
 	}
+	left, err = c.arithmeticOperand(left)
+	if err != nil {
+		return "", nil, err
+	}
+	right, err = c.arithmeticOperand(right)
+	if err != nil {
+		return "", nil, err
+	}
 	return "(" + left + " " + string(expression.Operator) + " " + right + ")", args, nil
+}
+
+// arithmeticOperand asks the dialect to render one operand of +, - or *, and
+// applies operand rule 1 to what it wrote.
+func (c *typedCompiler) arithmeticOperand(operand string) (string, error) {
+	wrapped := c.dialect.arithmeticOperand(operand)
+	if err := c.checkFragment(wrapped, 0, operand); err != nil {
+		return "", err
+	}
+	return wrapped, nil
 }
 
 // typedProbeLeft and typedProbeRight are two operands that differ in text, carry

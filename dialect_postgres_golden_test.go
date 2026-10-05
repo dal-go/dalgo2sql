@@ -199,18 +199,44 @@ func TestPostgresGoldenShapes(t *testing.T) {
 		{name: "columns and aliases", query: album().SelectColumns(col(field("Title"), ""), col(field("AlbumId"), "id"))},
 		{name: "schema-qualified source with an alias", query: dal.From(dal.NewQualifiedRootCollectionRef("public", "Album", "a")).NewQuery().
 			SelectColumns(col(typedTestQualified("a", "Title"), ""))},
+		// The exclusions are spelt as the query spells them in both modes: under
+		// FoldLower the catalog holds lower-case names and the exclusion Email still
+		// leaves the column email out, because both are folded before they are matched.
 		{name: "a select-all expanded from the catalog facts, minus exclusions", facts: withFacts,
+			query: typedTestFrom("Customer", "").NewQuery().SelectColumns(dal.AllColumnsExcept("Email", "SupportRepId"))},
+		{name: "a select-all with a mask and an explicit column after it", facts: withFacts,
+			query: typedTestFrom("Customer", "").NewQuery().SelectColumns(dal.AllColumnsExcept("Support*", "E*"), col(field("Email"), "mail"))},
+		{name: "a select-all whose exclusion is in the catalog's own spelling", facts: withFacts,
 			byMode: func(mode postgresIdentifierMode) dal.StructuredQuery {
 				return typedTestFrom("Customer", "").NewQuery().SelectColumns(dal.AllColumnsExcept(catalogSpelling(mode, "Email", "SupportRepId")...))
-			}},
-		{name: "a select-all with a mask and an explicit column after it", facts: withFacts,
-			byMode: func(mode postgresIdentifierMode) dal.StructuredQuery {
-				return typedTestFrom("Customer", "").NewQuery().SelectColumns(dal.AllColumnsExcept(catalogSpelling(mode, "Support*", "E*")...), col(field("Email"), "mail"))
 			}},
 		{name: "a select-all needs the catalog facts", query: typedTestFrom("Customer", "").NewQuery().SelectColumns(dal.AllColumnsExcept("Email"))},
 		{name: "an unaliased expression is named by its text", query: album().SelectColumns(col(dal.Binary(field("a"), dal.Add, field("b")), ""))},
 		{name: "a constant in the select list needs an alias", query: album().SelectColumns(col(typedTestConst(5), "five"))},
 		{name: "an unaliased expression carrying a constant is refused", query: album().SelectColumns(col(dal.Binary(field("a"), dal.Add, typedTestConst(1)), ""))},
+
+		// The names of the result columns.
+		{name: "an alias of 63 bytes is accepted", query: album().SelectColumns(col(field("Title"), strings.Repeat("a", 63)))},
+		{name: "an alias over 63 bytes is declined, the generic engine labels the column", query: album().SelectColumns(col(field("Title"), strings.Repeat("a", 64)))},
+		{name: "the text of an unaliased expression over 63 bytes is declined", query: album().SelectColumns(
+			col(dal.Binary(field(strings.Repeat("a", 30)), dal.Add, field(strings.Repeat("b", 30))), ""))},
+		{name: "two outputs that are one name once folded", query: album().SelectColumns(col(field("Title"), ""), col(field("TITLE"), ""))},
+		{name: "count(*) is named as DALgo names it", query: invoice().SelectColumns(dal.Count())},
+
+		// The document identity and the key of a record.
+		{name: "dal.ID names a real column and is read as one", query: album().Where(dal.ID("AlbumId", 7)).SelectColumns()},
+		{name: "dal.ID with a string key", query: album().Where(dal.ID("Title", "Ada")).SelectColumns()},
+
+		// The leaf read the generic engine sends for a join or a subquery: the scan of
+		// a bounded relation restated as ORDER BY and LIMIT, nothing else.
+		{name: "a scan-bounded source whose scan the statement restates", facts: withFacts,
+			query: dal.From(dal.NewRootCollectionRef("Invoice", "").WithScan(10, dal.Descending(field("InvoiceDate")))).NewQuery().
+				OrderBy(dal.Descending(field("InvoiceDate"))).Limit(10).SelectColumns(col(field("InvoiceId"), ""), col(field("Total"), ""))},
+		{name: "a scan-bounded source with a statement limit below the scan's", facts: withFacts,
+			query: dal.From(dal.NewRootCollectionRef("Invoice", "").WithScan(10, dal.Descending(field("InvoiceDate")))).NewQuery().
+				OrderBy(dal.Descending(field("InvoiceDate"))).Limit(4).SelectColumns()},
+		{name: "a scan-bounded source with a WHERE is declined", query: dal.From(dal.NewRootCollectionRef("Invoice", "").WithScan(10, dal.Descending(field("InvoiceDate")))).NewQuery().
+			Where(typedTestEq(field("BillingCountry"), "FR")).OrderBy(dal.Descending(field("InvoiceDate"))).Limit(10).SelectColumns()},
 
 		// Conditions.
 		{name: "equality", query: album().Where(typedTestEq(field("AlbumId"), 7)).SelectColumns()},
@@ -410,6 +436,93 @@ func TestPostgresGoldenInjectionProbes(t *testing.T) {
 			}
 		}
 	}
+}
+
+// postgresProbeNamesQuery puts one probe in every place a name can go: the schema
+// and the name of the source, a source alias, a field in the select list, WHERE,
+// GROUP BY and ORDER BY, and a select alias. A name reaches the text only as one
+// quoted identifier, with its quotes doubled.
+func postgresProbeNamesQuery(probe string) dal.StructuredQuery {
+	field := typedTestField
+	source := dal.NewQualifiedRootCollectionRef(probe, "Invoice", "x")
+	return dal.From(source).NewQuery().
+		Where(typedTestEq(typedTestQualified("x", probe), 1)).
+		GroupBy(typedTestQualified("x", probe)).
+		OrderBy(dal.Ascending(field("renamed"))).
+		SelectColumns(typedTestColumn(typedTestQualified("x", probe), "renamed"), dal.CountAs(typedTestQualified("x", probe), probe))
+}
+
+// TestPostgresGoldenInjectionProbesAsIdentifiers compiles each probe as a name:
+// the statement quotes it whole, or the dialect refuses it (a NUL byte, which no
+// PostgreSQL identifier can hold). No probe closes its quotes, opens a comment or
+// reaches the text as anything but the content of one quoted identifier.
+func TestPostgresGoldenInjectionProbesAsIdentifiers(t *testing.T) {
+	var cases []postgresGoldenCase
+	for i, probe := range postgresInjectionProbes {
+		cases = append(cases, postgresGoldenCase{name: fmt.Sprintf("probe %d as every kind of name", i+1), query: postgresProbeNamesQuery(probe)})
+	}
+	assertPostgresGoldenGroup(t, "probe-names", cases)
+
+	for _, mode := range []postgresIdentifierMode{postgresExact, postgresFoldLower} {
+		dialect := newPostgresDialect(mode)
+		for i, probe := range postgresInjectionProbes {
+			text, args, err := compileTypedSQL(postgresProbeNamesQuery(probe), dialect, typedCatalogFacts{})
+			if strings.ContainsRune(probe, 0) {
+				if err == nil || strings.Contains(err.Error(), probe) {
+					t.Fatalf("probe %d: error = %v, want a refusal that does not echo the name", i+1, err)
+				}
+				continue
+			}
+			if err != nil {
+				t.Fatalf("probe %d: %v", i+1, err)
+			}
+			// Removing every quoted identifier leaves the statement's own words, and
+			// the same words for every probe: nothing of the probe is outside quotes.
+			if outside := postgresOutsideQuotes(t, text); outside != postgresOutsideQuotes(t, postgresReferenceNamesText(t, dialect)) {
+				t.Fatalf("probe %d changed the words of the statement:\n%s", i+1, outside)
+			}
+			if len(args) != 1 {
+				t.Fatalf("probe %d: %d arguments, want only the constant of WHERE", i+1, len(args))
+			}
+		}
+	}
+}
+
+// postgresReferenceNamesText is the statement for a harmless name.
+func postgresReferenceNamesText(t *testing.T, dialect postgresDialect) string {
+	t.Helper()
+	text, _, err := compileTypedSQL(postgresProbeNamesQuery("harmless"), dialect, typedCatalogFacts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return text
+}
+
+// postgresOutsideQuotes replaces every quoted identifier of a statement with "_",
+// understanding the doubled quote, so what is left is the statement's own words.
+func postgresOutsideQuotes(t *testing.T, text string) string {
+	t.Helper()
+	var out strings.Builder
+	for i := 0; i < len(text); i++ {
+		if text[i] != '"' {
+			out.WriteByte(text[i])
+			continue
+		}
+		out.WriteString(`"_"`)
+		for i++; ; i++ {
+			if i >= len(text) {
+				t.Fatalf("an identifier is never closed in %s", text)
+			}
+			if text[i] == '"' {
+				if i+1 < len(text) && text[i+1] == '"' {
+					i++
+					continue
+				}
+				break
+			}
+		}
+	}
+	return out.String()
 }
 
 // TestPostgresGoldenDatatugShippedDTQL compiles every DTQL text DataTug ships
