@@ -103,13 +103,20 @@ func TestSQLiteDecimalFunctions(t *testing.T) {
 
 	// The registration is installed on the driver, so a second connection can
 	// execute the function without depending on which pool connection runs it.
-	conn, err := db.Conn(t.Context())
+	conn1, err := db.Conn(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
-	var fromSecondConnection string
-	if err := conn.QueryRowContext(t.Context(), `SELECT decimal_add('0.1','0.2')`).Scan(&fromSecondConnection); err != nil || fromSecondConnection != "0.3" {
-		t.Fatalf("second-connection result = %q, %v", fromSecondConnection, err)
+	defer conn1.Close()
+	conn2, err := db.Conn(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn2.Close()
+	for i, conn := range []*sql.Conn{conn1, conn2} {
+		var result string
+		if err := conn.QueryRowContext(t.Context(), `SELECT decimal_add('0.1','0.2')`).Scan(&result); err != nil || result != "0.3" {
+			t.Fatalf("connection %d decimal result = %q, %v", i+1, result, err)
+		}
 	}
 }
