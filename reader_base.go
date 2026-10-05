@@ -3,6 +3,7 @@ package dalgo2sql
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -33,6 +34,19 @@ func newConnLease(ctx context.Context, conn *sql.Conn) *connLease {
 	return l
 }
 
+// query runs one statement of the read on the leased connection. The lease gives the
+// connection back when the context of the read ends, and that can happen between two
+// statements of one read (the catalog lookup and the statement it compiles); the next
+// statement then finds a closed connection. The pool never says that of a read whose
+// context ended, it says why the read stopped, so the error is the context's.
+func (l *connLease) query(ctx context.Context, text string, args ...any) (*sql.Rows, error) {
+	rows, err := l.conn.QueryContext(ctx, text, args...)
+	if errors.Is(err, sql.ErrConnDone) && ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	return rows, err
+}
+
 // giveBack closes the connection, which returns it to the pool, once. Closing waits for
 // the rows that ran on the connection, which close themselves when their context ends.
 func (l *connLease) giveBack() {
@@ -60,6 +74,9 @@ type readerBase struct {
 	scanColNames   []string
 	scanColTypes   []*sql.ColumnType
 	visibleIndexes []int
+	// baseColumns, when the reader was asked for them and the statement is a select-all
+	// over joins, lists the columns of the base source in the order they lead the result.
+	baseColumns []string
 }
 
 func getReaderBase(ctx context.Context, query dal.Query, execute executeQueryFunc) (readerBase, error) {
@@ -71,6 +88,14 @@ func getReaderBaseWithDialect(ctx context.Context, query dal.Query, execute exec
 }
 
 func getReaderBaseWithOptions(ctx context.Context, query dal.Query, execute executeQueryFunc, options DbOptions) (readerBase, error) {
+	return getReaderBaseFor(ctx, query, execute, options, false)
+}
+
+// getReaderBaseFor runs the query. wantBaseColumns asks, for a select-all over joins, for
+// the columns of the base source (readerBase.baseColumns), which the SQLite dialect reads
+// from its own catalog in one more statement, so it is asked for only by a read that needs
+// them.
+func getReaderBaseFor(ctx context.Context, query dal.Query, execute executeQueryFunc, options DbOptions, wantBaseColumns bool) (readerBase, error) {
 	if err := rejectRawRecursiveStructuredQuery(query); err != nil {
 		return readerBase{}, err
 	}
@@ -80,6 +105,7 @@ func getReaderBaseWithOptions(ctx context.Context, query dal.Query, execute exec
 	// askedNames, when set, names each column of the result as the query asked for
 	// it (typedStatement.outputs), in place of the name the server returns.
 	var askedNames []string
+	var baseColumns []string
 	switch q := query.(type) {
 	case dal.TextQuery:
 		text = q.Text()
@@ -136,6 +162,11 @@ func getReaderBaseWithOptions(ctx context.Context, query dal.Query, execute exec
 						projection = nil
 					}
 				}
+				if wantBaseColumns {
+					if baseColumns, err = sqliteSourceColumns(ctx, q, execute); err != nil {
+						return readerBase{}, fmt.Errorf("failed to inspect SQLite join source: %w", err)
+					}
+				}
 			case "postgres":
 				dialect, err := postgresDialectFor(options)
 				if err != nil {
@@ -150,7 +181,7 @@ func getReaderBaseWithOptions(ctx context.Context, query dal.Query, execute exec
 				if err != nil {
 					return readerBase{}, err
 				}
-				text, a, askedNames, projection = statement.text, statement.args, statement.outputs, nil
+				text, a, askedNames, projection, baseColumns = statement.text, statement.args, statement.outputs, nil, statement.baseColumns
 			default:
 				return readerBase{}, fmt.Errorf("unsupported structured query dialect %q", options.StructuredQueryDialect)
 			}
@@ -162,7 +193,8 @@ func getReaderBaseWithOptions(ctx context.Context, query dal.Query, execute exec
 		return readerBase{}, err
 	}
 	rb := readerBase{
-		rows: rows,
+		rows:        rows,
+		baseColumns: baseColumns,
 	}
 	if rb.scanColNames, err = rb.rows.Columns(); err != nil {
 		_ = rb.rows.Close()

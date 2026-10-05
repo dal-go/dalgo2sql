@@ -112,7 +112,9 @@ func TestCompileTypedSQLRefusesOutputsThatFoldToTheSameName(t *testing.T) {
 // A name that only labels a result column (an alias, or the text of an unaliased
 // expression) never reaches the server as anything but a label, so a name the engine
 // cannot spell is not a malformed query: DALgo's generic engine labels the column
-// itself. It is refused as unsupported, so the query falls back instead of failing.
+// itself. It is refused as unsupported. A join falls back to the generic engine on that
+// refusal (CanExecuteJoin declines it), and a query over one source, which DALgo has no
+// fallback for, fails with it: TestALongAliasFailsAOneSourceReadAndDeclinesAJoin.
 func TestCompileTypedSQLDeclinesAnOutputNameOverTheEngineLimit(t *testing.T) {
 	invoice := func() dal.IQueryBuilder { return typedTestFrom("Invoice", "").NewQuery() }
 	long := strings.Repeat("a", 64)

@@ -122,12 +122,47 @@ func TestRecordsReader_KeysOnlyJoinQueryIsNotOrdered(t *testing.T) {
 		t.Run("dialect "+dialect, func(t *testing.T) {
 			withID.StructuredQueryDialect = dialect
 			unordered := DbOptions{StructuredQueryDialect: dialect}
-			got := executedSQL(t, cities, withID)
-			if want := executedSQL(t, cities, unordered); got != want || strings.Contains(got, "ORDER BY") {
-				t.Errorf("JOIN statement changed:\n got %s\nwant %s", got, want)
+			// A select-all over a join is keyed from the base's own column of the key's
+			// name, which the SQLite dialect reads from its catalog first, in one statement
+			// before the join's.
+			baseColumns := sqlmock.NewRows([]string{"name", "hidden"}).AddRow("ID", int64(0))
+			got := executedStatements(t, cities, withID, baseColumns, sqlmock.NewRows([]string{"ID"}))
+			if dialect == "sqlite" {
+				if len(got) != 2 || !strings.Contains(got[0], "pragma_table_xinfo") {
+					t.Fatalf("statements = %q, want the base's columns and then the join", got)
+				}
+				got = got[1:]
+			}
+			want := executedStatements(t, cities, unordered, sqlmock.NewRows([]string{"ID"}))
+			if len(got) != 1 || len(want) != 1 || got[0] != want[0] || strings.Contains(got[0], "ORDER BY") {
+				t.Errorf("JOIN statement changed:\n got %q\nwant %q", got, want)
 			}
 		})
 	}
+}
+
+// executedStatements returns every statement the reader sends for query, answering them
+// in order with results.
+func executedStatements(t *testing.T, query dal.Query, options DbOptions, results ...*sqlmock.Rows) []string {
+	t.Helper()
+	var executed []string
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherFunc(func(_, actual string) error {
+		executed = append(executed, actual)
+		return nil
+	})))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeDatabase(t, db)
+	for _, result := range results {
+		mock.ExpectQuery("").WillReturnRows(result)
+	}
+	rr, err := getRecordsReaderWithOptions(context.Background(), query, db.QueryContext, options)
+	if err != nil {
+		t.Fatalf("reader must open: %v", err)
+	}
+	_ = rr.Close()
+	return executed
 }
 
 func TestOrderedByKey_StringRendersTheOrder(t *testing.T) {

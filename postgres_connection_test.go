@@ -34,11 +34,22 @@ type connectionRecorder struct {
 	// statementScanType, when set, is the Go type the SELECT's columns report, in place
 	// of the type of their first value.
 	statementScanType reflect.Type
+	// openRows counts the result sets handed to database/sql that nobody has closed.
+	openRows int
+	// transactions lets a connection begin a transaction; by default it refuses.
+	transactions bool
 }
 
 type recordedStatement struct {
 	connection int
 	text       string
+}
+
+// openRowCount is how many result sets are open: opened by a query and not yet closed.
+func (r *connectionRecorder) openRowCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.openRows
 }
 
 func (r *connectionRecorder) statementLog() []recordedStatement {
@@ -85,6 +96,9 @@ func (c *connectionRecorderConn) Prepare(string) (driver.Stmt, error) {
 }
 func (c *connectionRecorderConn) Close() error { return nil }
 func (c *connectionRecorderConn) Begin() (driver.Tx, error) {
+	if c.recorder.transactions {
+		return recordingTx{}, nil
+	}
 	return nil, errors.New("no transactions")
 }
 
@@ -105,7 +119,7 @@ func (c *connectionRecorderConn) QueryContext(_ context.Context, text string, ar
 	if strings.HasPrefix(text, "WITH RECURSIVE") {
 		// The catalog knows one relation, Album(AlbumId integer NOT NULL, Title text),
 		// and answers nothing for any other.
-		catalog := &connectionRecorderRows{columns: []string{"name", "attname", "data_type", "category", "type_oid", "type_elem", "attnotnull", "nondeterministic"}}
+		catalog := &connectionRecorderRows{recorder: c.recorder, columns: []string{"name", "attname", "data_type", "category", "type_oid", "type_elem", "attnotnull", "nondeterministic"}}
 		for _, arg := range args {
 			if arg.Value == `"Album"` {
 				catalog.rows = [][]driver.Value{
@@ -114,15 +128,25 @@ func (c *connectionRecorderConn) QueryContext(_ context.Context, text string, ar
 				}
 			}
 		}
-		return catalog, nil
+		return c.recorder.opened(catalog), nil
 	}
 	if text == postgresSuggestionQuery {
-		return &connectionRecorderRows{columns: []string{"nspname", "relname"}}, nil
+		return c.recorder.opened(&connectionRecorderRows{recorder: c.recorder, columns: []string{"nspname", "relname"}}), nil
 	}
-	return &connectionRecorderRows{columns: []string{"AlbumId", "Title"}, rows: [][]driver.Value{{int64(1), "One"}, {int64(2), "Two"}}, scanType: c.recorder.statementScanType}, nil
+	return c.recorder.opened(&connectionRecorderRows{recorder: c.recorder, columns: []string{"AlbumId", "Title"}, rows: [][]driver.Value{{int64(1), "One"}, {int64(2), "Two"}}, scanType: c.recorder.statementScanType}), nil
+}
+
+// opened counts rows as open until they are closed.
+func (r *connectionRecorder) opened(rows *connectionRecorderRows) driver.Rows {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.openRows++
+	return rows
 }
 
 type connectionRecorderRows struct {
+	recorder *connectionRecorder
+	closed   bool
 	columns  []string
 	rows     [][]driver.Value
 	next     int
@@ -142,7 +166,15 @@ func (r *connectionRecorderRows) ColumnTypeScanType(index int) reflect.Type {
 }
 
 func (r *connectionRecorderRows) Columns() []string { return r.columns }
-func (r *connectionRecorderRows) Close() error      { return nil }
+func (r *connectionRecorderRows) Close() error {
+	r.recorder.mu.Lock()
+	defer r.recorder.mu.Unlock()
+	if !r.closed {
+		r.closed = true
+		r.recorder.openRows--
+	}
+	return nil
+}
 func (r *connectionRecorderRows) Next(dest []driver.Value) error {
 	if r.next >= len(r.rows) {
 		return io.EOF
