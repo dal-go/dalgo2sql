@@ -27,6 +27,12 @@ type DbOptions struct {
 	// key of a collection named "lines_orders" with the ID l5: a SQL recordset
 	// cannot tell the rows of different parents apart. Declare a nested recordset
 	// only for a table whose primary key identifies the row without its parent.
+	//
+	// Delete follows the declared primary key, as every other operation does. A
+	// key whose recordset is declared with no primary key, or with more than one
+	// column, is refused before any statement (the errors Update returns). The
+	// column ID is the default of Delete and DeleteMulti only where no recordset
+	// is declared for the key, a nil entry being none.
 	Recordsets map[string]*Recordset
 	// Placeholder controls how SQL parameter markers are emitted.
 	// The zero value (PlaceholderQuestion) uses "?" — compatible with
