@@ -52,65 +52,64 @@ func getRecordsetReaderWithOptions(ctx context.Context, query dal.Query, execute
 		var c recordset.Column[any]
 		scanType := col.ScanType()
 		dbTypeName := col.DatabaseTypeName()
-		dbType := recordset.ColDbType(dbTypeName)
 
 		if scanType == nil {
 			// This happens for some views in SQLite
-			c = recordset.NewColumn[string](name, "")
+			c = newNullableColumn(name, "", "")
 		} else {
 			kind := scanType.Kind()
 			switch kind {
 			case reflect.String:
-				c = recordset.UntypedCol(recordset.NewTypedColumn[string](name, "", dbType))
+				c = newNullableColumn(name, "", dbTypeName)
 			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 				reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-				c = recordset.UntypedCol(recordset.NewTypedColumn[int64](name, 0, dbType))
+				c = newNullableColumn(name, int64(0), dbTypeName)
 			case reflect.Float32, reflect.Float64:
-				c = recordset.UntypedCol(recordset.NewTypedColumn[float64](name, 0, dbType))
+				c = newNullableColumn(name, float64(0), dbTypeName)
 			case reflect.Bool:
-				c = recordset.UntypedCol(recordset.NewBoolColumn(name))
+				c = newNullableColumn(name, false, "")
 			case reflect.Struct:
 				switch scanType.String() {
 				case "time.Time":
-					c = recordset.UntypedCol(recordset.NewTypedColumn[time.Time](name, time.Time{}, dbType))
+					c = newNullableColumn(name, time.Time{}, dbTypeName)
 				case "sql.NullString":
-					c = recordset.UntypedCol(recordset.NewTypedColumn[string](name, "", dbType))
+					c = newNullableColumn(name, "", dbTypeName)
 				case "sql.NullByte":
-					c = recordset.UntypedCol(recordset.NewTypedColumn[int64](name, 0, dbType))
+					c = newNullableColumn(name, int64(0), dbTypeName)
 				case "sql.NullInt16":
-					c = recordset.UntypedCol(recordset.NewTypedColumn[int16](name, 0, dbType))
+					c = newNullableColumn(name, int16(0), dbTypeName)
 				case "sql.NullInt32":
-					c = recordset.UntypedCol(recordset.NewTypedColumn[int32](name, 0, dbType))
+					c = newNullableColumn(name, int32(0), dbTypeName)
 				case "sql.NullInt64":
-					c = recordset.UntypedCol(recordset.NewTypedColumn[int64](name, 0, dbType))
+					c = newNullableColumn(name, int64(0), dbTypeName)
 				case "sql.NullFloat64":
-					c = recordset.UntypedCol(recordset.NewTypedColumn[float64](name, 0, dbType))
+					c = newNullableColumn(name, float64(0), dbTypeName)
 				case "sql.NullBool":
-					c = recordset.UntypedCol(recordset.NewBoolColumn(name))
+					c = newNullableColumn(name, false, "")
 				case "sql.NullTime":
-					c = recordset.UntypedCol(recordset.NewTypedColumn[time.Time](name, time.Time{}, dbType))
+					c = newNullableColumn(name, time.Time{}, dbTypeName)
 				default:
 					err = fmt.Errorf("unsupported type for column %s: %s", name, scanType.String())
 					return
 				}
 			case reflect.Slice, reflect.Array:
 				if scanType.Elem().Kind() == reflect.Uint8 {
-					c = recordset.UntypedCol(recordset.NewTypedColumn[[]byte](name, nil, dbType))
+					c = newNullableColumn(name, []byte(nil), dbTypeName)
 				} else {
 					// For now, let's assume it's a string if it's a slice (common for SQL)
-					c = recordset.UntypedCol(recordset.NewTypedColumn[string](name, "", dbType))
+					c = newNullableColumn(name, "", dbTypeName)
 				}
 			case reflect.Interface:
 				// Assume it's a nullable []byte/blob if it's an interface (common for some drivers/sqlmock)
-				c = recordset.UntypedCol(recordset.NewTypedColumn[[]byte](name, nil, dbType))
+				c = newNullableColumn(name, []byte(nil), dbTypeName)
 			case reflect.Pointer:
 				elem := scanType.Elem()
 				switch elem.Kind() {
 				case reflect.Uint8:
-					c = recordset.UntypedCol(recordset.NewTypedColumn[[]byte](name, nil, dbType))
+					c = newNullableColumn(name, []byte(nil), dbTypeName)
 				case reflect.Interface:
 					// SQLite might return *interface{} for some columns
-					c = recordset.NewColumn[string](name, "")
+					c = newNullableColumn(name, "", "")
 				default:
 					err = fmt.Errorf("unsupported pointer type for column %s: %s", name, scanType.String())
 					return
@@ -184,35 +183,38 @@ func (r *recordsetReader) Next() (row recordset.Row, rs recordset.Recordset, err
 				return
 			}
 		}
-		if value == nil {
-			if vt == reflect.TypeOf([]byte(nil)) {
-				value = []byte(nil)
-			} else if vt.Kind() != reflect.Interface {
-				// dalgo/recordset.UntypedColWrapper.SetValue(row int, value any) performs value.(T)
-				// which panics if value is nil and T is not an interface.
-				value = col.DefaultValue()
-			}
-		} else {
-			// SQLite might return int64 for a column mapped to float64 if the value is an integer.
-			// dalgo/recordset is strict about types in SetValue.
-			if vt.Kind() == reflect.Float64 {
+		// A NULL stays nil: the column holds it as a NULL (nullableColumn), so no value
+		// stands in for it. Any other value is made the Go type of its column, which holds
+		// that type only.
+		if value != nil {
+			switch vt.Kind() {
+			case reflect.Float64:
+				// SQLite might return int64 for a column mapped to float64 if the value is
+				// an integer.
 				switch v := value.(type) {
 				case int64:
 					value = float64(v)
 				case string:
 					// A string cannot live in a float64 column (a NUMERIC that is
 					// not a number, or text stored in a SQLite REAL column); fail
-					// with the column name and Go type, never the cell, instead of
-					// letting the recordset's strict type assertion panic.
+					// with the column name and Go type, never the cell.
 					err = fmt.Errorf("failed to set value for column %s: unexpected %T value in a float64 column", r.colNames[i], v)
 					return
 				}
-			} else if vt.Kind() == reflect.Int64 {
-				switch v := value.(type) {
-				case float64:
+			case reflect.Int64:
+				if v, ok := value.(float64); ok {
 					value = int64(v)
 				}
-			} else if vt.Kind() == reflect.String {
+			case reflect.Int16, reflect.Int32:
+				// A driver delivers every integer as an int64. One that does not fit the
+				// column is left as it is, and the column refuses it.
+				value = narrowedInteger(vt, value)
+			case reflect.Bool:
+				// SQLite delivers the 0 and 1 of a BOOLEAN column as integers.
+				if v, ok := value.(int64); ok {
+					value = v != 0
+				}
+			case reflect.String:
 				switch v := value.(type) {
 				case []byte:
 					value = string(v)
@@ -229,4 +231,17 @@ func (r *recordsetReader) Next() (row recordset.Row, rs recordset.Recordset, err
 		}
 	}
 	return row, r.rs, nil
+}
+
+// narrowedInteger returns value as a number of the integer type t, when value is an int64
+// that t holds, and value as it was otherwise.
+func narrowedInteger(t reflect.Type, value any) any {
+	v, ok := value.(int64)
+	if !ok {
+		return value
+	}
+	if narrowed := reflect.ValueOf(v).Convert(t); narrowed.Int() == v {
+		return narrowed.Interface()
+	}
+	return value
 }
