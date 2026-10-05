@@ -83,7 +83,13 @@ func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute e
 		primaryKey := primaryKeyForQuery(options, query)
 		if primaryKey == "" && keyedByCatalog(options, q) {
 			// Nothing names the key of this source, so the catalog does: the primary key,
-			// when it is one column, else the rows are keyed by ordinal.
+			// when it is one column, else the rows are keyed by ordinal. The lookup is a
+			// statement, and a query that is refused is refused before any statement, so
+			// the refusals getReaderBaseFor would make come first.
+			if err = refusedBeforeAnyStatement(q); err != nil {
+				err = fmt.Errorf("failed to get SQL reader: %w", err)
+				return
+			}
 			var column string
 			if facts, column, err = catalogPrimaryKey(ctx, options, q, execute); err != nil {
 				err = fmt.Errorf("failed to get SQL reader: %w", err)
@@ -139,6 +145,17 @@ func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute e
 	}
 
 	return
+}
+
+// refusedBeforeAnyStatement is the refusals getReaderBaseFor makes of a structured query
+// before it sends a statement: a query DALgo's own engine runs, and a wildcard projection
+// that cannot be planned.
+func refusedBeforeAnyStatement(q dal.StructuredQuery) error {
+	if err := rejectRawRecursiveStructuredQuery(q); err != nil {
+		return err
+	}
+	_, err := planWildcardProjection(q)
+	return err
 }
 
 // ordinalRecords makes the records of rows that have no key of their own, one per row,

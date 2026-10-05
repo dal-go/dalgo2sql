@@ -2,6 +2,7 @@ package dalgo2sql
 
 import (
 	"context"
+	"database/sql"
 	"database/sql/driver"
 	"errors"
 	"reflect"
@@ -336,6 +337,47 @@ func TestPostgresRecordsReaderCatalogFailuresAreTheReadsOwn(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
+}
+
+// A structured read that is refused is refused before any statement, the catalog lookup
+// included: a query with a subquery, which DALgo's own engine runs and this adapter does not,
+// and a wildcard projection that cannot be planned. The lookup is a statement, and with a table
+// that is not there it would answer with the not-found error and its hint in place of the
+// refusal.
+func TestPostgresRecordsReaderRefusesBeforeAskingTheCatalogForAKey(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		query dal.StructuredQuery
+		check func(t *testing.T, err error)
+	}{
+		{"a query with a subquery", recursiveSQLAdapterQuery(), requireRecursiveAdapterRejection},
+		{"a wildcard projection with no exclusion", typedTestFrom("Album", "").NewQuery().SelectColumns(dal.AllColumnsExcept()), func(t *testing.T, err error) {
+			if err == nil || !strings.Contains(err.Error(), "wildcard projection requires at least one exclusion") {
+				t.Fatalf("error = %v, want the wildcard projection's refusal", err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, _ := newPostgresReadMock(t)
+			var statements []string
+			execute := func(ctx context.Context, statement string, args ...any) (*sql.Rows, error) {
+				statements = append(statements, statement)
+				return db.QueryContext(ctx, statement, args...)
+			}
+			reader, err := getRecordsReaderWithOptions(context.Background(), tc.query, execute, DbOptions{StructuredQueryDialect: "postgres"})
+			if len(statements) != 0 {
+				t.Errorf("the read sent %d statements before it was refused: %q", len(statements), statements)
+			}
+			if err == nil {
+				t.Fatalf("the read returned the reader %v, want a refusal", reader)
+			}
+			var notFound *TableNotFoundError
+			if errors.As(err, &notFound) {
+				t.Fatalf("error = %v: the read asked the catalog before it was refused", err)
+			}
+			tc.check(t, err)
+		})
+	}
 }
 
 // The other dialects have no catalog to ask: a source with no key configured keeps the
