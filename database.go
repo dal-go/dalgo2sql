@@ -80,7 +80,7 @@ func (dtb *database) readExecutor(ctx context.Context, query dal.Query, pool exe
 	}
 	conn, err := dtb.db.Conn(ctx)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, explainByContext(ctx, err)
 	}
 	lease := newConnLease(ctx, conn)
 	return lease.query, lease, nil

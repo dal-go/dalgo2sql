@@ -3,6 +3,7 @@ package dalgo2sql
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"sync"
@@ -20,7 +21,15 @@ type executeQueryFunc func(ctx context.Context, query string, args ...any) (*sql
 // caller that stopped on ctx.Done() need not close the reader to free the connection.
 type connLease struct {
 	once sync.Once
+	// mu is held while a statement is issued on conn and while conn is closed. Closing a
+	// *sql.Conn while a statement is being issued on it is a race inside database/sql: the
+	// statement can be handed a connection that is already gone, and fail with a nil
+	// dereference. With the lock, a statement either runs on the open connection or is
+	// refused as database/sql refuses it once the connection is closed (sql.ErrConnDone).
+	mu   sync.Mutex
 	conn *sql.Conn
+	// ctx is the context of the read, which ends the lease (see explain).
+	ctx context.Context
 	// stopHook unregisters the hook that gives the connection back when the context
 	// ends. Only release reads it, and only after the lease is built; the hook itself
 	// calls giveBack.
@@ -29,28 +38,60 @@ type connLease struct {
 
 // newConnLease takes conn for the read that runs on ctx.
 func newConnLease(ctx context.Context, conn *sql.Conn) *connLease {
-	l := &connLease{conn: conn}
+	l := &connLease{conn: conn, ctx: ctx}
 	l.stopHook = context.AfterFunc(ctx, l.giveBack)
 	return l
+}
+
+// explainByContext returns the error of a read whose context has ended. A driver whose
+// connection was broken by the end of the context says only that the connection is gone
+// (driver.ErrBadConn), and so does database/sql once the lease has given the connection
+// back (sql.ErrConnDone); the pool never says either of a read whose context ended, it
+// says why the read stopped. So an error that is one of these, or wraps one, is the
+// context's error when the context has ended, and any other error is left as it is.
+func explainByContext(ctx context.Context, err error) error {
+	if err != nil && (errors.Is(err, sql.ErrConnDone) || errors.Is(err, driver.ErrBadConn)) {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+	}
+	return err
+}
+
+// explain is explainByContext for the context of the read the lease belongs to, for the
+// error of a reader that has the lease; a read on the pool has none, and its errors are
+// left as they are.
+func (l *connLease) explain(err error) error {
+	if l == nil {
+		return err
+	}
+	return explainByContext(l.ctx, err)
 }
 
 // query runs one statement of the read on the leased connection. The lease gives the
 // connection back when the context of the read ends, and that can happen between two
 // statements of one read (the catalog lookup and the statement it compiles); the next
-// statement then finds a closed connection. The pool never says that of a read whose
-// context ended, it says why the read stopped, so the error is the context's.
+// statement then finds a closed connection, or a driver that reports its connection
+// broken. The pool never says that of a read whose context ended, it says why the read
+// stopped, so the error is the context's (explainByContext).
 func (l *connLease) query(ctx context.Context, text string, args ...any) (*sql.Rows, error) {
+	l.mu.Lock()
 	rows, err := l.conn.QueryContext(ctx, text, args...)
-	if errors.Is(err, sql.ErrConnDone) && ctx.Err() != nil {
-		return nil, ctx.Err()
+	l.mu.Unlock()
+	if err != nil {
+		return nil, explainByContext(ctx, err)
 	}
-	return rows, err
+	return rows, nil
 }
 
 // giveBack closes the connection, which returns it to the pool, once. Closing waits for
 // the rows that ran on the connection, which close themselves when their context ends.
 func (l *connLease) giveBack() {
-	l.once.Do(func() { _ = l.conn.Close() })
+	l.once.Do(func() {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		_ = l.conn.Close()
+	})
 }
 
 // release gives the connection back to the pool. It is safe on a nil lease (a read on

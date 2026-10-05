@@ -139,7 +139,10 @@ arguments of every supported shape are in `testdata/postgres`.
 - **A stream error is never the end of a result.** Both readers return the error the
   server raised in the middle of a result (a timeout, an overflow at one row) from
   `Next`, instead of `ErrNoMoreRecords`; a read whose context ended returns the
-  context's error.
+  context's error, wherever in the read it ended (`errors.Is(err, context.Canceled)` or
+  `context.DeadlineExceeded`), also when the driver reports its connection broken
+  (`driver.ErrBadConn`) or database/sql reports it closed (`sql.ErrConnDone`) because of
+  it; the connection goes back to the pool in every case.
 - **The DTQL money option** is refused (`ErrNotSupported`) whatever the select list:
   the records reader reads the option from the caller's query before it adds the key
   column to it.
