@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -50,17 +51,19 @@ func TestGetter_GetSingle_Additional(t *testing.T) {
 	}
 	defer closeDatabase(t, sdb)
 
+	// A record whose data has no field selects the constant 1, and has no field to take it: the
+	// read says so. A pointer to a scalar used to take the 1, and is refused before the
+	// statement now (TestKeyReads_OfATargetThatCannotBeReadIntoAreErrorsBeforeAnyStatement).
 	t.Run("fieldsStr_empty_becomes_1", func(t *testing.T) {
-		var val int
-		rec := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "u1"), &val)
+		rec := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "u1"), &struct{}{})
 		smock.ExpectQuery("SELECT 1 FROM users WHERE ID = \\?").WithArgs("u1").WillReturnRows(sqlmock.NewRows([]string{"1"}).AddRow(1))
 		opts := DbOptions{Recordsets: map[string]*Recordset{"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID")})}}
 		err := getSingle(ctx, opts, rec, sdb.Query)
-		if err != nil {
-			t.Fatalf("unexpected err: %v", err)
+		if err == nil || !strings.Contains(err.Error(), `column "1": no corresponding field`) {
+			t.Fatalf("err = %v, want the column 1 to have no field", err)
 		}
-		if val != 1 {
-			t.Fatalf("expected val 1, got %d", val)
+		if err := smock.ExpectationsWereMet(); err != nil {
+			t.Fatal(err)
 		}
 	})
 
@@ -295,7 +298,7 @@ func TestGetter_ScanRowIntoMap_Errors(t *testing.T) {
 		_ = r.Close()
 
 		m := make(map[string]any)
-		err := scanRowIntoMap(r, m, false)
+		err := scanRowIntoMapWithOptions(r, m, false, DbOptions{})
 		if err == nil {
 			t.Fatal("expected error on closed rows")
 		}

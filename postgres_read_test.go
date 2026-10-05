@@ -348,9 +348,11 @@ func TestSelectsIdentityFieldFoldsBothSides(t *testing.T) {
 		{"a wildcard that excludes it in another case does not return it", []dal.Column{{Wildcard: &dal.WildcardProjection{Exclude: []string{"Id"}}}}, "ID", fold, false},
 		{"a wildcard that excludes it in another case, compared as it is", []dal.Column{{Wildcard: &dal.WildcardProjection{Exclude: []string{"Id"}}}}, "ID", nil, true},
 		{"a mask excludes it", []dal.Column{{Wildcard: &dal.WildcardProjection{Exclude: []string{"I*"}}}}, "ID", fold, false},
+		{"a field of the base in another case", []dal.Column{{Expression: dal.NewFieldRef("A", "Id")}}, "ID", fold, true},
+		{"a field of the base in another case, compared as it is", []dal.Column{{Expression: dal.NewFieldRef("A", "id")}}, "id", nil, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := selectsIdentityField(tc.columns, tc.field, tc.fold); got != tc.want {
+			if got := selectsIdentityField(tc.columns, tc.field, "a", tc.fold); got != tc.want {
 				t.Fatalf("selectsIdentityField() = %v, want %v", got, tc.want)
 			}
 		})

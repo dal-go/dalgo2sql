@@ -3,6 +3,7 @@ package dalgo2sql
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/dal-go/dalgo/dal"
@@ -13,10 +14,12 @@ import (
 
 // A read of one record or of several, and an operation given a nil key, are errors of the call
 // when the caller's own input cannot be read into or addressed, returned before any statement is
-// sent: a record with no data, a struct given by value, a struct with a field that is not
-// exported, a nil map given by value, a map whose elements cannot hold a column value, a map with
-// keys that are not strings, and a nil key. The tests below take each input in turn through every
-// entry point that reads it, on a database handle and in a transaction.
+// sent: a record with no data, a nil record, data that is not a pointer to a struct or a map with
+// string keys (a struct given by value, a scalar, a slice, a pointer to a scalar, a pointer to a
+// pointer), a struct with a field that is not exported, a nil map given by value, a map whose
+// elements cannot hold a column value, a map with keys that are not strings, and a nil key. The
+// tests below take each input in turn through every entry point that reads it, on a database
+// handle and in a transaction.
 
 // readTargetCase is one input of a read: the data each of the records of the read is given.
 type readTargetCase struct {
@@ -38,7 +41,24 @@ func refusedReadTargets() []readTargetCase {
 		{"a map whose elements are of an interface with a method", func() any { return map[string]interface{ String() string }{} }},
 		{"a map with integer keys", func() any { return map[int]any{} }},
 		{"a pointer to a map whose elements are strings", func() any { return &map[string]string{} }},
+		{"a string", func() any { return "text" }},
+		{"an integer", func() any { return 1 }},
+		{"a slice", func() any { return []string{"a"} }},
+		{"a pointer to a string", func() any { text := ""; return &text }},
+		{"a pointer to a slice", func() any { return &[]string{} }},
+		{"a pointer to a type that scans itself", func() any { return new(selfScanningText) }},
+		{"a pointer to a pointer to a struct", func() any { target := &struct{ Name string }{}; return &target }},
+		{"a pointer to a nil pointer to a struct", func() any { return new(*struct{ Name string }) }},
+		{"a pointer to an interface", func() any { var target any = &struct{ Name string }{}; return &target }},
 	}
+}
+
+// selfScanningText is a named string that takes a column value itself, as a sql.Scanner does.
+type selfScanningText string
+
+func (s *selfScanningText) Scan(value any) error {
+	*s = selfScanningText(fmt.Sprint(value))
+	return nil
 }
 
 // readEntryPoints are the ways to read the records of one recordset, each given the data of
@@ -150,6 +170,69 @@ func TestKeyReads_APointerToANilMapIsFilledByAReadOfSeveralRecords(t *testing.T)
 	}
 	if first["name"] != "one" || second["name"] != "two" {
 		t.Errorf("read %v and %v, want the names one and two", first, second)
+	}
+}
+
+// A target that is not a pointer to a struct or a map is refused where the table has the rows too:
+// a read of several records that went on to fill one of them stored into it after the statement.
+func TestKeyReads_AScalarTargetIsRefusedWhereTheRowsExist(t *testing.T) {
+	c := validNames()
+	db := openTestSQLiteDB(t, `CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT);
+		INSERT INTO users VALUES ('id1', 'one'), ('id2', 'two')`)
+	for _, target := range refusedReadTargets() {
+		t.Run(target.name, func(t *testing.T) {
+			records := []dalrecord.Record{
+				dalrecord.NewRecordWithData(c.key("id1"), target.data()),
+				dalrecord.NewRecordWithData(c.key("id2"), target.data()),
+			}
+			err := noPanic(t, func() error {
+				return (&database{db: db, options: c.options(dialectSQLite)}).GetMulti(context.Background(), records)
+			})
+			if !errors.Is(err, dal.ErrNotSupported) {
+				t.Errorf("error = %v, want one wrapping dal.ErrNotSupported", err)
+			}
+		})
+	}
+}
+
+// A nil record is an error of the call, as a record that has no data is: Get, and GetMulti with a
+// nil in any position of its batch, return an error wrapping dal.ErrNotSupported before any
+// statement, and the records of the batch that are not nil say so too.
+func TestKeyReads_ANilRecordIsAnErrorBeforeAnyStatement(t *testing.T) {
+	c := validNames()
+	for _, dialect := range []string{"", dialectSQLite} {
+		for _, entry := range []struct {
+			name     string
+			run      func(context.Context, keyPathAPI, dalrecord.Record) error
+			withGood bool // the batch holds the record that is not nil, which says so too
+		}{
+			{"Get", func(ctx context.Context, api keyPathAPI, good dalrecord.Record) error { return api.Get(ctx, nil) }, false},
+			{"GetMulti of one nil", func(ctx context.Context, api keyPathAPI, good dalrecord.Record) error {
+				return api.GetMulti(ctx, []dalrecord.Record{nil})
+			}, false},
+			{"GetMulti with a nil first", func(ctx context.Context, api keyPathAPI, good dalrecord.Record) error {
+				return api.GetMulti(ctx, []dalrecord.Record{nil, good})
+			}, true},
+			{"GetMulti with a nil last", func(ctx context.Context, api keyPathAPI, good dalrecord.Record) error {
+				return api.GetMulti(ctx, []dalrecord.Record{good, nil})
+			}, true},
+		} {
+			t.Run(dialect+"/"+entry.name, func(t *testing.T) {
+				for _, r := range keyPathAPIs(t, c.options(dialect)) {
+					good := dalrecord.NewRecordWithData(c.key("id1"), map[string]any{})
+					err := noPanic(t, func() error { return entry.run(context.Background(), r.api, good) })
+					if !errors.Is(err, dal.ErrNotSupported) || errors.Is(err, errReachedDatabase) {
+						t.Errorf("%s: error = %v, want one wrapping dal.ErrNotSupported that is not the database's", r.kind, err)
+					}
+					if entry.withGood && !errors.Is(good.Error(), dal.ErrNotSupported) {
+						t.Errorf("%s: the record that is not nil has error %v, want one wrapping dal.ErrNotSupported", r.kind, good.Error())
+					}
+					if got := r.recorder.calls(); len(got) != 0 {
+						t.Errorf("%s: a statement reached the database: %q", r.kind, got)
+					}
+				}
+			})
+		}
 	}
 }
 

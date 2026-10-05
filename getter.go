@@ -110,6 +110,9 @@ func renderSingleGet(options DbOptions, record dalrecord.Record) (names singleGe
 }
 
 func getSingle(_ context.Context, options DbOptions, record dalrecord.Record, exec queryExecutor) error {
+	if record == nil {
+		return errNilRecord()
+	}
 	key := record.Key()
 	if err := checkReadTarget(record); err != nil {
 		record.SetError(err)
@@ -164,6 +167,9 @@ func getMulti(ctx context.Context, options DbOptions, records []dalrecord.Record
 	// writes (the collection path of every key, the primary-key column, the fields)
 	// is checked here, for every recordset.
 	for _, r := range records {
+		if r == nil {
+			return refuseRecords(records, errNilRecord())
+		}
 		if _, err := options.recordsetIdentifier(r.Key()); err != nil {
 			return refuseRecords(records, err)
 		}
@@ -213,12 +219,21 @@ func checkGetNames(options DbOptions, records []dalrecord.Record) error {
 	return err
 }
 
-// refuseRecords records err on every record of a refused batch and returns it.
+// refuseRecords records err on every record of a refused batch, a nil one excepted, and
+// returns it.
 func refuseRecords(records []dalrecord.Record, err error) error {
 	for _, record := range records {
-		record.SetError(err)
+		if record != nil {
+			record.SetError(err)
+		}
 	}
 	return err
+}
+
+// errNilRecord is the refusal of a read given a nil record, which has no key to address and no
+// data to fill.
+func errNilRecord() error {
+	return fmt.Errorf("%w: the record is nil, want a record with a key and data", dal.ErrNotSupported)
 }
 
 // multiGetNames are the names a read of several records of one recordset writes
@@ -440,10 +455,9 @@ func rowIntoRecord(rows *sql.Rows, record dalrecord.Record, pkIncluded bool) err
 //	return nil
 //}
 
+// scanIntoData scans the current row into the data of a record that is not a map, which a read
+// fills by scanRowIntoMapWithOptions, as it needs the options of the read.
 func scanIntoData(rows *sql.Rows, data interface{}, pkIncluded bool) error {
-	if isMapData(data) {
-		return scanRowIntoMap(rows, data, pkIncluded)
-	}
 	if pkIncluded {
 		return scanIntoDataWithPrimaryKeyIncluded(rows, data)
 	}
@@ -513,13 +527,9 @@ func setMapColumn(m reflect.Value, column string, value any) {
 	m.SetMapIndex(key, reflect.ValueOf(value))
 }
 
-// scanRowIntoMap scans the current sql.Rows row into a map[string]any (or
-// *map[string]any). PK columns are skipped if pkIncluded is false; when
-// pkIncluded is true they are also included in the result map.
-func scanRowIntoMap(rows *sql.Rows, data interface{}, pkIncluded bool) error {
-	return scanRowIntoMapWithOptions(rows, data, pkIncluded, DbOptions{})
-}
-
+// scanRowIntoMapWithOptions scans the current sql.Rows row into a map[string]any (or
+// *map[string]any), every column of it, the primary key's too: a caller that does not want
+// the primary key in the map deletes it afterwards.
 func scanRowIntoMapWithOptions(rows *sql.Rows, data interface{}, pkIncluded bool, options DbOptions) error {
 	return withMapColumnMetadata(rows, func(cols []string, columnTypes []*sql.ColumnType) error {
 		// Build generic scan targets.
@@ -704,12 +714,13 @@ func scanIntoDataWithPrimaryKeyIncluded(rows *sql.Rows, data interface{}) error 
 // checkReadTarget refuses, before any statement, a record whose data a read cannot fill: the
 // errors wrap dal.ErrNotSupported, name the kind of data and never a value. A read fills a
 // pointer to a struct with exported fields, a map with string keys whose elements hold any
-// value (a map by value must be made: the read stores into it), or a pointer to either, and
-// whatever else the scan of one record accepts, such as a pointer to a sql.Scanner. The data
-// of a record that has none, a struct given by value (its fields cannot be set), a nil
-// pointer, a struct with a field that is not exported (reflect cannot set it, and it cannot be
-// told from a column), a nil map by value, and a map with keys that are not strings or elements
-// that cannot hold every column value can never be filled, and storing into them panics.
+// value (a map by value must be made: the read stores into it), or a pointer to such a map.
+// Everything else is refused: the data of a record that has none, a struct given by value (its
+// fields cannot be set), a nil pointer, a struct with a field that is not exported (reflect
+// cannot set it, and it cannot be told from a column), a nil map by value, a map with keys that
+// are not strings or elements that cannot hold every column value, and data of any other kind,
+// which has no field to take a column and is not a map: a scalar, a slice, a pointer to either,
+// a pointer to a pointer, a pointer to an interface.
 //
 // A pointer to a nil map is a target: its map is made here, as the scan of one record always
 // made it, so that a read of several records can store into it.
@@ -744,9 +755,10 @@ func checkReadTarget(record dalrecord.Record) error {
 			if elem.IsNil() {
 				elem.Set(reflect.MakeMap(elem.Type()))
 			}
+			return nil
 		}
 	}
-	return nil
+	return fmt.Errorf("%w: the data is a %s, which a read cannot fill, want a pointer to a struct or a map with string keys", dal.ErrNotSupported, target.Type())
 }
 
 // checkStructTarget refuses a struct type that has a field that is not exported.
@@ -773,7 +785,7 @@ func checkMapTarget(t reflect.Type) error {
 
 // dataFieldNames lists the fields a read of record selects: the names of the
 // struct fields of its data, or the one wildcard for map data, whose columns
-// cannot be enumerated ahead of time (the scan path, scanRowIntoMap, handles the
+// cannot be enumerated ahead of time (the scan path, scanRowIntoMapWithOptions, handles the
 // result columns generically).
 func dataFieldNames(record dalrecord.Record) (fields []string, isMap bool) {
 	record.SetError(nil)
@@ -789,9 +801,7 @@ func dataFieldNames(record dalrecord.Record) (fields []string, isMap bool) {
 	if val.Kind() == reflect.Map {
 		return []string{"*"}, true
 	}
-	if val.Kind() != reflect.Struct {
-		return nil, false
-	}
+	// checkReadTarget has refused whatever is neither a map nor a struct.
 	fields = make([]string, val.NumField())
 	for i := range fields {
 		fields[i] = val.Type().Field(i).Name

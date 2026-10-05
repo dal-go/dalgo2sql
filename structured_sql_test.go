@@ -319,9 +319,12 @@ func TestSelectsIdentityField(t *testing.T) {
 		{"field present but aliased away", []dal.Column{{Expression: dal.Field("id"), Alias: "other"}}, "id", false},
 		{"different field name", []dal.Column{{Expression: dal.Field("name")}}, "id", false},
 		{"non-field expression", []dal.Column{{Expression: dal.Constant{Value: 1}}}, "id", false},
+		{"a field of the base", []dal.Column{{Expression: dal.NewFieldRef("a", "id")}}, "id", true},
+		{"a field of another source", []dal.Column{{Expression: dal.NewFieldRef("r", "id")}}, "id", false},
+		{"a field of another source and then of the base", []dal.Column{{Expression: dal.NewFieldRef("r", "id")}, {Expression: dal.NewFieldRef("a", "id")}}, "id", true},
 	}
 	for _, tc := range cases {
-		if got := selectsIdentityField(tc.columns, tc.field, nil); got != tc.want {
+		if got := selectsIdentityField(tc.columns, tc.field, "a", nil); got != tc.want {
 			t.Errorf("%s: selectsIdentityField() = %v, want %v", tc.name, got, tc.want)
 		}
 	}

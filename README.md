@@ -146,16 +146,20 @@ arguments of every supported shape are in `testdata/postgres`.
 - **A record is keyed by the position of its key column, never by a name two columns
   share.** Where the reader knows the column it takes that position: the catalog's key of a
   select-all (its position among the source's columns, which a select-all returns in table
-  order), and the first item of a select list that is the key's own field. Where only a
-  name says which column is the key (a declared key on a select-all, a select-all over
-  joins) the column of exactly that name wins over one that is the same name folded, and
-  of several columns that are only the name folded the first is taken, so a column that
-  folds to the key's name is not taken for the key. A select list over one source that gives
-  one output name to two different expressions (`a` and `b AS a`) is refused before any
-  statement, as it is for a join, with every dialect and compiler (`columns[1]: duplicate
-  output name "a"`); one expression written twice is one column asked twice and is left
-  alone. The names a wildcard lists are not known before the statement, so they are not
-  compared.
+  order), and the first item of a select list that is the key's own field of the base source
+  (a field of a joined source that has the key's name is not). The catalog is asked in a
+  statement before the one that reads the rows, so a result that does not hold the key's
+  column at that position, because the source's columns changed between the two, fails the
+  read (`the columns of the source changed during the read`) instead of keying the records
+  from another column. Where only a name says which column is the key (a declared key on a
+  select-all, a select-all over joins) the column stored under the name the statement writes
+  is taken (on a fold-lower mount, the key's name folded), else a column that spells the name
+  as it was declared, else the first column that is the name folded. A select list over one
+  source that gives one output name to two different expressions (`a` and `b AS a`) is
+  refused before any statement, as it is for a join, with every dialect and compiler
+  (`columns[1]: duplicate output name "a"`); one expression written twice is one column asked
+  twice and is left alone. The names a wildcard lists are not known before the statement, so
+  they are not compared.
 - **Records are keyed by the source's primary key.** The records reader keys each record
   by the primary key column of the recordset declared for the source in
   `DbOptions.Recordsets` (else `DbOptions.PrimaryKey`). With no key configured, the key is
@@ -260,13 +264,14 @@ column types, and its columns are text columns, as before.
 
 ## Reading a record: the target and the key
 
-A read (`Get`, `GetMulti`) fills a pointer to a struct with exported fields, a map with
+A read (`Get`, `GetMulti`) fills a pointer to a struct with exported fields, or a map with
 string keys whose elements hold any value (a map by value must be made; a pointer to a nil
-map is filled), or a pointer to a scalar or a `sql.Scanner`. A record with no data, a struct
-given by value, a nil pointer, a struct with a field that is not exported, a nil map, a map
-whose keys are not strings or whose elements cannot hold every column value, and a batch
-that mixes map and struct data are errors wrapping `dal.ErrNotSupported`, returned before
-any statement. Every operation that takes a key returns an error wrapping
+map is filled). Every other target is an error wrapping `dal.ErrNotSupported`, returned before
+any statement: a nil record, a record with no data, a struct given by value, a nil pointer, a
+struct with a field that is not exported, a nil map, a map whose keys are not strings or whose
+elements cannot hold every column value, data that is neither a struct nor a map (a scalar, a
+slice, a pointer to either, a pointer to a pointer, a pointer to an interface), and a batch
+that mixes map and struct data. Every operation that takes a key returns an error wrapping
 `dal.ErrNotSupported` for a nil key.
 
 ## End2end - is a separate module

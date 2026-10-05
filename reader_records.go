@@ -3,6 +3,7 @@ package dalgo2sql
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"math"
 	"reflect"
@@ -21,6 +22,11 @@ func getRecordsReader(ctx context.Context, query dal.Query, execute executeQuery
 }
 
 const recordIDHelperColumn = "__dalgo_record_id"
+
+// errColumnsChanged is the error of a read whose result does not hold the key's column where the
+// catalog, asked in the statement before it, said the source has it: the columns of the source
+// changed between the two. The catalog's answer is not used to key records then.
+var errColumnsChanged = errors.New("the columns of the source changed during the read")
 
 // getRecordsReaderWithOptions runs the query and returns a reader over its records. How
 // each record is keyed:
@@ -57,6 +63,8 @@ func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute e
 	// first select item that is the key's own field. It is -1 when only a name says which column
 	// is the key (see keyColumnIndex).
 	knownKeyIndex := -1
+	// keyFromCatalog says knownKeyIndex is the catalog's, which the result is checked against.
+	keyFromCatalog := false
 	// catalogKeyIndex is the position of the catalog's key among the columns of its source in
 	// table order, which is the order a select-all returns them in; -1 when the key is not the
 	// catalog's.
@@ -137,7 +145,8 @@ func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute e
 			// (see keyColumnIndex).
 			keyedByBase := len(q.From().Joins()) != 0 && readsWithOwnCompiler(options)
 			selected := q.Columns()
-			if len(selected) > 0 && (keyedByBase || !selectsIdentityField(selected, primaryKey, fold)) {
+			base := typedIdentity(q.From().Base())
+			if len(selected) > 0 && (keyedByBase || !selectsIdentityField(selected, primaryKey, base, fold)) {
 				columns := append([]dal.Column(nil), selected...)
 				helper := unusedHelperColumn(selected)
 				columns = append(columns, dal.Column{Expression: recordIdentityField(options, q, primaryKey), Alias: helper})
@@ -147,8 +156,9 @@ func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute e
 			} else if len(selected) == 0 {
 				rr.keyInBaseColumns = keyedByBase
 				knownKeyIndex = catalogKeyIndex
+				keyFromCatalog = catalogKeyIndex >= 0
 			} else {
-				knownKeyIndex = keyItemIndex(selected, primaryKey, fold)
+				knownKeyIndex = keyItemIndex(selected, primaryKey, base, fold)
 			}
 		}
 	}
@@ -163,6 +173,14 @@ func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute e
 	case rr.hideIdentityColumn:
 		rr.identityColumnIndex = len(rr.colNames) - 1
 	case knownKeyIndex >= 0:
+		// The catalog and the statement are two statements, which share a connection and not a
+		// snapshot: a bare * returns the stored names, and the catalog's key is a stored name, so
+		// the column at its position must be that one.
+		if keyFromCatalog && (knownKeyIndex >= len(rr.colNames) || rr.colNames[knownKeyIndex] != rr.identityColumn) {
+			_ = rr.rows.Close()
+			err = fmt.Errorf("failed to get SQL reader: %w", errColumnsChanged)
+			return
+		}
 		rr.identityColumnIndex = knownKeyIndex
 	case rr.identityColumn != "":
 		names := rr.colNames
@@ -261,16 +279,19 @@ func catalogPrimaryKey(ctx context.Context, options DbOptions, q dal.StructuredQ
 }
 
 // keyColumnIndex is the position of the column that carries the key's name, among the
-// columns names lists, or -1 when none does. A column that spells the name as it is wins over
-// one that is the name folded (under fold, nil: as they are), and of several that are only
-// the name folded the first is taken, so the choice does not depend on how many columns share
-// the name. In a select-all over joins the base's columns lead the result, so a position
-// among them is a position in the result; a column of a joined source that carries the name is
-// never taken for it.
+// columns names lists, or -1 when none does. The statement writes the key's name as the mount
+// folds it (under fold, nil: as it is), so a column stored under that name is the key. Failing
+// that, a column that spells the name as the caller declared it is taken, and failing that the
+// first column that is the name folded, so the choice does not depend on how many columns share
+// the name. In a select-all over joins the base's columns lead the result, so a position among
+// them is a position in the result; a column of a joined source that carries the name is never
+// taken for it.
 func keyColumnIndex(names []string, name string, fold nameFold) int {
-	for i, column := range names {
-		if column == name {
-			return i
+	for _, written := range []string{fold.of(name), name} {
+		for i, column := range names {
+			if column == written {
+				return i
+			}
 		}
 	}
 	for i, column := range names {
@@ -284,8 +305,9 @@ func keyColumnIndex(names []string, name string, fold nameFold) int {
 // keyItemIndex is the position of the first item of a select list that is the key's own field
 // (see keyItemIsField), or -1 when none is and when the list holds a wildcard, which lists as
 // many columns as its source has and puts the rest of the list at a position the list does not
-// say. An item that spells the key's name as it is wins over one that is the name folded.
-func keyItemIndex(columns []dal.Column, name string, fold nameFold) int {
+// say. An item that spells the key's name as it is wins over one that is the name folded. base is
+// the name the base source goes by in the statement.
+func keyItemIndex(columns []dal.Column, name, base string, fold nameFold) int {
 	for _, column := range columns {
 		if column.Wildcard != nil {
 			return -1
@@ -293,7 +315,7 @@ func keyItemIndex(columns []dal.Column, name string, fold nameFold) int {
 	}
 	for _, f := range []nameFold{nil, fold} {
 		for i, column := range columns {
-			if keyItemIsField(column, name, f) {
+			if keyItemIsField(column, name, base, f) {
 				return i
 			}
 		}
@@ -301,11 +323,20 @@ func keyItemIndex(columns []dal.Column, name string, fold nameFold) int {
 	return -1
 }
 
-// keyItemIsField reports whether a select item is the field called name, under fold, under no
-// name of its own or under that name: the column the key is read from.
-func keyItemIsField(column dal.Column, name string, fold nameFold) bool {
+// keyItemIsField reports whether a select item is the field called name of the base source,
+// under fold, under no name of its own or under that name: the column the key is read from. A
+// field belongs to the base when it names no source, or the name the base goes by in the
+// statement (base: its alias, else its name). A field of another source, which a join can give
+// the same name, is not the key's.
+func keyItemIsField(column dal.Column, name, base string, fold nameFold) bool {
 	field, ok := column.Expression.(dal.FieldRef)
-	return ok && fold.of(field.Name()) == fold.of(name) && (column.Alias == "" || fold.of(column.Alias) == fold.of(name))
+	if !ok || fold.of(field.Name()) != fold.of(name) {
+		return false
+	}
+	if source := field.Source(); source != "" && fold.of(source) != fold.of(base) {
+		return false
+	}
+	return column.Alias == "" || fold.of(column.Alias) == fold.of(name)
 }
 
 // readsWithOwnCompiler reports whether a structured read is compiled by one of this
@@ -464,10 +495,11 @@ func normalizeValueByDatabaseType(databaseTypeName string, value any) any {
 	return text
 }
 
-// selectsIdentityField reports whether the select list returns the column name, under
-// the names fold gives (nil: as they are). A wildcard returns it unless an exclusion
-// names it, and the compiler folds the exclusions it applies, so they are folded here.
-func selectsIdentityField(columns []dal.Column, name string, fold nameFold) bool {
+// selectsIdentityField reports whether the select list returns the column name of the base
+// source (see keyItemIsField), under the names fold gives (nil: as they are). A wildcard
+// returns it unless an exclusion names it, and the compiler folds the exclusions it applies,
+// so they are folded here.
+func selectsIdentityField(columns []dal.Column, name, base string, fold nameFold) bool {
 	name = fold.of(name)
 	for _, column := range columns {
 		if column.Wildcard != nil {
@@ -480,7 +512,7 @@ func selectsIdentityField(columns []dal.Column, name string, fold nameFold) bool
 				return true
 			}
 		}
-		if keyItemIsField(column, name, fold) {
+		if keyItemIsField(column, name, base, fold) {
 			return true
 		}
 	}
@@ -534,7 +566,7 @@ func (r recordsReader) Next() (record dalrecord.Record, err error) {
 			// database/sql returns []byte for TEXT/VARCHAR columns with some
 			// drivers (notably go-sql-driver/mysql); store as string so the
 			// map is usable and JSON-serializes as text, not base64. Matches
-			// scanRowIntoMap on the Get path.
+			// scanRowIntoMapWithOptions on the Get path.
 			value := textValue(normalized)
 			columnType := columnTypeAt(r.colTypes, mapColumnIndex)
 			if r.dialect == "sqlite" && columnType != nil && strings.Contains(strings.ToUpper(columnType.DatabaseTypeName()), "BLOB") {
