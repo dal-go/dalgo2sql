@@ -123,21 +123,9 @@ func reviewedIdentifierQuoting(dialect string) func(string) string {
 	return nil
 }
 
-// reservedSQLWords are common SQL words that an engine rejects as a bare name in
-// the text of a statement: a conservative list, not any one engine's. The legacy
-// text emitter writes names unquoted, so it refuses a keys-only query ordered by one.
-var reservedSQLWords = map[string]bool{
-	"and": true, "as": true, "between": true, "by": true, "case": true, "check": true,
-	"create": true, "default": true, "delete": true, "distinct": true, "drop": true,
-	"else": true, "exists": true, "foreign": true, "from": true, "group": true,
-	"having": true, "in": true, "index": true, "insert": true, "into": true, "is": true,
-	"join": true, "like": true, "limit": true, "not": true, "null": true, "on": true,
-	"or": true, "order": true, "primary": true, "references": true, "select": true,
-	"set": true, "table": true, "then": true, "union": true, "unique": true,
-	"update": true, "values": true, "when": true, "where": true,
-}
-
-// isReservedSQLWord reports whether name, in any case, is one of reservedSQLWords.
+// isReservedSQLWord reports whether name, in any case, is one of reservedSQLWords: a word
+// that any of the engines reserves (see reserved_words.go). The legacy text emitter writes
+// names unquoted, so it refuses a keys-only query ordered by one.
 func isReservedSQLWord(name string) bool { return reservedSQLWords[strings.ToLower(name)] }
 
 // quotableNameProblem says why name cannot be written quoted, or "" if it can.
@@ -227,11 +215,12 @@ func recordFieldNames(data any) (names []string) {
 }
 
 // checkRecordNames refuses a record whose collection, primary-key or field names
-// may not be written into SQL text. The statement builders refuse the same names
-// on their own; this runs first so that a write whose first statement is not the
-// one that carries the names (an existence check), and a batch of writes of which
-// an earlier record would be written before a later one is refused, send nothing
-// at all.
+// may not be written into SQL text, and one whose data is not a struct with exported
+// fields or a map with string keys (an error wrapping dal.ErrNotSupported). The
+// statement builders refuse the same names on their own; this runs first so that a
+// write whose first statement is not the one that carries the names (an existence
+// check), and a batch of writes of which an earlier record would be written before
+// a later one is refused, send nothing at all.
 func (o DbOptions) checkRecordNames(record dalrecord.Record) error {
 	key := record.Key()
 	if _, err := o.recordsetIdentifier(key); err != nil {
@@ -245,8 +234,15 @@ func (o DbOptions) checkRecordNames(record dalrecord.Record) error {
 	// The statement builders read the data the same way: Data() panics while the
 	// record's error is unset or set to a failure, and SetError(nil) clears both.
 	record.SetError(nil)
-	for _, name := range recordFieldNames(record.Data()) {
-		if _, err := o.sqlIdentifier(positionField, name); err != nil {
+	// Data a write cannot turn into columns is refused here too, so that it is
+	// before any statement: an ID generator checks for a taken ID, and an earlier
+	// record of a batch is written, before the statement builder sees the data.
+	fields, err := recordDataFields(getRecordsetName(key), record.Data())
+	if err != nil {
+		return err
+	}
+	for _, field := range fields {
+		if _, err := o.sqlIdentifier(positionField, field.name); err != nil {
 			return err
 		}
 	}

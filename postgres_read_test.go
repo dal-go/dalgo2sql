@@ -19,10 +19,10 @@ import (
 func postgresReadCatalogRows(relation string, names ...string) *sqlmock.Rows {
 	rows := sqlmock.NewRows(postgresCatalogColumns)
 	types := map[string][]driver.Value{
-		"albumid": {"integer", "N", int64(23), int64(0), true, false},
-		"title":   {"text", "S", int64(25), int64(0), false, false},
-		"secret":  {"text", "S", int64(25), int64(0), false, false},
-		"total":   {"numeric", "N", int64(1700), int64(0), false, false},
+		"albumid": {"integer", "N", int64(23), int64(0), true, false, false},
+		"title":   {"text", "S", int64(25), int64(0), false, false, false},
+		"secret":  {"text", "S", int64(25), int64(0), false, false, false},
+		"total":   {"numeric", "N", int64(1700), int64(0), false, false, false},
 	}
 	for _, name := range names {
 		rows.AddRow(append([]driver.Value{relation, name}, types[strings.ToLower(name)]...)...)
@@ -254,8 +254,8 @@ func TestPostgresRecordsReaderKeysRecordsByTheFoldedPrimaryKey(t *testing.T) {
 	ctx := context.Background()
 	catalog := func(relation string) *sqlmock.Rows {
 		return sqlmock.NewRows(postgresCatalogColumns).
-			AddRow(relation, "id", "integer", "N", int64(23), int64(0), true, false).
-			AddRow(relation, "title", "text", "S", int64(25), int64(0), false, false)
+			AddRow(relation, "id", "integer", "N", int64(23), int64(0), true, false, false).
+			AddRow(relation, "title", "text", "S", int64(25), int64(0), false, false, false)
 	}
 	for _, tc := range []struct {
 		name       string

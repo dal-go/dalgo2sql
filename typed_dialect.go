@@ -231,11 +231,31 @@ type typedColumnFact struct {
 	// xml, point), or compares it in a way DALgo does not mean (a box by area, an oid
 	// as a number that names an object). typedJoinKeysComparable refuses the pair.
 	NoJoinKey bool
+	// PrimaryKey marks a column of the relation's PRIMARY KEY constraint. A view, a
+	// materialized view and a foreign table have none, and a unique index that is not
+	// the primary key marks nothing.
+	PrimaryKey bool
 }
 
 // typedSourceFacts holds a source's columns in table order.
 type typedSourceFacts struct {
 	Columns []typedColumnFact
+}
+
+// primaryKeyColumn returns the column that is the whole of the source's primary key,
+// as the catalog stores its name. It reports false for a source whose primary key is
+// not exactly one column: none (a view, a table without one), or several. A record's
+// key is one value, so a composite key names no column.
+func (f typedSourceFacts) primaryKeyColumn() (typedColumnFact, bool) {
+	var key typedColumnFact
+	count := 0
+	for _, column := range f.Columns {
+		if column.PrimaryKey {
+			key = column
+			count++
+		}
+	}
+	return key, count == 1
 }
 
 // typedCatalogFacts is the compiler's whole knowledge of the database. The

@@ -88,7 +88,8 @@ func typedFactsForQuery(ctx context.Context, dialect typedDialect, execute execu
 	sources := typedQuerySources(from)
 	facts, err := dialect.catalogFacts(ctx, execute, sources)
 	if err != nil {
-		return typedCatalogFacts{}, err
+		// A read whose context ended says so, however the connection it ran on reports it.
+		return typedCatalogFacts{}, explainByContext(ctx, err)
 	}
 	for _, source := range sources {
 		if _, known := facts.source(source); known {

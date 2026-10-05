@@ -3,8 +3,10 @@ package dalgo2sql
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
+	"io"
 	"sync"
 
 	"github.com/dal-go/dalgo/access"
@@ -20,7 +22,15 @@ type executeQueryFunc func(ctx context.Context, query string, args ...any) (*sql
 // caller that stopped on ctx.Done() need not close the reader to free the connection.
 type connLease struct {
 	once sync.Once
+	// mu is held while a statement is issued on conn and while conn is closed. Closing a
+	// *sql.Conn while a statement is being issued on it is a race inside database/sql: the
+	// statement can be handed a connection that is already gone, and fail with a nil
+	// dereference. With the lock, a statement either runs on the open connection or is
+	// refused as database/sql refuses it once the connection is closed (sql.ErrConnDone).
+	mu   sync.Mutex
 	conn *sql.Conn
+	// ctx is the context of the read, which ends the lease (see explain).
+	ctx context.Context
 	// stopHook unregisters the hook that gives the connection back when the context
 	// ends. Only release reads it, and only after the lease is built; the hook itself
 	// calls giveBack.
@@ -29,28 +39,74 @@ type connLease struct {
 
 // newConnLease takes conn for the read that runs on ctx.
 func newConnLease(ctx context.Context, conn *sql.Conn) *connLease {
-	l := &connLease{conn: conn}
+	l := &connLease{conn: conn, ctx: ctx}
 	l.stopHook = context.AfterFunc(ctx, l.giveBack)
 	return l
+}
+
+// explainByContext returns the error of a read whose context has ended. A driver whose
+// connection was broken by the end of the context says only that the connection is gone
+// (driver.ErrBadConn), and so does database/sql once the lease has given the connection
+// back (sql.ErrConnDone); the pool never says either of a read whose context ended, it
+// says why the read stopped. So an error that is one of these, or wraps one, is the
+// context's error when the context has ended, and any other error is left as it is.
+func explainByContext(ctx context.Context, err error) error {
+	if err != nil && (errors.Is(err, sql.ErrConnDone) || errors.Is(err, driver.ErrBadConn)) {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+	}
+	return err
+}
+
+// explain is explainByContext for the context of the read the lease belongs to, for the
+// error of a reader that has the lease; a read on the pool has none, and its errors are
+// left as they are.
+func (l *connLease) explain(err error) error {
+	if l == nil {
+		return err
+	}
+	return explainByContext(l.ctx, err)
 }
 
 // query runs one statement of the read on the leased connection. The lease gives the
 // connection back when the context of the read ends, and that can happen between two
 // statements of one read (the catalog lookup and the statement it compiles); the next
-// statement then finds a closed connection. The pool never says that of a read whose
-// context ended, it says why the read stopped, so the error is the context's.
+// statement then finds a closed connection, or a driver that reports its connection
+// broken. The pool never says that of a read whose context ended, it says why the read
+// stopped, so the error is the context's (explainByContext).
 func (l *connLease) query(ctx context.Context, text string, args ...any) (*sql.Rows, error) {
+	l.mu.Lock()
 	rows, err := l.conn.QueryContext(ctx, text, args...)
-	if errors.Is(err, sql.ErrConnDone) && ctx.Err() != nil {
-		return nil, ctx.Err()
+	l.mu.Unlock()
+	if err != nil {
+		return nil, explainByContext(ctx, err)
 	}
-	return rows, err
+	return rows, nil
 }
 
 // giveBack closes the connection, which returns it to the pool, once. Closing waits for
 // the rows that ran on the connection, which close themselves when their context ends.
 func (l *connLease) giveBack() {
-	l.once.Do(func() { _ = l.conn.Close() })
+	l.once.Do(func() {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		_ = l.conn.Close()
+	})
+}
+
+// streamError is the error of a result that broke in the middle of its stream, as a reader
+// returns it from Next. database/sql takes only io.EOF itself for the end of a result,
+// so a driver error that wraps io.EOF is the stream's. dal.ErrNoMoreRecords wraps io.EOF
+// too, and callers of the readers end a result on any error that matches it, so such an
+// error is returned without the chain (its text kept): nothing takes it for the end. The
+// error of a read whose context ended is the context's (connLease.explain).
+func streamError(lease *connLease, err error) error {
+	err = lease.explain(err)
+	if errors.Is(err, io.EOF) {
+		return fmt.Errorf("%v", err)
+	}
+	return err
 }
 
 // release gives the connection back to the pool. It is safe on a nil lease (a read on
@@ -63,6 +119,12 @@ func (l *connLease) release() {
 	l.stopHook()
 	l.giveBack()
 }
+
+// columnTypesOf reads the column types of rows. It is a variable so that a test can end the
+// context of a read at the one point between its two lookups on the rows, the names and the
+// types: database/sql closes the rows from its own goroutine when the context ends, and which
+// lookup it meets first is the scheduler's choice.
+var columnTypesOf = func(rows *sql.Rows) ([]*sql.ColumnType, error) { return rows.ColumnTypes() }
 
 type readerBase struct {
 	// lease, when set, is the connection the rows run on; the reader releases it when
@@ -88,14 +150,16 @@ func getReaderBaseWithDialect(ctx context.Context, query dal.Query, execute exec
 }
 
 func getReaderBaseWithOptions(ctx context.Context, query dal.Query, execute executeQueryFunc, options DbOptions) (readerBase, error) {
-	return getReaderBaseFor(ctx, query, execute, options, false)
+	return getReaderBaseFor(ctx, query, execute, options, false, nil)
 }
 
 // getReaderBaseFor runs the query. wantBaseColumns asks, for a select-all over joins, for
 // the columns of the base source (readerBase.baseColumns), which the SQLite dialect reads
 // from its own catalog in one more statement, so it is asked for only by a read that needs
-// them.
-func getReaderBaseFor(ctx context.Context, query dal.Query, execute executeQueryFunc, options DbOptions, wantBaseColumns bool) (readerBase, error) {
+// them. facts, when the typed PostgreSQL compiler runs the read, are the catalog facts of
+// the sources of the query that the caller has read already (typedFactsForQuery); nil
+// reads them here.
+func getReaderBaseFor(ctx context.Context, query dal.Query, execute executeQueryFunc, options DbOptions, wantBaseColumns bool, facts *typedCatalogFacts) (readerBase, error) {
 	if err := rejectRawRecursiveStructuredQuery(query); err != nil {
 		return readerBase{}, err
 	}
@@ -177,7 +241,12 @@ func getReaderBaseFor(ctx context.Context, query dal.Query, execute executeQuery
 				// itself, so no column is filtered out of the result afterwards. The facts
 				// are read through execute, which the caller binds to the connection or
 				// transaction the statement runs on.
-				statement, err := compileTypedRead(ctx, q, dialect, execute)
+				var statement typedStatement
+				if facts != nil {
+					statement, err = compileTypedStatement(q, dialect, *facts)
+				} else {
+					statement, err = compileTypedRead(ctx, q, dialect, execute)
+				}
 				if err != nil {
 					return readerBase{}, err
 				}
@@ -204,7 +273,14 @@ func getReaderBaseFor(ctx context.Context, query dal.Query, execute executeQuery
 		_ = rb.rows.Close()
 		return rb, fmt.Errorf("the statement returned %d columns where the query asked for %d", len(rb.scanColNames), len(askedNames))
 	}
-	rb.scanColTypes, _ = rb.rows.ColumnTypes()
+	// database/sql closes the rows when the context ends, between the lookup of the names
+	// and this one, and then answers with no types and the context's error: a read without
+	// its types cannot go on, and a result whose columns have no types is never taken for one
+	// that has none.
+	if rb.scanColTypes, err = columnTypesOf(rb.rows); err != nil {
+		_ = rb.rows.Close()
+		return rb, fmt.Errorf("failed to read column types: %w", explainByContext(ctx, err))
+	}
 	rb.visibleIndexes = make([]int, len(rb.scanColNames))
 	for i := range rb.visibleIndexes {
 		rb.visibleIndexes[i] = i
@@ -246,11 +322,21 @@ func rejectRawRecursiveStructuredQuery(query dal.Query) error {
 }
 
 func sqliteSourceColumns(ctx context.Context, q dal.StructuredQuery, execute executeQueryFunc) ([]string, error) {
-	source := q.From().Base()
+	source, err := sqliteCollectionSource(q.From().Base())
+	if err != nil {
+		return nil, err
+	}
 	// table_xinfo gives the actual identifiers, not SELECT * result labels,
 	// which SQLite may prefix when full_column_names is enabled. It also
-	// includes generated columns (hidden 2/3), which SELECT * returns.
-	rows, err := execute(ctx, "SELECT name, hidden FROM pragma_table_xinfo(?) ORDER BY cid", source.Name())
+	// includes generated columns (hidden 2/3), which SELECT * returns. A source in a
+	// schema (an attached database) is asked for there: by its name alone, SQLite
+	// answers with the first table of that name, which can be another one, with other
+	// columns in another order.
+	statement, args := "SELECT name, hidden FROM pragma_table_xinfo(?) ORDER BY cid", []any{source.Name()}
+	if schema := source.Schema(); schema != "" {
+		statement, args = "SELECT name, hidden FROM pragma_table_xinfo(?, ?) ORDER BY cid", []any{source.Name(), schema}
+	}
+	rows, err := execute(ctx, statement, args...)
 	if err != nil {
 		return nil, err
 	}

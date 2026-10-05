@@ -26,12 +26,21 @@ type statementRecorder struct {
 	// row when rowExists reports true for its text and none when it reports false.
 	// Unset, the driver fails every statement with errReachedDatabase.
 	rowExists func(text string) bool
+	// begins counts the transactions the driver was asked to begin.
+	begins int
 }
 
 func (r *statementRecorder) record(text string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.statements = append(r.statements, text)
+}
+
+// begun is how many transactions the database/sql pool asked the driver to begin.
+func (r *statementRecorder) begun() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.begins
 }
 
 func (r *statementRecorder) calls() []string {
@@ -75,7 +84,12 @@ func (c recordingConn) answered() bool { return c.recorder.rowExists != nil }
 
 func (recordingConn) Close() error { return nil }
 
-func (recordingConn) Begin() (driver.Tx, error) { return recordingTx{}, nil }
+func (c recordingConn) Begin() (driver.Tx, error) {
+	c.recorder.mu.Lock()
+	c.recorder.begins++
+	c.recorder.mu.Unlock()
+	return recordingTx{}, nil
+}
 
 func (c recordingConn) ExecContext(_ context.Context, text string, _ []driver.NamedValue) (driver.Result, error) {
 	c.recorder.record(text)

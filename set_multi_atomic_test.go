@@ -3,9 +3,12 @@ package dalgo2sql
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/dal-go/dalgo/dal"
 	dalrecord "github.com/dal-go/record"
 	_ "modernc.org/sqlite"
 )
@@ -58,8 +61,12 @@ func TestDatabaseSetMulti_IsAtomic(t *testing.T) {
 					dalrecord.NewRecordWithData(c.key(first), map[string]any{"name": "written"}),
 					dalrecord.NewRecordWithData(c.key("id2"), map[string]any{"name": nil}), // the server refuses NULL
 				})
-				if err == nil {
-					t.Fatal("no error")
+				// The error is the server's, from the second record: a batch that a check of
+				// ours refused before it wrote the first would leave the rows as they were
+				// too, and prove nothing about the transaction.
+				if err == nil || !strings.Contains(err.Error(), "NOT NULL") ||
+					errors.Is(err, ErrNoFieldsToWrite) || errors.Is(err, ErrUnsafeName) {
+					t.Fatalf("error = %v, want the server's NOT NULL error", err)
 				}
 				if n := countUsers(t, raw); n != 1 {
 					t.Errorf("%d rows, want the one that was there", n)
@@ -99,4 +106,54 @@ func TestDatabaseSetMulti_ReportsATransactionThatCannotStart(t *testing.T) {
 	if err == nil {
 		t.Fatal("no error")
 	}
+}
+
+// A batch that is refused before any of it is written opens no transaction: the check of the
+// batch comes before BEGIN, so not even BEGIN and ROLLBACK reach the database. The transaction
+// a caller began is theirs, and is left as it is.
+func TestSetMulti_ARefusedBatchOpensNoTransaction(t *testing.T) {
+	c := validNames()
+	good := func(id string) dalrecord.Record { return c.mapRecord(id) }
+	hostile := c
+	hostile.collection = "x; DROP TABLE y"
+	options := c.options("")
+	options.Recordsets["lines_orders"] = nil // declared with nil: not declared
+	cases := []struct {
+		name   string
+		record dalrecord.Record
+		want   error
+	}{
+		{"a name that cannot be written", dalrecord.NewRecordWithData(hostile.key("id1"), map[string]any{"name": "v"}), ErrUnsafeName},
+		{"a record with no field to write", dalrecord.NewRecordWithData(c.key("id1"), map[string]any{}), ErrNoFieldsToWrite},
+		{"data that is not a struct or a map", dalrecord.NewRecordWithData(c.key("id1"), 5), dal.ErrNotSupported},
+		{"a nested key with no declared recordset", dalrecord.NewRecordWithData(nestedNames().key("l1"), map[string]any{"name": "v"}), ErrUndeclaredNestedRecordset},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, r := range keyPathAPIsAnswering(t, options, func(string) bool { return false }) {
+				err := r.api.SetMulti(context.Background(), []dalrecord.Record{good("id0"), tt.record})
+				if !errors.Is(err, tt.want) {
+					t.Errorf("%s: error = %v, want one wrapping %v", r.kind, err, tt.want)
+				}
+				if calls := r.recorder.calls(); len(calls) != 0 {
+					t.Errorf("%s: a statement reached the database: %q", r.kind, calls)
+				}
+				// The transaction handle was begun by keyPathAPIsAnswering, once. The database
+				// handle begins its own only for a batch it writes.
+				wantBegins := map[string]int{"database": 0, "transaction": 1}[r.kind]
+				if got := r.recorder.begun(); got != wantBegins {
+					t.Errorf("%s: %d transactions begun, want %d", r.kind, got, wantBegins)
+				}
+			}
+		})
+	}
+	t.Run("a batch that is written is one transaction", func(t *testing.T) {
+		r := keyPathAPIsAnswering(t, options, func(string) bool { return false })[0]
+		if err := r.api.SetMulti(context.Background(), []dalrecord.Record{good("id0"), good("id1")}); err != nil {
+			t.Fatal(err)
+		}
+		if got := r.recorder.begun(); got != 1 {
+			t.Errorf("%d transactions begun, want 1", got)
+		}
+	})
 }

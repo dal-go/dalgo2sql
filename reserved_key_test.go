@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -15,7 +17,9 @@ import (
 // rejects. The query is refused with dal.ErrNotSupported, and no statement is sent.
 func TestRecordsReader_KeysOnlyQueryWithAReservedWordKeyIsRefusedByTheLegacyEmitter(t *testing.T) {
 	keysOnly := dal.From(dal.NewRootCollectionRef("items", "")).NewQuery().SelectKeysOnly(reflect.String)
-	for _, key := range []string{"order", "ORDER", "Select", "group", "index", "from"} {
+	// desc and user are reserved by some of the engines and not by others: the list is their
+	// union, so a key that any of them rejects bare is refused.
+	for _, key := range []string{"order", "ORDER", "Select", "group", "index", "from", "desc", "user", "current_date"} {
 		t.Run(key, func(t *testing.T) {
 			db, mock, err := sqlmock.New()
 			if err != nil {
@@ -56,12 +60,59 @@ func TestRecordsReader_KeysOnlyQueryWithAReservedWordKeyElsewhere(t *testing.T) 
 }
 
 func TestIsReservedSQLWord(t *testing.T) {
-	for _, word := range []string{"select", "SELECT", "Order", "group"} {
+	for _, word := range []string{"select", "SELECT", "Order", "group", "Desc", "USER"} {
 		if !isReservedSQLWord(word) {
 			t.Errorf("%q is not reported as reserved", word)
 		}
 	}
 	for _, word := range []string{"id", "ordinal", "orders", "Name", ""} {
+		if isReservedSQLWord(word) {
+			t.Errorf("%q is reported as reserved", word)
+		}
+	}
+}
+
+// The list is the union of what each engine reserves: every word of each engine's list is
+// in it, whichever of the others accepts it bare, and the words the list held before it was a
+// union are still in it. The words a review found missing are among them.
+func TestReservedSQLWordsAreTheUnionAcrossEngines(t *testing.T) {
+	for _, engine := range []struct {
+		name  string
+		words string
+		// examples are words of the engine's list that no other engine's has.
+		examples []string
+	}{
+		{"PostgreSQL", postgresReservedWords, []string{"analyse", "asymmetric", "ilike", "variadic"}},
+		{"MySQL", mysqlReservedWords, []string{"accessible", "div", "rank", "zerofill"}},
+		{"SQL Server", sqlServerReservedWords, []string{"backup", "holdlock", "top", "waitfor"}},
+		{"SQLite", sqliteReservedWords, []string{"glob", "indexed", "nothing", "autoincrement"}},
+	} {
+		t.Run(engine.name, func(t *testing.T) {
+			words := strings.Fields(engine.words)
+			if len(words) == 0 {
+				t.Fatal("an empty list")
+			}
+			for _, word := range words {
+				if !reservedSQLWords[word] || word != strings.ToLower(word) {
+					t.Errorf("%q, a word of %s, is not in the union in lower case", word, engine.name)
+				}
+			}
+			for _, word := range engine.examples {
+				if !slices.Contains(words, word) || !isReservedSQLWord(strings.ToUpper(word)) {
+					t.Errorf("%q is not reserved by %s and in the union", word, engine.name)
+				}
+			}
+		})
+	}
+	for _, word := range strings.Fields(`and as between by case check create default delete distinct drop else exists foreign
+from group having in index insert into is join like limit not null on or order primary references
+select set table then union unique update values when where desc asc all to end with using offset
+user current_date`) {
+		if !isReservedSQLWord(word) {
+			t.Errorf("%q is no longer reserved", word)
+		}
+	}
+	for _, word := range []string{"id", "name", "title", "created_at", "ordinal", "orders", "descr", "username"} {
 		if isReservedSQLWord(word) {
 			t.Errorf("%q is reported as reserved", word)
 		}

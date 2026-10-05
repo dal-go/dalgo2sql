@@ -172,3 +172,63 @@ func TestNestedKey_DeclaredRecordsetIsWritten(t *testing.T) {
 		t.Errorf("statements = %q", got)
 	}
 }
+
+// Delete follows the declared primary key: a nested key whose joined recordset is
+// declared with no primary key column, or with several, is refused as Update
+// refuses it, before any statement. It used to send the leaf ID alone, as
+// DELETE ... WHERE ID = ?, whatever the declaration said.
+func TestNestedKey_DeleteFollowsTheDeclaredPrimaryKey(t *testing.T) {
+	nested, plain := nestedNames(), validNames()
+	operations := []nestedKeyOperation{
+		{"delete", func(ctx context.Context, api keyPathAPI) error {
+			return api.Delete(ctx, nested.key("l1"))
+		}},
+		{"delete-multi, one key", func(ctx context.Context, api keyPathAPI) error {
+			return api.DeleteMulti(ctx, []*dalrecord.Key{nested.key("l1")})
+		}},
+		{"delete-multi, several keys", func(ctx context.Context, api keyPathAPI) error {
+			return api.DeleteMulti(ctx, []*dalrecord.Key{nested.key("l1"), nested.key("l2")})
+		}},
+		{"delete-multi, after a key that could be deleted", func(ctx context.Context, api keyPathAPI) error {
+			return api.DeleteMulti(ctx, []*dalrecord.Key{plain.key("u1"), nested.key("l1")})
+		}},
+	}
+	cases := []struct {
+		name      string
+		recordset *Recordset
+		want      error  // the error the operation wraps, if any
+		wantText  string // text of the error
+	}{
+		{"declared with nil", nil, ErrUndeclaredNestedRecordset, nestedTable},
+		{"declared with no primary key", NewRecordset(nestedTable, Table, nil),
+			nil, "primary key is not defined for " + nestedTable},
+		{"declared with an empty primary key", NewRecordset(nestedTable, Table, []dal.FieldRef{}),
+			nil, "primary key is not defined for " + nestedTable},
+		{"declared with two primary key fields", NewRecordset(nestedTable, Table, []dal.FieldRef{dal.Field("order_id"), dal.Field("id")}),
+			dal.ErrNotImplementedYet, "composite primary key"},
+	}
+	for _, dialect := range []string{"", dialectSQLite} {
+		for _, tt := range cases {
+			for _, op := range operations {
+				t.Run(dialect+"/"+tt.name+"/"+op.name, func(t *testing.T) {
+					options := undeclaredNestedOptions(dialect)
+					options.Recordsets[nestedTable] = tt.recordset
+					for _, r := range keyPathAPIsAnswering(t, options, func(string) bool { return true }) {
+						t.Run(r.kind, func(t *testing.T) {
+							err := op.run(context.Background(), r.api)
+							if calls := r.recorder.calls(); len(calls) != 0 {
+								t.Fatalf("a statement reached the database: %q", calls)
+							}
+							if err == nil || !strings.Contains(err.Error(), tt.wantText) {
+								t.Fatalf("error = %v, want one that mentions %q", err, tt.wantText)
+							}
+							if tt.want != nil && !errors.Is(err, tt.want) {
+								t.Fatalf("error = %v, want one wrapping %v", err, tt.want)
+							}
+						})
+					}
+				})
+			}
+		}
+	}
+}

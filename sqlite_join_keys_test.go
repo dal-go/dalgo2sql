@@ -2,6 +2,7 @@ package dalgo2sql
 
 import (
 	"context"
+	"database/sql/driver"
 	"errors"
 	"reflect"
 	"strings"
@@ -175,6 +176,72 @@ func TestSQLiteJoinSelectAllReadsTheBaseColumnsOnlyWhenItKeysByThem(t *testing.T
 		}
 		if err := mock.ExpectationsWereMet(); err != nil {
 			t.Fatal(err)
+		}
+	})
+}
+
+// The base's columns come from the base's own schema. album exists in main and in an attached
+// database, with its columns in another order; the join reads aux.album, so the key of each
+// record is the id of that table, found at the position it has there. The lookup used to
+// send the table name only, which SQLite resolves to the first table of that name, in main.
+func TestSQLiteJoinSelectAllKeysRecordsByTheBasesColumnOfAnAttachedDatabase(t *testing.T) {
+	raw := openNullTestDB(t, `ATTACH DATABASE ':memory:' AS aux;
+CREATE TABLE aux.album (title TEXT, id INTEGER PRIMARY KEY, artist_id INTEGER);
+CREATE TABLE album (id INTEGER PRIMARY KEY, title TEXT, artist_id INTEGER);
+CREATE TABLE artist (id INTEGER PRIMARY KEY, name TEXT);
+INSERT INTO artist VALUES (101, 'Queen'), (102, 'Abba');
+INSERT INTO aux.album VALUES ('Jazz', 1, 101), ('Arrival', 2, 102);
+INSERT INTO album VALUES (901, 'Main', 101);`)
+	query := dal.From(dal.NewQualifiedRootCollectionRef("aux", "album", "a")).Join(
+		dal.NewJoinedSource(dal.NewRootCollectionRef("artist", "r"), dal.JoinInner, typedTestJoinOn("a", "artist_id", "r", "id")),
+	).NewQuery().OrderBy(dal.Ascending(typedTestQualified("a", "id"))).SelectColumns()
+	database := NewDatabase(raw, newSchema(), DbOptions{StructuredQueryDialect: "sqlite", PrimaryKey: []string{"id"}})
+	keys, _, err := readJoinRecords(context.Background(), database, query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []any{int64(1), int64(2)}; !reflect.DeepEqual(keys, want) {
+		t.Fatalf("keys = %v, want the ids of aux.album %v", keys, want)
+	}
+}
+
+// A base in a schema is asked for by name and schema; one without a schema keeps the
+// statement it always had.
+func TestSQLiteSourceColumnsAskForTheBasesSchema(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		source    dal.CollectionRef
+		statement string
+		args      []driver.Value
+	}{
+		{"no schema", dal.NewRootCollectionRef("album", ""), "SELECT name, hidden FROM pragma_table_xinfo(?) ORDER BY cid", []driver.Value{"album"}},
+		{"a schema", dal.NewQualifiedRootCollectionRef("aux", "album", ""), "SELECT name, hidden FROM pragma_table_xinfo(?, ?) ORDER BY cid", []driver.Value{"album", "aux"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherEqual))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer closeDatabase(t, db)
+			mock.ExpectQuery(tc.statement).WithArgs(tc.args...).WillReturnRows(sqlmock.NewRows([]string{"name", "hidden"}).AddRow("id", 0))
+			names, err := sqliteSourceColumns(context.Background(), dal.From(tc.source).NewQuery().SelectColumns(), db.QueryContext)
+			if err != nil || !reflect.DeepEqual(names, []string{"id"}) {
+				t.Fatalf("source columns = %v, err = %v", names, err)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+	t.Run("a base that is not a table is an error", func(t *testing.T) {
+		db, _, err := sqlmock.New()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer closeDatabase(t, db)
+		query := dal.From(dal.NewQuerySource(nil, "derived")).NewQuery().SelectColumns()
+		if _, err := sqliteSourceColumns(context.Background(), query, db.QueryContext); err == nil || !strings.Contains(err.Error(), "has no SQLite table metadata") {
+			t.Fatalf("error = %v, want the refusal of a source that is not a table", err)
 		}
 	})
 }

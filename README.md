@@ -32,7 +32,9 @@ render GROUP BY, COUNT, SUM, AVG, MIN, MAX, DISTINCT aggregates, HAVING, alias
 rewrites, result ordering and pagination natively. SUM/AVG normalize numeric
 inputs to REAL for parity with DALgo's generic `float64` fallback. FIRST/LAST
 are deliberately not advertised until DALgo models aggregate-local ordering;
-using unspecified SQLite row order would not be deterministic.
+using unspecified SQLite row order would not be deterministic. DALgo's planner
+therefore refuses a query that uses them for this adapter (see the PostgreSQL
+section), and nothing runs it.
 
 ## Which path compiles a structured query
 
@@ -79,6 +81,10 @@ arguments of every supported shape are in `testdata/postgres`.
   folded first. A configured primary key is matched to the result's column by the same
   fold, so a key configured as `ID` keys the records of a column the server returns as
   `id`.
+  A query that runs in DALgo's own engine instead of the compiler (a subquery, a join the
+  adapter declines) does not fold: under `IdentifierCaseFoldLower` it must spell table and
+  column names as the catalog stores them, in lower case, until DALgo's engine folds names
+  itself. The compiled path accepts any case.
 - **A table that is not there** fails with `*TableNotFoundError` (it matches
   `ErrTableNotFound`), which names the table and the nearest name that exists
   (`SuggestedSchema` and `SuggestedName`; both empty when none is near):
@@ -88,8 +94,12 @@ arguments of every supported shape are in `testdata/postgres`.
   are all "not found"; a source is never compiled without its catalog facts.
 - **Native aggregation and joins.** The adapter reports GROUP BY, HAVING, ORDER BY,
   COUNT, SUM and AVG with their DISTINCT forms, MIN and MAX as native
-  (`QueryCapabilities`), so DALgo runs them on the server. FIRST and LAST, and any
-  query with a subquery, stay in DALgo's generic engine. A join is accepted
+  (`QueryCapabilities`), so DALgo runs them on the server. A query with a subquery
+  stays in DALgo's generic engine. FIRST and LAST are refused by DALgo's planner for this
+  adapter: they need a provider-declared stable input order, which the adapter does not
+  declare (neither dialect promises a group-key order or a stable row order), so a query
+  that uses one fails with the planner's error and runs nowhere, in the generic engine
+  included. A join is accepted
   (`CanExecuteJoin`) when each ON pair has the same type category (numbers with
   numbers, text with text) or the same type, on the database handle as in a
   transaction; it is declined when the types differ or a key's type has no usable
@@ -122,10 +132,27 @@ arguments of every supported shape are in `testdata/postgres`.
   two expressions of a join one output name (`a.id` and `r.id`) is refused with
   `join_field: duplicate output name`, the error DALgo's generic engine gives for the
   same query, with the SQLite dialect too.
+- **Records are keyed by the source's primary key.** The records reader keys each record
+  by the primary key column of the recordset declared for the source in
+  `DbOptions.Recordsets` (else `DbOptions.PrimaryKey`). With no key configured, the key is
+  the source's primary key as the catalog reports it, when that is exactly one column. The
+  one catalog query that serves the compiler serves the key, so a read still sends one. A
+  source with no primary key, with a composite one, a view, a materialized view and a foreign
+  table (the catalog reports none for these), and a grouped or aggregated query, key their
+  rows by ordinal: the position of the row in the result, from 0, as decimal text. A recordset
+  that is declared with no single-column primary key keeps the literal ID
+  `__dalgo_record_id`, as does a read with the SQLite dialect, the legacy emitter or a native
+  compiler of the caller's and no key configured: they have no catalog to ask. On a fold-lower
+  mount a declared recordset is looked up by the query's spelling of the source, then by that
+  spelling folded as the catalog lookup folds it, so a recordset declared as `album` is found
+  by a query that says `Album` or `ALBUM`.
 - **A stream error is never the end of a result.** Both readers return the error the
   server raised in the middle of a result (a timeout, an overflow at one row) from
   `Next`, instead of `ErrNoMoreRecords`; a read whose context ended returns the
-  context's error.
+  context's error, wherever in the read it ended (`errors.Is(err, context.Canceled)` or
+  `context.DeadlineExceeded`), also when the driver reports its connection broken
+  (`driver.ErrBadConn`) or database/sql reports it closed (`sql.ErrConnDone`) because of
+  it; the connection goes back to the pool in every case.
 - **The DTQL money option** is refused (`ErrNotSupported`) whatever the select list:
   the records reader reads the option from the caller's query before it adds the key
   column to it.
@@ -167,7 +194,9 @@ closed. What it refuses, by where it is found (each refusal is an error wrapping
 - **An aggregate** other than COUNT, SUM, AVG, MIN and MAX, and a keys-only query
   that would be ordered by a field that is a reserved word (such as a primary key
   named `order`), because the emitter writes the name unquoted and the server
-  rejects it.
+  rejects it. The reserved words are the union across engines (PostgreSQL, MySQL, SQL
+  Server and SQLite), so a word that one of them accepts bare, such as `index` or `user`
+  on PostgreSQL, is refused too: the text must run on each.
 
 ## NUMERIC result values
 
@@ -247,7 +276,8 @@ field type:
   keeps every digit and the whole `int64` and `uint64` range is reachable; a
   whole `NUMERIC` with a scale (`9007199254740993.00`, what `SUM` over
   `numeric(p,2)` returns) is read from the part before the point, so it keeps
-  every digit too; a fraction is an error, and so is a whole number outside the
+  every digit too; a fraction is an error, judged by the text (so one beyond 2^53 is
+  one too, never the float64's rounding), and so is a whole number outside the
   field's range (`-9223372036854775809` for an `int64` is an error, never the
   nearest bound);
 - float and `bool` fields take the normalised value (`NUMERIC` becomes
@@ -273,7 +303,8 @@ and an exact name wins over a looser one (see the precedence note above).
 ## Keys-only query order
 
 A keys-only query (`SelectKeysOnly`) with no `ORDER BY` is ordered ascending by
-the primary key (from `DbOptions.Recordsets`, else `DbOptions.PrimaryKey`), so
+the primary key (from `DbOptions.Recordsets`, else `DbOptions.PrimaryKey`, else, with
+the PostgreSQL dialect, the primary key the catalog reports), so
 the order is defined and repeatable on each database. Text keys sort by that
 database's collation (the SQLite compiler uses `BINARY`; the legacy emitter,
 PostgreSQL and MySQL use the column's own collation). A query that names an

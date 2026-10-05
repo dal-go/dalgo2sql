@@ -27,6 +27,22 @@ type DbOptions struct {
 	// key of a collection named "lines_orders" with the ID l5: a SQL recordset
 	// cannot tell the rows of different parents apart. Declare a nested recordset
 	// only for a table whose primary key identifies the row without its parent.
+	//
+	// Delete follows the declared primary key, as every other operation does. A
+	// key whose recordset is declared with no primary key, or with more than one
+	// column, is refused before any statement (the errors Update returns). The
+	// column ID is the default of Delete and DeleteMulti only where no recordset
+	// is declared for the key, a nil entry being none.
+	//
+	// A structured read finds the recordset of its base source under the name the
+	// query spells and, on a fold-lower mount (IdentifierCaseFoldLower), under that
+	// name folded to lower case, as the catalog lookup folds it; the primary key of the
+	// recordset keys the records of the read. With no recordset declared and no
+	// PrimaryKey, the typed PostgreSQL dialect keys them by the primary key the catalog
+	// reports for the source when it is one column, and by ordinal when it is not (no
+	// primary key, a composite one, a view); a grouped or aggregated query keys its rows
+	// by ordinal too. Every other path gives the records the literal ID
+	// "__dalgo_record_id".
 	Recordsets map[string]*Recordset
 	// Placeholder controls how SQL parameter markers are emitted.
 	// The zero value (PlaceholderQuestion) uses "?" — compatible with
@@ -155,12 +171,29 @@ type NativeJoinHintFragments struct {
 	HandledPaths  []string
 }
 
+// recordsetForQuery returns the recordset declared for the base source of q, or nil.
+// The lookup is by the name the query spells. On a mount that folds names (the typed
+// PostgreSQL dialect in fold-lower mode) it falls back to that name folded, as the
+// catalog lookup folds the query's name (typedCatalogFacts.source), so that a recordset
+// declared under the name the mount stores is found whatever case the query uses. The
+// caller has checked that q has a base source.
+func recordsetForQuery(options DbOptions, q dal.StructuredQuery) *Recordset {
+	name := q.From().Base().Name()
+	if rs := options.Recordsets[name]; rs != nil {
+		return rs
+	}
+	if fold := recordNameFold(options); fold != nil {
+		return options.Recordsets[fold(name)]
+	}
+	return nil
+}
+
 func primaryKeyForQuery(options DbOptions, query dal.Query) string {
 	q, ok := query.(dal.StructuredQuery)
 	if !ok || q.From() == nil || q.From().Base() == nil {
 		return ""
 	}
-	if rs := options.Recordsets[q.From().Base().Name()]; rs != nil {
+	if rs := recordsetForQuery(options, q); rs != nil {
 		if fields := rs.PrimaryKey(); len(fields) == 1 {
 			return fields[0].Name()
 		}

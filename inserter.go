@@ -99,6 +99,12 @@ func (t transaction) InsertMulti(ctx context.Context, records []dalrecord.Record
 		if err := t.sqlOptions.checkRecordColumns(record, insertOperation); err != nil {
 			return err
 		}
+		// What the insert will send is built now, so that a record the builder refuses
+		// (a key ID that does not fit a composite primary key, a recordset with no
+		// primary key to write it to) is refused before the first record is written.
+		if _, err := buildSingleRecordQuery(insertOperation, t.sqlOptions, record); err != nil {
+			return err
+		}
 	}
 	for _, record := range records {
 		if err := insertSingle(ctx, t.sqlOptions, record, t.tx.ExecContext, t.tx.Query, opts...); err != nil {

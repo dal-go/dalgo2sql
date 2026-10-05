@@ -55,8 +55,8 @@ func TestRecordsReaderRefusesTheMoneyOptionWhateverItWrapsTheQueryIn(t *testing.
 		} {
 			db, mock := newPostgresReadMock(t)
 			mock.ExpectQuery(postgresCatalogQuery(1)).WithArgs(`"Album"`).WillReturnRows(sqlmock.NewRows(postgresCatalogColumns).
-				AddRow(`"Album"`, "AlbumId", "integer", "N", int64(23), int64(0), true, false).
-				AddRow(`"Album"`, "Total", "integer", "N", int64(23), int64(0), false, false))
+				AddRow(`"Album"`, "AlbumId", "integer", "N", int64(23), int64(0), true, false, false).
+				AddRow(`"Album"`, "Total", "integer", "N", int64(23), int64(0), false, false, false))
 			mock.ExpectQuery(`SELECT (("Total")::double precision / NULLIF(("AlbumId")::double precision, 0)) AS "ratio", "AlbumId" AS "__dalgo_record_id" FROM "Album"`).
 				WillReturnRows(sqlmock.NewRows([]string{"ratio", "__dalgo_record_id"}))
 			reader, err := getRecordsReaderWithOptions(ctx, q, db.QueryContext, keyed)

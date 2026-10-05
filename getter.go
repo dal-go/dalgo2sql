@@ -238,6 +238,14 @@ func renderMultiGet(options DbOptions, records []dalrecord.Record) (names multiG
 		return multiGetNames{}, fmt.Errorf("%w: no primary key defined for: '%s'", dalrecord.ErrRecordNotFound, recordset), nil
 	}
 
+	// One IN statement compares one column; the records of a composite key have no
+	// such statement yet. This is checked with the names, before any statement of the
+	// batch, so that no recordset of it has been read when the refusal is returned.
+	if len(names.primaryKey) > 1 && len(records) > 1 {
+		return multiGetNames{}, nil, fmt.Errorf("%w: reading several records of recordset %s by its composite primary key is not supported yet",
+			dal.ErrNotImplementedYet, recordset)
+	}
+
 	names.pkColumns = make([]string, len(names.primaryKey))
 	for i, pkName := range names.primaryKey {
 		if names.pkColumns[i], err = options.sqlIdentifier(positionPrimaryKey, pkName); err != nil {
@@ -286,23 +294,21 @@ func getMultiFromSingleTable(_ context.Context, options DbOptions, records []dal
 		args = []any{}
 		var pkConditions []string
 		n := 1
-		processPrimaryKey(primaryKey, records[0].Key(), func(i int, _ string, v any) {
+		if err = processPrimaryKey(primaryKey, records[0].Key(), func(i int, _ string, v any) {
 			pkConditions = append(pkConditions, pkColumns[i]+" = "+options.Placeholder.placeholder(n))
 			n++
-		})
+		}); err != nil {
+			return refuseRecords(records, err)
+		}
 		queryText += " " + strings.Join(pkConditions, " AND ")
 	} else {
-		if len(primaryKey) > 1 {
-			panic("not yet supported to query multiple records by key from recordsets with composite primary key")
-		}
+		// Several records: renderMultiGet has refused a composite primary key, so the
+		// key has one column and the ID of each record is its value.
 		queryText += fmt.Sprintf("%s IN (", pkColumns[0]) // TODO(help-wanted): support composite primary keys
 		var argPlaceholders []string
 		for i, record := range records {
-			n := i + 1
-			processPrimaryKey(primaryKey, record.Key(), func(_ int, name string, v any) {
-				argPlaceholders = append(argPlaceholders, options.Placeholder.placeholder(n))
-				args[i] = v
-			})
+			argPlaceholders = append(argPlaceholders, options.Placeholder.placeholder(i+1))
+			args[i] = record.Key().ID
 		}
 		queryText += strings.Join(argPlaceholders, ", ") + ")"
 	}
@@ -350,7 +356,7 @@ func getMultiFromSingleTable(_ context.Context, options DbOptions, records []dal
 						if b, ok := val.([]byte); ok {
 							val = string(b)
 						}
-						mv.SetMapIndex(reflect.ValueOf(col), reflect.ValueOf(val))
+						setMapColumn(mv, col, val)
 					}
 					record.SetError(dalrecord.ErrNoError)
 					break
@@ -502,6 +508,17 @@ func isMapData(data interface{}) bool {
 	return v.Kind() == reflect.Map && v.Type().Key().Kind() == reflect.String
 }
 
+// setMapColumn stores value in the map m under the name of its column. A map with string
+// keys of a named type, which a write takes as it takes any map with string keys, is
+// keyed by the name converted to that type: reflect refuses a key of another type.
+func setMapColumn(m reflect.Value, column string, value any) {
+	key := reflect.ValueOf(column)
+	if keyType := m.Type().Key(); keyType.Kind() == reflect.String && keyType != key.Type() {
+		key = key.Convert(keyType)
+	}
+	m.SetMapIndex(key, reflect.ValueOf(value))
+}
+
 // scanRowIntoMap scans the current sql.Rows row into a map[string]any (or
 // *map[string]any). PK columns are skipped if pkIncluded is false; when
 // pkIncluded is true they are also included in the result map.
@@ -539,7 +556,7 @@ func scanRowIntoMap(rows *sql.Rows, data interface{}, pkIncluded bool) error {
 			val = string(b)
 		}
 		if val != nil {
-			v.SetMapIndex(reflect.ValueOf(col), reflect.ValueOf(val))
+			setMapColumn(v, col, val)
 		}
 	}
 	return nil

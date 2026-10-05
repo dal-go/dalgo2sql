@@ -148,16 +148,24 @@ func TestGetter_GetMulti_Additional(t *testing.T) {
 		}
 	})
 
-	t.Run("getMultiFromSingleTable_composite_pk_panics", func(t *testing.T) {
-		defer func() {
-			if r := recover(); r == nil {
-				t.Fatal("expected panic for composite pk on multi")
-			}
-		}()
+	t.Run("getMultiFromSingleTable_composite_pk_is_an_error", func(t *testing.T) {
 		r1 := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "u1"), &struct{ Name string }{})
 		r2 := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "u2"), &struct{ Name string }{})
 		opts := DbOptions{PrimaryKey: []string{"p1", "p2"}}
-		_ = getMultiFromSingleTable(ctx, opts, []dalrecord.Record{r1, r2}, sdb.Query)
+		// No statement is expected: the mock fails the test of any it did not expect.
+		err := getMultiFromSingleTable(ctx, opts, []dalrecord.Record{r1, r2}, sdb.Query)
+		if !errors.Is(err, dal.ErrNotImplementedYet) {
+			t.Fatalf("error = %v, want one wrapping dal.ErrNotImplementedYet", err)
+		}
+	})
+
+	t.Run("getMultiFromSingleTable_len_1_with_an_ID_that_does_not_fit_a_composite_pk", func(t *testing.T) {
+		r1 := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "u1"), &struct{ Name string }{})
+		opts := DbOptions{PrimaryKey: []string{"p1", "p2"}}
+		err := getMultiFromSingleTable(ctx, opts, []dalrecord.Record{r1}, sdb.Query)
+		if !errors.Is(err, dal.ErrNotSupported) || !errors.Is(r1.Error(), dal.ErrNotSupported) {
+			t.Fatalf("error = %v, record error = %v, want both to wrap dal.ErrNotSupported", err, r1.Error())
+		}
 	})
 
 	t.Run("getMultiFromSingleTable_map_bytes_and_pointer_to_map", func(t *testing.T) {

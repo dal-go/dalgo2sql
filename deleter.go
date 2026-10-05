@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"github.com/dal-go/record"
 	"strings"
+
+	"github.com/dal-go/dalgo/dal"
+	"github.com/dal-go/record"
 )
 
 type statementExecutor = func(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
@@ -24,15 +26,27 @@ func (dtb *database) DeleteMulti(ctx context.Context, keys []*record.Key) error 
 
 // deleteTarget returns the table of key and its primary-key column as they may
 // be written into SQL text: the table is the recordset of the key, the column is
-// that of the recordset's single primary key, or ID when the recordset has none
-// declared.
+// that of the recordset's single primary key.
+//
+// A recordset declared for the key (a non-nil entry of DbOptions.Recordsets under
+// the key's recordset name) is followed as every other operation follows it: with no
+// primary key, or with several columns, the key is refused with the errors Update
+// returns, before any statement. The column ID is the default only where no recordset
+// is declared for the key.
 func deleteTarget(options DbOptions, key *record.Key) (table, pkColumn string, err error) {
 	if table, err = options.recordsetIdentifier(key); err != nil {
 		return "", "", err
 	}
 	pkName := "ID"
-	if primaryKey := options.PrimaryKeyFieldNames(key); len(primaryKey) == 1 {
-		pkName = primaryKey[0]
+	if options.GetRecordsetByKey(key) != nil {
+		switch primaryKey := options.PrimaryKeyFieldNames(key); len(primaryKey) {
+		case 0:
+			return "", "", fmt.Errorf("primary key is not defined for %s", getRecordsetName(key))
+		case 1:
+			pkName = primaryKey[0]
+		default:
+			return "", "", fmt.Errorf("%w: delete by composite primary key is not supported yet", dal.ErrNotImplementedYet)
+		}
 	}
 	if pkColumn, err = options.sqlIdentifier(positionPrimaryKey, pkName); err != nil {
 		return "", "", err

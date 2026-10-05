@@ -27,9 +27,10 @@ type database struct {
 // With the PostgreSQL dialect that is GROUP BY, HAVING, ORDER BY, COUNT, SUM and AVG
 // with their DISTINCT forms, MIN and MAX; with SQLite, the same subset. Any other
 // dialect declares nothing, and DALgo aggregates in its own engine. FIRST and LAST
-// remain local until aggregate-local ORDER BY can be rendered without relying on
+// are not advertised until aggregate-local ORDER BY can be rendered without relying on
 // unspecified row order, and neither dialect promises a group-key order or a stable
-// row order.
+// row order: DALgo's planner refuses a query that uses one for this adapter, as it
+// needs a provider-declared stable input order, and nothing runs it.
 func (dtb *database) QueryCapabilities() dal.QueryCapabilities {
 	switch dtb.options.StructuredQueryDialect {
 	case "postgres":
@@ -80,7 +81,7 @@ func (dtb *database) readExecutor(ctx context.Context, query dal.Query, pool exe
 	}
 	conn, err := dtb.db.Conn(ctx)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, explainByContext(ctx, err)
 	}
 	lease := newConnLease(ctx, conn)
 	return lease.query, lease, nil
@@ -119,13 +120,32 @@ func (dtb *database) RunReadonlyTransaction(ctx context.Context, f dal.ROTxWorke
 			return fmt.Errorf("failed to begin transaction: %w", err)
 		}
 	}
-	if err = f(ctx, newTransaction(dbTx, dtb.options, dalgoTxOptions)); err != nil {
+	return finishTransaction(dbTx, func() error {
+		return f(ctx, newTransaction(dbTx, dtb.options, dalgoTxOptions))
+	})
+}
+
+// finishTransaction runs worker in dbTx and ends the transaction: it commits when
+// the worker returns no error, and rolls back when it returns one. A worker that
+// panics, or ends its goroutine (runtime.Goexit, as t.FailNow does), is rolled back
+// too and then left to go on: the transaction is not left open, holding its connection
+// until its context ends.
+func finishTransaction(dbTx *sql.Tx, worker func() error) error {
+	returned := false
+	defer func() {
+		if !returned {
+			_ = dbTx.Rollback()
+		}
+	}()
+	err := worker()
+	returned = true
+	if err != nil {
 		if rollbackErr := dbTx.Rollback(); rollbackErr != nil {
 			return dal.NewRollbackError(rollbackErr, err)
 		}
 		return err
 	}
-	if err := dbTx.Commit(); err != nil {
+	if err = dbTx.Commit(); err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 	return nil
@@ -141,16 +161,9 @@ func (dtb *database) RunReadwriteTransaction(ctx context.Context, f dal.RWTxWork
 	if err != nil {
 		return err
 	}
-	if err = f(ctx, newReadwriteTransaction(dbTx, dtb.options, dalgoTxOptions)); err != nil {
-		if rollbackErr := dbTx.Rollback(); rollbackErr != nil {
-			return dal.NewRollbackError(rollbackErr, err)
-		}
-		return err
-	}
-	if err := dbTx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
-	}
-	return nil
+	return finishTransaction(dbTx, func() error {
+		return f(ctx, newReadwriteTransaction(dbTx, dtb.options, dalgoTxOptions))
+	})
 }
 
 func (dtb *database) ExecuteQueryToRecordsReader(ctx context.Context, query dal.Query) (dal.RecordsReader, error) {
@@ -159,10 +172,10 @@ func (dtb *database) ExecuteQueryToRecordsReader(ctx context.Context, query dal.
 		return nil, err
 	}
 	reader, err := getRecordsReaderWithOptions(ctx, query, execute, dtb.options)
-	if lease == nil {
-		return reader, err
-	}
 	if err != nil {
+		// A literal nil, not the reader the failed read allocated: a typed nil pointer
+		// would make a non-nil interface. Releasing a lease the read does not hold (a read on
+		// the pool) does nothing.
 		lease.release()
 		return nil, err
 	}
