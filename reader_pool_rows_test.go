@@ -86,6 +86,11 @@ func TestTransactionRecordsetReadClosesItsRowsWhenAColumnTypeIsUnsupported(t *te
 	if err == nil || !strings.Contains(err.Error(), "unsupported type for column") {
 		t.Fatalf("the read returned %v, %v; want the unsupported type error", reader, err)
 	}
+	// A literal nil, not a typed nil pointer inside the interface: a caller who checks
+	// the error never closes the reader, and one who closes it anyway must not panic.
+	if reader != nil {
+		t.Fatalf("the read returned the reader %#v with its error", reader)
+	}
 	if open := recorder.openRowCount(); open != 0 {
 		t.Fatalf("%d result sets are still open after the failed read", open)
 	}

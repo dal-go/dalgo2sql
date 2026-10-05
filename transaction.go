@@ -49,7 +49,13 @@ var _ dal.ReadTransaction = (*readTransaction)(nil)
 type readTransaction = transaction
 
 func (t readTransaction) ExecuteQueryToRecordsetReader(ctx context.Context, query dal.Query, options ...recordset.Option) (dal.RecordsetReader, error) {
-	return getRecordsetReaderWithOptions(ctx, query, t.tx.QueryContext, t.sqlOptions, options...)
+	reader, err := getRecordsetReaderWithOptions(ctx, query, t.tx.QueryContext, t.sqlOptions, options...)
+	if err != nil {
+		// A literal nil: returning the typed nil pointer would make a non-nil interface
+		// whose Close panics.
+		return nil, err
+	}
+	return reader, nil
 }
 
 var _ dal.ReadwriteTransaction = (*readwriteTransaction)(nil)
