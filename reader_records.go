@@ -45,12 +45,21 @@ const recordIDHelperColumn = "__dalgo_record_id"
 // not asked for such a read's key.
 func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute executeQueryFunc, options DbOptions) (rr *recordsReader, err error) {
 	rr = &recordsReader{
-		fold:                recordNameFold(options),
 		identityColumnIndex: -1,
 		newRecord: func() dalrecord.Record {
 			return dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("Unknown", ""), make(map[string]any))
 		},
 	}
+	fold := recordNameFold(options)
+	// knownKeyIndex is the position of the column that keys the records, in the result, when
+	// the read knows it before the statement runs: the catalog's key of a select-all, and the
+	// first select item that is the key's own field. It is -1 when only a name says which column
+	// is the key (see keyColumnIndex).
+	knownKeyIndex := -1
+	// catalogKeyIndex is the position of the catalog's key among the columns of its source in
+	// table order, which is the order a select-all returns them in; -1 when the key is not the
+	// catalog's.
+	catalogKeyIndex := -1
 	// facts, when the read asked the catalog before compiling, are handed to the compiler
 	// so that it does not ask again.
 	var facts *typedCatalogFacts
@@ -63,6 +72,13 @@ func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute e
 				err = fmt.Errorf("failed to get SQL reader: %w", err)
 				return
 			}
+		}
+		// A record is read by name, one value per name, so a select list that gives one name to
+		// two expressions would lose a column. It is refused before any statement, which includes
+		// the catalog's.
+		if err = refusedOutputNames(q); err != nil {
+			err = fmt.Errorf("failed to get SQL reader: %w", err)
+			return
 		}
 		rr.validateFinite = dal.HasAggregation(q)
 		if rec := q.IntoRecord(); rec != nil {
@@ -91,7 +107,7 @@ func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute e
 				return
 			}
 			var column string
-			if facts, column, err = catalogPrimaryKey(ctx, options, q, execute); err != nil {
+			if facts, column, catalogKeyIndex, err = catalogPrimaryKey(ctx, options, q, execute); err != nil {
 				err = fmt.Errorf("failed to get SQL reader: %w", err)
 				return
 			}
@@ -116,20 +132,22 @@ func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute e
 			// name cannot: any source can have a column of that name, and the select
 			// list can name it. So the statement always carries the base's key column,
 			// qualified, and the record is keyed from it by position. A select-all, which
-			// no column can be added to, is keyed from the base's own column of that name
-			// (see baseColumnIndex).
+			// no column can be added to, is keyed from the base's own column of the key
+			// (see keyColumnIndex).
 			keyedByBase := len(q.From().Joins()) != 0 && readsWithOwnCompiler(options)
-			if selected := q.Columns(); len(selected) > 0 && (keyedByBase || !selectsIdentityField(selected, primaryKey, rr.fold)) {
+			selected := q.Columns()
+			if len(selected) > 0 && (keyedByBase || !selectsIdentityField(selected, primaryKey, fold)) {
 				columns := append([]dal.Column(nil), selected...)
 				helper := unusedHelperColumn(selected)
 				columns = append(columns, dal.Column{Expression: recordIdentityField(options, q, primaryKey), Alias: helper})
 				query = dal.WithColumns(q, columns)
 				rr.identityColumn = helper
 				rr.hideIdentityColumn = true
-				rr.identityByPosition = true
-			} else if keyedByBase && len(selected) == 0 {
-				rr.identityByPosition = true
-				rr.keyInBaseColumns = true
+			} else if len(selected) == 0 {
+				rr.keyInBaseColumns = keyedByBase
+				knownKeyIndex = catalogKeyIndex
+			} else {
+				knownKeyIndex = keyItemIndex(selected, primaryKey, fold)
 			}
 		}
 	}
@@ -138,13 +156,47 @@ func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute e
 		err = fmt.Errorf("failed to get SQL reader: %w", err)
 		return
 	}
-	if rr.hideIdentityColumn {
+	// Every record is keyed by the position of the column that holds the key, never by a name
+	// that two columns of the result can share.
+	switch {
+	case rr.hideIdentityColumn:
 		rr.identityColumnIndex = len(rr.colNames) - 1
-	} else if rr.keyInBaseColumns {
-		rr.identityColumnIndex = baseColumnIndex(rr.baseColumns, rr.identityColumn, rr.fold)
+	case knownKeyIndex >= 0:
+		rr.identityColumnIndex = knownKeyIndex
+	case rr.identityColumn != "":
+		names := rr.colNames
+		if rr.keyInBaseColumns {
+			names = rr.baseColumns // they lead the result
+		}
+		rr.identityColumnIndex = keyColumnIndex(names, rr.identityColumn, fold)
 	}
 
 	return
+}
+
+// refusedOutputNames refuses the select list of a query over one source that gives one output
+// name to two different expressions (see repeatedOutputName), as DALgo's generic engine and
+// the compilers of this package refuse it for a statement with joins (errJoinOutputRepeated). A
+// record holds one value per name, so one of the two columns would be dropped without a word,
+// and the key of a record could be the value of the wrong one. The names a wildcard lists are
+// not known before the statement, and a statement with joins is left to its compiler.
+func refusedOutputNames(q dal.StructuredQuery) error {
+	if from := q.From(); from == nil || len(from.Joins()) != 0 {
+		return nil
+	}
+	seen := map[string]dal.Expression{}
+	for i, column := range q.Columns() {
+		if name, repeated := repeatedOutputName(seen, column); repeated {
+			return errOutputRepeated(i, name)
+		}
+	}
+	return nil
+}
+
+// errOutputRepeated is the refusal of a select list over one source that gives two
+// expressions one output name. The name is quoted: an alias is the caller's.
+func errOutputRepeated(column int, name string) error {
+	return fmt.Errorf("columns[%d]: duplicate output name %s", column, strconv.Quote(name))
 }
 
 // refusedBeforeAnyStatement is the refusals getReaderBaseFor makes of a structured query
@@ -183,40 +235,76 @@ func keyedByCatalog(options DbOptions, q dal.StructuredQuery) bool {
 
 // catalogPrimaryKey reads the catalog facts of the sources of q, which the compiler needs
 // next and is handed back to reuse, and names the column that is the whole of the primary
-// key of the base source, as the catalog stores it. The column is "" when the source has
-// none or several, and when the mount cannot write its name (a column stored as Id where the
+// key of the base source, as the catalog stores it, and its position among the columns of
+// the source in table order. The column is "" and the position -1 when the source has none
+// or several, and when the mount cannot write its name (a column stored as Id where the
 // fold-lower mount writes id: the statement could not select it).
-func catalogPrimaryKey(ctx context.Context, options DbOptions, q dal.StructuredQuery, execute executeQueryFunc) (*typedCatalogFacts, string, error) {
+func catalogPrimaryKey(ctx context.Context, options DbOptions, q dal.StructuredQuery, execute executeQueryFunc) (*typedCatalogFacts, string, int, error) {
 	dialect, err := postgresDialectFor(options)
 	if err != nil {
-		return nil, "", err
+		return nil, "", -1, err
 	}
 	facts, err := typedFactsForQuery(ctx, dialect, execute, q.From())
 	if err != nil {
-		return nil, "", err
+		return nil, "", -1, err
 	}
 	base, err := typedCollection(q.From().Base())
 	if err != nil {
-		return &facts, "", nil // a source the compiler refuses: it reports it
+		return &facts, "", -1, nil // a source the compiler refuses: it reports it
 	}
 	source, _ := facts.source(typedSourceName{Schema: base.Schema(), Name: base.Name()})
-	if column, ok := source.primaryKeyColumn(); ok && facts.addressable(column.Name) {
-		return &facts, column.Name, nil
+	if position, ok := source.primaryKeyPosition(); ok && facts.addressable(source.Columns[position].Name) {
+		return &facts, source.Columns[position].Name, position, nil
 	}
-	return &facts, "", nil
+	return &facts, "", -1, nil
 }
 
-// baseColumnIndex is the position, in a select-all over joins, of the base source's
-// column called name (under the fold), or -1 when the base has none. The base's columns
-// lead the result, so a position among them is a position in the result; a column of a
-// joined source that carries the name is never taken for it.
-func baseColumnIndex(baseColumns []string, name string, fold nameFold) int {
-	for i, column := range baseColumns {
+// keyColumnIndex is the position of the column that carries the key's name, among the
+// columns names lists, or -1 when none does. A column that spells the name as it is wins over
+// one that is the name folded (under fold, nil: as they are), and of several that are only
+// the name folded the first is taken, so the key is never the last of the columns that
+// share a name. In a select-all over joins the base's columns lead the result, so a position
+// among them is a position in the result; a column of a joined source that carries the name is
+// never taken for it.
+func keyColumnIndex(names []string, name string, fold nameFold) int {
+	for i, column := range names {
+		if column == name {
+			return i
+		}
+	}
+	for i, column := range names {
 		if fold.of(column) == fold.of(name) {
 			return i
 		}
 	}
 	return -1
+}
+
+// keyItemIndex is the position of the first item of a select list that is the key's own field
+// (see keyItemIsField), or -1 when none is and when the list holds a wildcard, which lists as
+// many columns as its source has and puts the rest of the list at a position the list does not
+// say. An item that spells the key's name as it is wins over one that is the name folded.
+func keyItemIndex(columns []dal.Column, name string, fold nameFold) int {
+	for _, column := range columns {
+		if column.Wildcard != nil {
+			return -1
+		}
+	}
+	for _, f := range []nameFold{nil, fold} {
+		for i, column := range columns {
+			if keyItemIsField(column, name, f) {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+// keyItemIsField reports whether a select item is the field called name, under fold, under no
+// name of its own or under that name: the column the key is read from.
+func keyItemIsField(column dal.Column, name string, fold nameFold) bool {
+	field, ok := column.Expression.(dal.FieldRef)
+	return ok && fold.of(field.Name()) == fold.of(name) && (column.Alias == "" || fold.of(column.Alias) == fold.of(name))
 }
 
 // readsWithOwnCompiler reports whether a structured read is compiled by one of this
@@ -308,20 +396,17 @@ func (o orderedByKey) String() string { return dal.QueryString(o) }
 
 type recordsReader struct {
 	readerBase
-	newRecord           func() dalrecord.Record
+	newRecord func() dalrecord.Record
+	// identityColumn is the name of the column the key is read from, and identityColumnIndex
+	// its position in the result, from 0; -1 when the result has none, and the key is then the
+	// ID the record was made with. A record is keyed by that position, never by a name.
 	identityColumn      string
 	identityColumnIndex int
 	hideIdentityColumn  bool
-	// identityByPosition says the record's key is read from the column at
-	// identityColumnIndex, not from the column called identityColumn: set for the helper
-	// column the reader appends, and for a select-all over joins.
-	identityByPosition bool
 	// keyInBaseColumns says the statement is a select-all over joins, keyed from the base
-	// source's own column of the key's name (baseColumnIndex).
+	// source's own column of the key's name (keyColumnIndex).
 	keyInBaseColumns bool
 	validateFinite   bool
-	// fold is applied to a column name and to the key's name before they are compared.
-	fold nameFold
 }
 
 // decimalText matches the text PostgreSQL prints for a finite NUMERIC: an
@@ -393,7 +478,7 @@ func selectsIdentityField(columns []dal.Column, name string, fold nameFold) bool
 				return true
 			}
 		}
-		if field, ok := column.Expression.(dal.FieldRef); ok && fold.of(field.Name()) == name && (column.Alias == "" || fold.of(column.Alias) == name) {
+		if keyItemIsField(column, name, fold) {
 			return true
 		}
 	}
@@ -471,11 +556,7 @@ func (r recordsReader) Next() (record dalrecord.Record, err error) {
 			}
 		}
 		v := textValue(normalized)
-		identityValue := r.fold.of(n) == r.fold.of(r.identityColumn)
-		if r.identityByPosition {
-			identityValue = i == r.identityColumnIndex
-		}
-		if identityValue {
+		if i == r.identityColumnIndex {
 			record.Key().ID = v
 			if v != nil {
 				record.Key().IDKind = reflect.TypeOf(v).Kind()

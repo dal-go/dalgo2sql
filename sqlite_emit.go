@@ -197,18 +197,29 @@ func compileStructuredSQL(q dal.StructuredQuery) (string, []any, error) {
 // text are known here, the alias and the field's own name; an unaliased expression is
 // named by SQLite from its own text, which is not known.
 func checkSQLJoinOutputIsNew(seen map[string]dal.Expression, index int, column dal.Column) error {
-	name := column.Alias
+	if name, repeated := repeatedOutputName(seen, column); repeated {
+		return errJoinOutputRepeated(index, name)
+	}
+	return nil
+}
+
+// repeatedOutputName records the output name of column, the alias else the field's own name,
+// with the expression it names, in seen, and reports the name when an earlier column gave it
+// to another expression. A name that is not known (an unaliased expression) and a name given
+// to the same expression twice, which is one column asked twice, are not repeated.
+func repeatedOutputName(seen map[string]dal.Expression, column dal.Column) (name string, repeated bool) {
+	name = column.Alias
 	if field, isField := column.Expression.(dal.FieldRef); name == "" && isField {
 		name = field.Name()
 	}
 	if name == "" {
-		return nil
+		return "", false
 	}
-	if first, repeated := seen[name]; repeated && !typedSameExpression(first, column.Expression) {
-		return errJoinOutputRepeated(index, name)
+	if first, taken := seen[name]; taken && !typedSameExpression(first, column.Expression) {
+		return name, true
 	}
 	seen[name] = column.Expression
-	return nil
+	return name, false
 }
 
 func quoteSQLIdentifier(name string) string { return "`" + strings.ReplaceAll(name, "`", "``") + "`" }

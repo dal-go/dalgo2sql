@@ -140,7 +140,7 @@ var postgresNoJoinKeyOIDs = map[int64]bool{
 // (TestPostgresDialectFoldIsTheFoldQuoteIdentApplies pins it). A column of the
 // relation's PRIMARY KEY constraint is marked PrimaryKey: a view, a materialized view and
 // a foreign table have none, and the records reader keys a record read from a source
-// nobody declared by the key when it is one column (typedSourceFacts.primaryKeyColumn).
+// nobody declared by the key when it is one column (typedSourceFacts.primaryKeyPosition).
 type postgresDialect struct {
 	mode postgresIdentifierMode
 }

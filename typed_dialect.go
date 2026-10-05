@@ -242,20 +242,19 @@ type typedSourceFacts struct {
 	Columns []typedColumnFact
 }
 
-// primaryKeyColumn returns the column that is the whole of the source's primary key,
-// as the catalog stores its name. It reports false for a source whose primary key is
-// not exactly one column: none (a view, a table without one), or several. A record's
-// key is one value, so a composite key names no column.
-func (f typedSourceFacts) primaryKeyColumn() (typedColumnFact, bool) {
-	var key typedColumnFact
-	count := 0
-	for _, column := range f.Columns {
+// primaryKeyPosition returns the position, among the source's columns in table order, of the
+// column that is the whole of the source's primary key. It reports false for a source whose
+// primary key is not exactly one column: none (a view, a table without one), or several. A
+// record's key is one value, so a composite key names no column.
+func (f typedSourceFacts) primaryKeyPosition() (int, bool) {
+	position, count := -1, 0
+	for i, column := range f.Columns {
 		if column.PrimaryKey {
-			key = column
+			position = i
 			count++
 		}
 	}
-	return key, count == 1
+	return position, count == 1
 }
 
 // typedCatalogFacts is the compiler's whole knowledge of the database. The

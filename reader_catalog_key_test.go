@@ -537,26 +537,27 @@ func TestPostgresRecordsReaderFindsADeclaredRecordsetWhateverCaseTheQueryUses(t 
 	}
 }
 
-// typedSourceFacts.primaryKeyColumn names the key when it is exactly one column.
-func TestTypedSourceFactsPrimaryKeyColumn(t *testing.T) {
+// typedSourceFacts.primaryKeyPosition names the key when it is exactly one column.
+func TestTypedSourceFactsPrimaryKeyPosition(t *testing.T) {
 	column := func(name string, primaryKey bool) typedColumnFact {
 		return typedColumnFact{Name: name, PrimaryKey: primaryKey}
 	}
 	for _, tc := range []struct {
 		name    string
 		columns []typedColumnFact
-		want    string
+		want    int
 		ok      bool
 	}{
-		{"one column", []typedColumnFact{column("title", false), column("id", true)}, "id", true},
-		{"none", []typedColumnFact{column("title", false)}, "", false},
-		{"no columns", nil, "", false},
-		{"several", []typedColumnFact{column("a", true), column("b", true)}, "", false},
+		{"one column", []typedColumnFact{column("title", false), column("id", true)}, 1, true},
+		{"the first", []typedColumnFact{column("id", true), column("title", false)}, 0, true},
+		{"none", []typedColumnFact{column("title", false)}, 0, false},
+		{"no columns", nil, 0, false},
+		{"several", []typedColumnFact{column("a", true), column("b", true)}, 0, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := typedSourceFacts{Columns: tc.columns}.primaryKeyColumn()
-			if ok != tc.ok || (ok && got.Name != tc.want) {
-				t.Errorf("primaryKeyColumn() = %v, %v; want %q, %v", got.Name, ok, tc.want, tc.ok)
+			got, ok := typedSourceFacts{Columns: tc.columns}.primaryKeyPosition()
+			if ok != tc.ok || (ok && got != tc.want) {
+				t.Errorf("primaryKeyPosition() = %v, %v; want %v, %v", got, ok, tc.want, tc.ok)
 			}
 		})
 	}
