@@ -35,7 +35,7 @@ func TestGetter_GetSelectFields_Panics(t *testing.T) {
 			}
 		}()
 		rec := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "u1"), nil)
-		getSelectFields(false, DbOptions{}, rec)
+		_, _ = getSelectFields(false, DbOptions{}, rec)
 	})
 
 	t.Run("nil_key_with_include_pk", func(t *testing.T) {
@@ -45,7 +45,7 @@ func TestGetter_GetSelectFields_Panics(t *testing.T) {
 			}
 		}()
 		rec := mockRecord{key: nil, data: &struct{ Name string }{}}
-		getSelectFields(true, DbOptions{}, rec)
+		_, _ = getSelectFields(true, DbOptions{}, rec)
 	})
 
 	t.Run("empty_collection_with_include_pk", func(t *testing.T) {
@@ -55,7 +55,7 @@ func TestGetter_GetSelectFields_Panics(t *testing.T) {
 			}
 		}()
 		rec := mockRecord{key: &dalrecord.Key{}, data: &struct{ Name string }{}}
-		getSelectFields(true, DbOptions{}, rec)
+		_, _ = getSelectFields(true, DbOptions{}, rec)
 	})
 }
 

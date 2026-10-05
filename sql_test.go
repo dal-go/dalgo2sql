@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dal-go/dalgo/dal"
 	dalrecord "github.com/dal-go/record"
 )
 
@@ -118,21 +117,4 @@ func TestBuildSingleRecordQuery_InsertWithAKeyIDAndNoPrimaryKeyIsAnError(t *test
 	if q.text != "" || q.args != nil {
 		t.Errorf("an error left a statement behind: %+v", q)
 	}
-}
-
-func TestBuildSingleRecordQuery_Panics(t *testing.T) {
-	t.Run("update_no_fields", func(t *testing.T) {
-		defer func() {
-			if r := recover(); r == nil {
-				t.Errorf("expected panic")
-			}
-		}()
-		// If we mark "Name" as part of PK, there will be no fields to update
-		record := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "u1"), &user2{Name: "John"})
-		_, _ = buildSingleRecordQuery(updateOperation, DbOptions{
-			Recordsets: map[string]*Recordset{
-				"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID"), dal.Field("Name")}),
-			},
-		}, record)
-	})
 }

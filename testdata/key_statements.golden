@@ -1,0 +1,920 @@
+## dialect= placeholder=question database exists rowExists=no
+SELECT 1 FROM users WHERE id = ?
+## dialect= placeholder=question transaction exists rowExists=no
+SELECT 1 FROM users WHERE id = ?
+## dialect= placeholder=question database exists rowExists=yes
+SELECT 1 FROM users WHERE id = ?
+## dialect= placeholder=question transaction exists rowExists=yes
+SELECT 1 FROM users WHERE id = ?
+## dialect= placeholder=question database get rowExists=no
+SELECT Name FROM users WHERE id = ?
+## dialect= placeholder=question transaction get rowExists=no
+SELECT Name FROM users WHERE id = ?
+## dialect= placeholder=question database get rowExists=yes
+SELECT Name FROM users WHERE id = ?
+## dialect= placeholder=question transaction get rowExists=yes
+SELECT Name FROM users WHERE id = ?
+## dialect= placeholder=question database get-map rowExists=no
+SELECT * FROM users WHERE id = ?
+## dialect= placeholder=question transaction get-map rowExists=no
+SELECT * FROM users WHERE id = ?
+## dialect= placeholder=question database get-map rowExists=yes
+SELECT * FROM users WHERE id = ?
+## dialect= placeholder=question transaction get-map rowExists=yes
+SELECT * FROM users WHERE id = ?
+## dialect= placeholder=question database get-multi rowExists=no
+SELECT * FROM users WHERE id IN (?, ?)
+## dialect= placeholder=question transaction get-multi rowExists=no
+SELECT * FROM users WHERE id IN (?, ?)
+## dialect= placeholder=question database get-multi rowExists=yes
+SELECT * FROM users WHERE id IN (?, ?)
+## dialect= placeholder=question transaction get-multi rowExists=yes
+SELECT * FROM users WHERE id IN (?, ?)
+## dialect= placeholder=question database get-multi-struct rowExists=no
+SELECT id, Name FROM users WHERE id IN (?, ?)
+## dialect= placeholder=question transaction get-multi-struct rowExists=no
+SELECT id, Name FROM users WHERE id IN (?, ?)
+## dialect= placeholder=question database get-multi-struct rowExists=yes
+SELECT id, Name FROM users WHERE id IN (?, ?)
+## dialect= placeholder=question transaction get-multi-struct rowExists=yes
+SELECT id, Name FROM users WHERE id IN (?, ?)
+## dialect= placeholder=question database get-multi-one-record rowExists=no
+SELECT * FROM users WHERE id = ?
+## dialect= placeholder=question transaction get-multi-one-record rowExists=no
+SELECT * FROM users WHERE id = ?
+## dialect= placeholder=question database get-multi-one-record rowExists=yes
+SELECT * FROM users WHERE id = ?
+## dialect= placeholder=question transaction get-multi-one-record rowExists=yes
+SELECT * FROM users WHERE id = ?
+## dialect= placeholder=question database insert rowExists=no
+INSERT INTO users(id, name) VALUES (?, ?)
+## dialect= placeholder=question transaction insert rowExists=no
+INSERT INTO users(id, name) VALUES (?, ?)
+## dialect= placeholder=question database insert rowExists=yes
+INSERT INTO users(id, name) VALUES (?, ?)
+## dialect= placeholder=question transaction insert rowExists=yes
+INSERT INTO users(id, name) VALUES (?, ?)
+## dialect= placeholder=question database insert-generated-id rowExists=no
+SELECT 1 FROM users WHERE id = ?
+INSERT INTO users(id, name) VALUES (?, ?)
+## dialect= placeholder=question transaction insert-generated-id rowExists=no
+SELECT 1 FROM users WHERE id = ?
+INSERT INTO users(id, name) VALUES (?, ?)
+## dialect= placeholder=question database insert-generated-id rowExists=yes
+SELECT 1 FROM users WHERE id = ?
+SELECT 1 FROM users WHERE id = ?
+SELECT 1 FROM users WHERE id = ?
+SELECT 1 FROM users WHERE id = ?
+SELECT 1 FROM users WHERE id = ?
+SELECT 1 FROM users WHERE id = ?
+SELECT 1 FROM users WHERE id = ?
+SELECT 1 FROM users WHERE id = ?
+SELECT 1 FROM users WHERE id = ?
+SELECT 1 FROM users WHERE id = ?
+## dialect= placeholder=question transaction insert-generated-id rowExists=yes
+SELECT 1 FROM users WHERE id = ?
+SELECT 1 FROM users WHERE id = ?
+SELECT 1 FROM users WHERE id = ?
+SELECT 1 FROM users WHERE id = ?
+SELECT 1 FROM users WHERE id = ?
+SELECT 1 FROM users WHERE id = ?
+SELECT 1 FROM users WHERE id = ?
+SELECT 1 FROM users WHERE id = ?
+SELECT 1 FROM users WHERE id = ?
+SELECT 1 FROM users WHERE id = ?
+## dialect= placeholder=question database set rowExists=no
+SELECT id FROM users WHERE id = ?
+INSERT INTO users(id, name) VALUES (?, ?)
+## dialect= placeholder=question transaction set rowExists=no
+SELECT id FROM users WHERE id = ?
+INSERT INTO users(id, name) VALUES (?, ?)
+## dialect= placeholder=question database set rowExists=yes
+SELECT id FROM users WHERE id = ?
+UPDATE users SET  name = ? WHERE id = ?
+## dialect= placeholder=question transaction set rowExists=yes
+SELECT id FROM users WHERE id = ?
+UPDATE users SET  name = ? WHERE id = ?
+## dialect= placeholder=question database set-multi rowExists=no
+SELECT id FROM users WHERE id = ?
+INSERT INTO users(id, name) VALUES (?, ?)
+SELECT id FROM users WHERE id = ?
+INSERT INTO users(id, name) VALUES (?, ?)
+## dialect= placeholder=question transaction set-multi rowExists=no
+SELECT id FROM users WHERE id = ?
+INSERT INTO users(id, name) VALUES (?, ?)
+SELECT id FROM users WHERE id = ?
+INSERT INTO users(id, name) VALUES (?, ?)
+## dialect= placeholder=question database set-multi rowExists=yes
+SELECT id FROM users WHERE id = ?
+UPDATE users SET  name = ? WHERE id = ?
+SELECT id FROM users WHERE id = ?
+UPDATE users SET  name = ? WHERE id = ?
+## dialect= placeholder=question transaction set-multi rowExists=yes
+SELECT id FROM users WHERE id = ?
+UPDATE users SET  name = ? WHERE id = ?
+SELECT id FROM users WHERE id = ?
+UPDATE users SET  name = ? WHERE id = ?
+## dialect= placeholder=question database update rowExists=no
+UPDATE users SET\n	name = ?\n	WHERE id = ?
+## dialect= placeholder=question transaction update rowExists=no
+UPDATE users SET\n	name = ?\n	WHERE id = ?
+## dialect= placeholder=question database update rowExists=yes
+UPDATE users SET\n	name = ?\n	WHERE id = ?
+## dialect= placeholder=question transaction update rowExists=yes
+UPDATE users SET\n	name = ?\n	WHERE id = ?
+## dialect= placeholder=question database update-multi rowExists=no
+UPDATE users SET\n	name = ?\n	WHERE id = ?
+UPDATE users SET\n	name = ?\n	WHERE id = ?
+## dialect= placeholder=question transaction update-multi rowExists=no
+UPDATE users SET\n	name = ?\n	WHERE id = ?
+UPDATE users SET\n	name = ?\n	WHERE id = ?
+## dialect= placeholder=question database update-multi rowExists=yes
+UPDATE users SET\n	name = ?\n	WHERE id = ?
+UPDATE users SET\n	name = ?\n	WHERE id = ?
+## dialect= placeholder=question transaction update-multi rowExists=yes
+UPDATE users SET\n	name = ?\n	WHERE id = ?
+UPDATE users SET\n	name = ?\n	WHERE id = ?
+## dialect= placeholder=question database delete rowExists=no
+DELETE FROM users WHERE id = ?
+## dialect= placeholder=question transaction delete rowExists=no
+DELETE FROM users WHERE id = ?
+## dialect= placeholder=question database delete rowExists=yes
+DELETE FROM users WHERE id = ?
+## dialect= placeholder=question transaction delete rowExists=yes
+DELETE FROM users WHERE id = ?
+## dialect= placeholder=question database delete-multi rowExists=no
+DELETE FROM users WHERE id IN (?, ?)
+## dialect= placeholder=question transaction delete-multi rowExists=no
+DELETE FROM users WHERE id IN (?, ?)
+## dialect= placeholder=question database delete-multi rowExists=yes
+DELETE FROM users WHERE id IN (?, ?)
+## dialect= placeholder=question transaction delete-multi rowExists=yes
+DELETE FROM users WHERE id IN (?, ?)
+## dialect= placeholder=question database get-struct-record rowExists=no
+SELECT Name FROM users WHERE id = ?
+## dialect= placeholder=question transaction get-struct-record rowExists=no
+SELECT Name FROM users WHERE id = ?
+## dialect= placeholder=question database update-two-fields rowExists=no
+UPDATE users SET\n	name = ?,\n	age = ?\n	WHERE id = ?
+## dialect= placeholder=question transaction update-two-fields rowExists=no
+UPDATE users SET\n	name = ?,\n	age = ?\n	WHERE id = ?
+## dialect= placeholder=question database update-multi-two-fields rowExists=no
+UPDATE users SET\n	name = ?,\n	age = ?\n	WHERE id = ?
+UPDATE users SET\n	name = ?,\n	age = ?\n	WHERE id = ?
+## dialect= placeholder=question transaction update-multi-two-fields rowExists=no
+UPDATE users SET\n	name = ?,\n	age = ?\n	WHERE id = ?
+UPDATE users SET\n	name = ?,\n	age = ?\n	WHERE id = ?
+## dialect= placeholder=question database update-multi-two-recordsets rowExists=no
+UPDATE users SET\n	name = ?\n	WHERE id = ?
+## dialect= placeholder=question transaction update-multi-two-recordsets rowExists=no
+UPDATE users SET\n	name = ?\n	WHERE id = ?
+## dialect= placeholder=question database delete-multi-one-key rowExists=no
+DELETE FROM users WHERE id = ?
+## dialect= placeholder=question transaction delete-multi-one-key rowExists=no
+DELETE FROM users WHERE id = ?
+## dialect= placeholder=question database delete-multi-alternating-recordsets rowExists=no
+DELETE FROM users WHERE id = ?
+DELETE FROM accounts WHERE ID = ?
+DELETE FROM users WHERE id = ?
+## dialect= placeholder=question transaction delete-multi-alternating-recordsets rowExists=no
+DELETE FROM users WHERE id = ?
+DELETE FROM accounts WHERE ID = ?
+DELETE FROM users WHERE id = ?
+## dialect= placeholder=question database delete-multi-consecutive-recordsets rowExists=no
+DELETE FROM users WHERE id IN (?, ?)
+DELETE FROM accounts WHERE ID IN (?, ?)
+## dialect= placeholder=question transaction delete-multi-consecutive-recordsets rowExists=no
+DELETE FROM users WHERE id IN (?, ?)
+DELETE FROM accounts WHERE ID IN (?, ?)
+## dialect= placeholder=question database delete-multi-no-keys rowExists=no
+## dialect= placeholder=question transaction delete-multi-no-keys rowExists=no
+## dialect= placeholder=question database get-multi-two-recordsets rowExists=no
+SELECT * FROM users WHERE id IN (?, ?)
+## dialect= placeholder=question transaction get-multi-two-recordsets rowExists=no
+SELECT * FROM users WHERE id IN (?, ?)
+## dialect= placeholder=question database get-multi-struct-one-record rowExists=no
+SELECT Name FROM users WHERE id = ?
+## dialect= placeholder=question transaction get-multi-struct-one-record rowExists=no
+SELECT Name FROM users WHERE id = ?
+## dialect= placeholder=question database set-multi-two-recordsets rowExists=no
+SELECT id FROM users WHERE id = ?
+INSERT INTO users(id, name) VALUES (?, ?)
+## dialect= placeholder=question transaction set-multi-two-recordsets rowExists=no
+SELECT id FROM users WHERE id = ?
+INSERT INTO users(id, name) VALUES (?, ?)
+## dialect= placeholder=question database set-struct rowExists=no
+SELECT id FROM users WHERE id = ?
+INSERT INTO users(id, Name) VALUES (?, ?)
+## dialect= placeholder=question transaction set-struct rowExists=no
+SELECT id FROM users WHERE id = ?
+INSERT INTO users(id, Name) VALUES (?, ?)
+## dialect= placeholder=question database insert-struct rowExists=no
+INSERT INTO users(id, Name) VALUES (?, ?)
+## dialect= placeholder=question transaction insert-struct rowExists=no
+INSERT INTO users(id, Name) VALUES (?, ?)
+## dialect= placeholder=question database insert-adapter-generated-id rowExists=no
+SELECT 1 FROM users WHERE id = ?
+INSERT INTO users(id, name) VALUES (?, ?)
+## dialect= placeholder=question transaction insert-adapter-generated-id rowExists=no
+SELECT 1 FROM users WHERE id = ?
+INSERT INTO users(id, name) VALUES (?, ?)
+## dialect= placeholder=question database insert-multi rowExists=no
+## dialect= placeholder=question transaction insert-multi rowExists=no
+INSERT INTO users(id, name) VALUES (?, ?)
+INSERT INTO users(id, name) VALUES (?, ?)
+## dialect= placeholder=question database insert-multi-generated-ids rowExists=no
+## dialect= placeholder=question transaction insert-multi-generated-ids rowExists=no
+SELECT 1 FROM users WHERE id = ?
+INSERT INTO users(id, name) VALUES (?, ?)
+SELECT 1 FROM users WHERE id = ?
+INSERT INTO users(id, name) VALUES (?, ?)
+## dialect= placeholder=dollar database exists rowExists=no
+SELECT 1 FROM users WHERE id = $1
+## dialect= placeholder=dollar transaction exists rowExists=no
+SELECT 1 FROM users WHERE id = $1
+## dialect= placeholder=dollar database exists rowExists=yes
+SELECT 1 FROM users WHERE id = $1
+## dialect= placeholder=dollar transaction exists rowExists=yes
+SELECT 1 FROM users WHERE id = $1
+## dialect= placeholder=dollar database get rowExists=no
+SELECT Name FROM users WHERE id = $1
+## dialect= placeholder=dollar transaction get rowExists=no
+SELECT Name FROM users WHERE id = $1
+## dialect= placeholder=dollar database get rowExists=yes
+SELECT Name FROM users WHERE id = $1
+## dialect= placeholder=dollar transaction get rowExists=yes
+SELECT Name FROM users WHERE id = $1
+## dialect= placeholder=dollar database get-map rowExists=no
+SELECT * FROM users WHERE id = $1
+## dialect= placeholder=dollar transaction get-map rowExists=no
+SELECT * FROM users WHERE id = $1
+## dialect= placeholder=dollar database get-map rowExists=yes
+SELECT * FROM users WHERE id = $1
+## dialect= placeholder=dollar transaction get-map rowExists=yes
+SELECT * FROM users WHERE id = $1
+## dialect= placeholder=dollar database get-multi rowExists=no
+SELECT * FROM users WHERE id IN ($1, $2)
+## dialect= placeholder=dollar transaction get-multi rowExists=no
+SELECT * FROM users WHERE id IN ($1, $2)
+## dialect= placeholder=dollar database get-multi rowExists=yes
+SELECT * FROM users WHERE id IN ($1, $2)
+## dialect= placeholder=dollar transaction get-multi rowExists=yes
+SELECT * FROM users WHERE id IN ($1, $2)
+## dialect= placeholder=dollar database get-multi-struct rowExists=no
+SELECT id, Name FROM users WHERE id IN ($1, $2)
+## dialect= placeholder=dollar transaction get-multi-struct rowExists=no
+SELECT id, Name FROM users WHERE id IN ($1, $2)
+## dialect= placeholder=dollar database get-multi-struct rowExists=yes
+SELECT id, Name FROM users WHERE id IN ($1, $2)
+## dialect= placeholder=dollar transaction get-multi-struct rowExists=yes
+SELECT id, Name FROM users WHERE id IN ($1, $2)
+## dialect= placeholder=dollar database get-multi-one-record rowExists=no
+SELECT * FROM users WHERE id = $1
+## dialect= placeholder=dollar transaction get-multi-one-record rowExists=no
+SELECT * FROM users WHERE id = $1
+## dialect= placeholder=dollar database get-multi-one-record rowExists=yes
+SELECT * FROM users WHERE id = $1
+## dialect= placeholder=dollar transaction get-multi-one-record rowExists=yes
+SELECT * FROM users WHERE id = $1
+## dialect= placeholder=dollar database insert rowExists=no
+INSERT INTO users(id, name) VALUES ($1, $2)
+## dialect= placeholder=dollar transaction insert rowExists=no
+INSERT INTO users(id, name) VALUES ($1, $2)
+## dialect= placeholder=dollar database insert rowExists=yes
+INSERT INTO users(id, name) VALUES ($1, $2)
+## dialect= placeholder=dollar transaction insert rowExists=yes
+INSERT INTO users(id, name) VALUES ($1, $2)
+## dialect= placeholder=dollar database insert-generated-id rowExists=no
+SELECT 1 FROM users WHERE id = $1
+INSERT INTO users(id, name) VALUES ($1, $2)
+## dialect= placeholder=dollar transaction insert-generated-id rowExists=no
+SELECT 1 FROM users WHERE id = $1
+INSERT INTO users(id, name) VALUES ($1, $2)
+## dialect= placeholder=dollar database insert-generated-id rowExists=yes
+SELECT 1 FROM users WHERE id = $1
+SELECT 1 FROM users WHERE id = $1
+SELECT 1 FROM users WHERE id = $1
+SELECT 1 FROM users WHERE id = $1
+SELECT 1 FROM users WHERE id = $1
+SELECT 1 FROM users WHERE id = $1
+SELECT 1 FROM users WHERE id = $1
+SELECT 1 FROM users WHERE id = $1
+SELECT 1 FROM users WHERE id = $1
+SELECT 1 FROM users WHERE id = $1
+## dialect= placeholder=dollar transaction insert-generated-id rowExists=yes
+SELECT 1 FROM users WHERE id = $1
+SELECT 1 FROM users WHERE id = $1
+SELECT 1 FROM users WHERE id = $1
+SELECT 1 FROM users WHERE id = $1
+SELECT 1 FROM users WHERE id = $1
+SELECT 1 FROM users WHERE id = $1
+SELECT 1 FROM users WHERE id = $1
+SELECT 1 FROM users WHERE id = $1
+SELECT 1 FROM users WHERE id = $1
+SELECT 1 FROM users WHERE id = $1
+## dialect= placeholder=dollar database set rowExists=no
+SELECT id FROM users WHERE id = $1
+INSERT INTO users(id, name) VALUES ($1, $2)
+## dialect= placeholder=dollar transaction set rowExists=no
+SELECT id FROM users WHERE id = $1
+INSERT INTO users(id, name) VALUES ($1, $2)
+## dialect= placeholder=dollar database set rowExists=yes
+SELECT id FROM users WHERE id = $1
+UPDATE users SET  name = $1 WHERE id = $2
+## dialect= placeholder=dollar transaction set rowExists=yes
+SELECT id FROM users WHERE id = $1
+UPDATE users SET  name = $1 WHERE id = $2
+## dialect= placeholder=dollar database set-multi rowExists=no
+SELECT id FROM users WHERE id = $1
+INSERT INTO users(id, name) VALUES ($1, $2)
+SELECT id FROM users WHERE id = $1
+INSERT INTO users(id, name) VALUES ($1, $2)
+## dialect= placeholder=dollar transaction set-multi rowExists=no
+SELECT id FROM users WHERE id = $1
+INSERT INTO users(id, name) VALUES ($1, $2)
+SELECT id FROM users WHERE id = $1
+INSERT INTO users(id, name) VALUES ($1, $2)
+## dialect= placeholder=dollar database set-multi rowExists=yes
+SELECT id FROM users WHERE id = $1
+UPDATE users SET  name = $1 WHERE id = $2
+SELECT id FROM users WHERE id = $1
+UPDATE users SET  name = $1 WHERE id = $2
+## dialect= placeholder=dollar transaction set-multi rowExists=yes
+SELECT id FROM users WHERE id = $1
+UPDATE users SET  name = $1 WHERE id = $2
+SELECT id FROM users WHERE id = $1
+UPDATE users SET  name = $1 WHERE id = $2
+## dialect= placeholder=dollar database update rowExists=no
+UPDATE users SET\n	name = $1\n	WHERE id = $2
+## dialect= placeholder=dollar transaction update rowExists=no
+UPDATE users SET\n	name = $1\n	WHERE id = $2
+## dialect= placeholder=dollar database update rowExists=yes
+UPDATE users SET\n	name = $1\n	WHERE id = $2
+## dialect= placeholder=dollar transaction update rowExists=yes
+UPDATE users SET\n	name = $1\n	WHERE id = $2
+## dialect= placeholder=dollar database update-multi rowExists=no
+UPDATE users SET\n	name = $1\n	WHERE id = $2
+UPDATE users SET\n	name = $1\n	WHERE id = $2
+## dialect= placeholder=dollar transaction update-multi rowExists=no
+UPDATE users SET\n	name = $1\n	WHERE id = $2
+UPDATE users SET\n	name = $1\n	WHERE id = $2
+## dialect= placeholder=dollar database update-multi rowExists=yes
+UPDATE users SET\n	name = $1\n	WHERE id = $2
+UPDATE users SET\n	name = $1\n	WHERE id = $2
+## dialect= placeholder=dollar transaction update-multi rowExists=yes
+UPDATE users SET\n	name = $1\n	WHERE id = $2
+UPDATE users SET\n	name = $1\n	WHERE id = $2
+## dialect= placeholder=dollar database delete rowExists=no
+DELETE FROM users WHERE id = $1
+## dialect= placeholder=dollar transaction delete rowExists=no
+DELETE FROM users WHERE id = $1
+## dialect= placeholder=dollar database delete rowExists=yes
+DELETE FROM users WHERE id = $1
+## dialect= placeholder=dollar transaction delete rowExists=yes
+DELETE FROM users WHERE id = $1
+## dialect= placeholder=dollar database delete-multi rowExists=no
+DELETE FROM users WHERE id IN ($1, $2)
+## dialect= placeholder=dollar transaction delete-multi rowExists=no
+DELETE FROM users WHERE id IN ($1, $2)
+## dialect= placeholder=dollar database delete-multi rowExists=yes
+DELETE FROM users WHERE id IN ($1, $2)
+## dialect= placeholder=dollar transaction delete-multi rowExists=yes
+DELETE FROM users WHERE id IN ($1, $2)
+## dialect= placeholder=dollar database get-struct-record rowExists=no
+SELECT Name FROM users WHERE id = $1
+## dialect= placeholder=dollar transaction get-struct-record rowExists=no
+SELECT Name FROM users WHERE id = $1
+## dialect= placeholder=dollar database update-two-fields rowExists=no
+UPDATE users SET\n	name = $1,\n	age = $2\n	WHERE id = $3
+## dialect= placeholder=dollar transaction update-two-fields rowExists=no
+UPDATE users SET\n	name = $1,\n	age = $2\n	WHERE id = $3
+## dialect= placeholder=dollar database update-multi-two-fields rowExists=no
+UPDATE users SET\n	name = $1,\n	age = $2\n	WHERE id = $3
+UPDATE users SET\n	name = $1,\n	age = $2\n	WHERE id = $3
+## dialect= placeholder=dollar transaction update-multi-two-fields rowExists=no
+UPDATE users SET\n	name = $1,\n	age = $2\n	WHERE id = $3
+UPDATE users SET\n	name = $1,\n	age = $2\n	WHERE id = $3
+## dialect= placeholder=dollar database update-multi-two-recordsets rowExists=no
+UPDATE users SET\n	name = $1\n	WHERE id = $2
+## dialect= placeholder=dollar transaction update-multi-two-recordsets rowExists=no
+UPDATE users SET\n	name = $1\n	WHERE id = $2
+## dialect= placeholder=dollar database delete-multi-one-key rowExists=no
+DELETE FROM users WHERE id = $1
+## dialect= placeholder=dollar transaction delete-multi-one-key rowExists=no
+DELETE FROM users WHERE id = $1
+## dialect= placeholder=dollar database delete-multi-alternating-recordsets rowExists=no
+DELETE FROM users WHERE id = $1
+DELETE FROM accounts WHERE ID = $1
+DELETE FROM users WHERE id = $1
+## dialect= placeholder=dollar transaction delete-multi-alternating-recordsets rowExists=no
+DELETE FROM users WHERE id = $1
+DELETE FROM accounts WHERE ID = $1
+DELETE FROM users WHERE id = $1
+## dialect= placeholder=dollar database delete-multi-consecutive-recordsets rowExists=no
+DELETE FROM users WHERE id IN ($1, $2)
+DELETE FROM accounts WHERE ID IN ($1, $2)
+## dialect= placeholder=dollar transaction delete-multi-consecutive-recordsets rowExists=no
+DELETE FROM users WHERE id IN ($1, $2)
+DELETE FROM accounts WHERE ID IN ($1, $2)
+## dialect= placeholder=dollar database delete-multi-no-keys rowExists=no
+## dialect= placeholder=dollar transaction delete-multi-no-keys rowExists=no
+## dialect= placeholder=dollar database get-multi-two-recordsets rowExists=no
+SELECT * FROM users WHERE id IN ($1, $2)
+## dialect= placeholder=dollar transaction get-multi-two-recordsets rowExists=no
+SELECT * FROM users WHERE id IN ($1, $2)
+## dialect= placeholder=dollar database get-multi-struct-one-record rowExists=no
+SELECT Name FROM users WHERE id = $1
+## dialect= placeholder=dollar transaction get-multi-struct-one-record rowExists=no
+SELECT Name FROM users WHERE id = $1
+## dialect= placeholder=dollar database set-multi-two-recordsets rowExists=no
+SELECT id FROM users WHERE id = $1
+INSERT INTO users(id, name) VALUES ($1, $2)
+## dialect= placeholder=dollar transaction set-multi-two-recordsets rowExists=no
+SELECT id FROM users WHERE id = $1
+INSERT INTO users(id, name) VALUES ($1, $2)
+## dialect= placeholder=dollar database set-struct rowExists=no
+SELECT id FROM users WHERE id = $1
+INSERT INTO users(id, Name) VALUES ($1, $2)
+## dialect= placeholder=dollar transaction set-struct rowExists=no
+SELECT id FROM users WHERE id = $1
+INSERT INTO users(id, Name) VALUES ($1, $2)
+## dialect= placeholder=dollar database insert-struct rowExists=no
+INSERT INTO users(id, Name) VALUES ($1, $2)
+## dialect= placeholder=dollar transaction insert-struct rowExists=no
+INSERT INTO users(id, Name) VALUES ($1, $2)
+## dialect= placeholder=dollar database insert-adapter-generated-id rowExists=no
+SELECT 1 FROM users WHERE id = $1
+INSERT INTO users(id, name) VALUES ($1, $2)
+## dialect= placeholder=dollar transaction insert-adapter-generated-id rowExists=no
+SELECT 1 FROM users WHERE id = $1
+INSERT INTO users(id, name) VALUES ($1, $2)
+## dialect= placeholder=dollar database insert-multi rowExists=no
+## dialect= placeholder=dollar transaction insert-multi rowExists=no
+INSERT INTO users(id, name) VALUES ($1, $2)
+INSERT INTO users(id, name) VALUES ($1, $2)
+## dialect= placeholder=dollar database insert-multi-generated-ids rowExists=no
+## dialect= placeholder=dollar transaction insert-multi-generated-ids rowExists=no
+SELECT 1 FROM users WHERE id = $1
+INSERT INTO users(id, name) VALUES ($1, $2)
+SELECT 1 FROM users WHERE id = $1
+INSERT INTO users(id, name) VALUES ($1, $2)
+## dialect=sqlite placeholder=question database exists rowExists=no
+SELECT 1 FROM `users` WHERE `id` = ?
+## dialect=sqlite placeholder=question transaction exists rowExists=no
+SELECT 1 FROM `users` WHERE `id` = ?
+## dialect=sqlite placeholder=question database exists rowExists=yes
+SELECT 1 FROM `users` WHERE `id` = ?
+## dialect=sqlite placeholder=question transaction exists rowExists=yes
+SELECT 1 FROM `users` WHERE `id` = ?
+## dialect=sqlite placeholder=question database get rowExists=no
+SELECT `Name` FROM `users` WHERE `id` = ?
+## dialect=sqlite placeholder=question transaction get rowExists=no
+SELECT `Name` FROM `users` WHERE `id` = ?
+## dialect=sqlite placeholder=question database get rowExists=yes
+SELECT `Name` FROM `users` WHERE `id` = ?
+## dialect=sqlite placeholder=question transaction get rowExists=yes
+SELECT `Name` FROM `users` WHERE `id` = ?
+## dialect=sqlite placeholder=question database get-map rowExists=no
+SELECT * FROM `users` WHERE `id` = ?
+## dialect=sqlite placeholder=question transaction get-map rowExists=no
+SELECT * FROM `users` WHERE `id` = ?
+## dialect=sqlite placeholder=question database get-map rowExists=yes
+SELECT * FROM `users` WHERE `id` = ?
+## dialect=sqlite placeholder=question transaction get-map rowExists=yes
+SELECT * FROM `users` WHERE `id` = ?
+## dialect=sqlite placeholder=question database get-multi rowExists=no
+SELECT * FROM `users` WHERE `id` IN (?, ?)
+## dialect=sqlite placeholder=question transaction get-multi rowExists=no
+SELECT * FROM `users` WHERE `id` IN (?, ?)
+## dialect=sqlite placeholder=question database get-multi rowExists=yes
+SELECT * FROM `users` WHERE `id` IN (?, ?)
+## dialect=sqlite placeholder=question transaction get-multi rowExists=yes
+SELECT * FROM `users` WHERE `id` IN (?, ?)
+## dialect=sqlite placeholder=question database get-multi-struct rowExists=no
+SELECT `id`, `Name` FROM `users` WHERE `id` IN (?, ?)
+## dialect=sqlite placeholder=question transaction get-multi-struct rowExists=no
+SELECT `id`, `Name` FROM `users` WHERE `id` IN (?, ?)
+## dialect=sqlite placeholder=question database get-multi-struct rowExists=yes
+SELECT `id`, `Name` FROM `users` WHERE `id` IN (?, ?)
+## dialect=sqlite placeholder=question transaction get-multi-struct rowExists=yes
+SELECT `id`, `Name` FROM `users` WHERE `id` IN (?, ?)
+## dialect=sqlite placeholder=question database get-multi-one-record rowExists=no
+SELECT * FROM `users` WHERE `id` = ?
+## dialect=sqlite placeholder=question transaction get-multi-one-record rowExists=no
+SELECT * FROM `users` WHERE `id` = ?
+## dialect=sqlite placeholder=question database get-multi-one-record rowExists=yes
+SELECT * FROM `users` WHERE `id` = ?
+## dialect=sqlite placeholder=question transaction get-multi-one-record rowExists=yes
+SELECT * FROM `users` WHERE `id` = ?
+## dialect=sqlite placeholder=question database insert rowExists=no
+INSERT INTO `users`(`id`, `name`) VALUES (?, ?)
+## dialect=sqlite placeholder=question transaction insert rowExists=no
+INSERT INTO `users`(`id`, `name`) VALUES (?, ?)
+## dialect=sqlite placeholder=question database insert rowExists=yes
+INSERT INTO `users`(`id`, `name`) VALUES (?, ?)
+## dialect=sqlite placeholder=question transaction insert rowExists=yes
+INSERT INTO `users`(`id`, `name`) VALUES (?, ?)
+## dialect=sqlite placeholder=question database insert-generated-id rowExists=no
+SELECT 1 FROM `users` WHERE `id` = ?
+INSERT INTO `users`(`id`, `name`) VALUES (?, ?)
+## dialect=sqlite placeholder=question transaction insert-generated-id rowExists=no
+SELECT 1 FROM `users` WHERE `id` = ?
+INSERT INTO `users`(`id`, `name`) VALUES (?, ?)
+## dialect=sqlite placeholder=question database insert-generated-id rowExists=yes
+SELECT 1 FROM `users` WHERE `id` = ?
+SELECT 1 FROM `users` WHERE `id` = ?
+SELECT 1 FROM `users` WHERE `id` = ?
+SELECT 1 FROM `users` WHERE `id` = ?
+SELECT 1 FROM `users` WHERE `id` = ?
+SELECT 1 FROM `users` WHERE `id` = ?
+SELECT 1 FROM `users` WHERE `id` = ?
+SELECT 1 FROM `users` WHERE `id` = ?
+SELECT 1 FROM `users` WHERE `id` = ?
+SELECT 1 FROM `users` WHERE `id` = ?
+## dialect=sqlite placeholder=question transaction insert-generated-id rowExists=yes
+SELECT 1 FROM `users` WHERE `id` = ?
+SELECT 1 FROM `users` WHERE `id` = ?
+SELECT 1 FROM `users` WHERE `id` = ?
+SELECT 1 FROM `users` WHERE `id` = ?
+SELECT 1 FROM `users` WHERE `id` = ?
+SELECT 1 FROM `users` WHERE `id` = ?
+SELECT 1 FROM `users` WHERE `id` = ?
+SELECT 1 FROM `users` WHERE `id` = ?
+SELECT 1 FROM `users` WHERE `id` = ?
+SELECT 1 FROM `users` WHERE `id` = ?
+## dialect=sqlite placeholder=question database set rowExists=no
+SELECT `id` FROM `users` WHERE `id` = ?
+INSERT INTO `users`(`id`, `name`) VALUES (?, ?)
+## dialect=sqlite placeholder=question transaction set rowExists=no
+SELECT `id` FROM `users` WHERE `id` = ?
+INSERT INTO `users`(`id`, `name`) VALUES (?, ?)
+## dialect=sqlite placeholder=question database set rowExists=yes
+SELECT `id` FROM `users` WHERE `id` = ?
+UPDATE `users` SET  `name` = ? WHERE `id` = ?
+## dialect=sqlite placeholder=question transaction set rowExists=yes
+SELECT `id` FROM `users` WHERE `id` = ?
+UPDATE `users` SET  `name` = ? WHERE `id` = ?
+## dialect=sqlite placeholder=question database set-multi rowExists=no
+SELECT `id` FROM `users` WHERE `id` = ?
+INSERT INTO `users`(`id`, `name`) VALUES (?, ?)
+SELECT `id` FROM `users` WHERE `id` = ?
+INSERT INTO `users`(`id`, `name`) VALUES (?, ?)
+## dialect=sqlite placeholder=question transaction set-multi rowExists=no
+SELECT `id` FROM `users` WHERE `id` = ?
+INSERT INTO `users`(`id`, `name`) VALUES (?, ?)
+SELECT `id` FROM `users` WHERE `id` = ?
+INSERT INTO `users`(`id`, `name`) VALUES (?, ?)
+## dialect=sqlite placeholder=question database set-multi rowExists=yes
+SELECT `id` FROM `users` WHERE `id` = ?
+UPDATE `users` SET  `name` = ? WHERE `id` = ?
+SELECT `id` FROM `users` WHERE `id` = ?
+UPDATE `users` SET  `name` = ? WHERE `id` = ?
+## dialect=sqlite placeholder=question transaction set-multi rowExists=yes
+SELECT `id` FROM `users` WHERE `id` = ?
+UPDATE `users` SET  `name` = ? WHERE `id` = ?
+SELECT `id` FROM `users` WHERE `id` = ?
+UPDATE `users` SET  `name` = ? WHERE `id` = ?
+## dialect=sqlite placeholder=question database update rowExists=no
+UPDATE `users` SET\n	`name` = ?\n	WHERE `id` = ?
+## dialect=sqlite placeholder=question transaction update rowExists=no
+UPDATE `users` SET\n	`name` = ?\n	WHERE `id` = ?
+## dialect=sqlite placeholder=question database update rowExists=yes
+UPDATE `users` SET\n	`name` = ?\n	WHERE `id` = ?
+## dialect=sqlite placeholder=question transaction update rowExists=yes
+UPDATE `users` SET\n	`name` = ?\n	WHERE `id` = ?
+## dialect=sqlite placeholder=question database update-multi rowExists=no
+UPDATE `users` SET\n	`name` = ?\n	WHERE `id` = ?
+UPDATE `users` SET\n	`name` = ?\n	WHERE `id` = ?
+## dialect=sqlite placeholder=question transaction update-multi rowExists=no
+UPDATE `users` SET\n	`name` = ?\n	WHERE `id` = ?
+UPDATE `users` SET\n	`name` = ?\n	WHERE `id` = ?
+## dialect=sqlite placeholder=question database update-multi rowExists=yes
+UPDATE `users` SET\n	`name` = ?\n	WHERE `id` = ?
+UPDATE `users` SET\n	`name` = ?\n	WHERE `id` = ?
+## dialect=sqlite placeholder=question transaction update-multi rowExists=yes
+UPDATE `users` SET\n	`name` = ?\n	WHERE `id` = ?
+UPDATE `users` SET\n	`name` = ?\n	WHERE `id` = ?
+## dialect=sqlite placeholder=question database delete rowExists=no
+DELETE FROM `users` WHERE `id` = ?
+## dialect=sqlite placeholder=question transaction delete rowExists=no
+DELETE FROM `users` WHERE `id` = ?
+## dialect=sqlite placeholder=question database delete rowExists=yes
+DELETE FROM `users` WHERE `id` = ?
+## dialect=sqlite placeholder=question transaction delete rowExists=yes
+DELETE FROM `users` WHERE `id` = ?
+## dialect=sqlite placeholder=question database delete-multi rowExists=no
+DELETE FROM `users` WHERE `id` IN (?, ?)
+## dialect=sqlite placeholder=question transaction delete-multi rowExists=no
+DELETE FROM `users` WHERE `id` IN (?, ?)
+## dialect=sqlite placeholder=question database delete-multi rowExists=yes
+DELETE FROM `users` WHERE `id` IN (?, ?)
+## dialect=sqlite placeholder=question transaction delete-multi rowExists=yes
+DELETE FROM `users` WHERE `id` IN (?, ?)
+## dialect=sqlite placeholder=question database get-struct-record rowExists=no
+SELECT `Name` FROM `users` WHERE `id` = ?
+## dialect=sqlite placeholder=question transaction get-struct-record rowExists=no
+SELECT `Name` FROM `users` WHERE `id` = ?
+## dialect=sqlite placeholder=question database update-two-fields rowExists=no
+UPDATE `users` SET\n	`name` = ?,\n	`age` = ?\n	WHERE `id` = ?
+## dialect=sqlite placeholder=question transaction update-two-fields rowExists=no
+UPDATE `users` SET\n	`name` = ?,\n	`age` = ?\n	WHERE `id` = ?
+## dialect=sqlite placeholder=question database update-multi-two-fields rowExists=no
+UPDATE `users` SET\n	`name` = ?,\n	`age` = ?\n	WHERE `id` = ?
+UPDATE `users` SET\n	`name` = ?,\n	`age` = ?\n	WHERE `id` = ?
+## dialect=sqlite placeholder=question transaction update-multi-two-fields rowExists=no
+UPDATE `users` SET\n	`name` = ?,\n	`age` = ?\n	WHERE `id` = ?
+UPDATE `users` SET\n	`name` = ?,\n	`age` = ?\n	WHERE `id` = ?
+## dialect=sqlite placeholder=question database update-multi-two-recordsets rowExists=no
+UPDATE `users` SET\n	`name` = ?\n	WHERE `id` = ?
+## dialect=sqlite placeholder=question transaction update-multi-two-recordsets rowExists=no
+UPDATE `users` SET\n	`name` = ?\n	WHERE `id` = ?
+## dialect=sqlite placeholder=question database delete-multi-one-key rowExists=no
+DELETE FROM `users` WHERE `id` = ?
+## dialect=sqlite placeholder=question transaction delete-multi-one-key rowExists=no
+DELETE FROM `users` WHERE `id` = ?
+## dialect=sqlite placeholder=question database delete-multi-alternating-recordsets rowExists=no
+DELETE FROM `users` WHERE `id` = ?
+DELETE FROM `accounts` WHERE `ID` = ?
+DELETE FROM `users` WHERE `id` = ?
+## dialect=sqlite placeholder=question transaction delete-multi-alternating-recordsets rowExists=no
+DELETE FROM `users` WHERE `id` = ?
+DELETE FROM `accounts` WHERE `ID` = ?
+DELETE FROM `users` WHERE `id` = ?
+## dialect=sqlite placeholder=question database delete-multi-consecutive-recordsets rowExists=no
+DELETE FROM `users` WHERE `id` IN (?, ?)
+DELETE FROM `accounts` WHERE `ID` IN (?, ?)
+## dialect=sqlite placeholder=question transaction delete-multi-consecutive-recordsets rowExists=no
+DELETE FROM `users` WHERE `id` IN (?, ?)
+DELETE FROM `accounts` WHERE `ID` IN (?, ?)
+## dialect=sqlite placeholder=question database delete-multi-no-keys rowExists=no
+## dialect=sqlite placeholder=question transaction delete-multi-no-keys rowExists=no
+## dialect=sqlite placeholder=question database get-multi-two-recordsets rowExists=no
+SELECT * FROM `users` WHERE `id` IN (?, ?)
+## dialect=sqlite placeholder=question transaction get-multi-two-recordsets rowExists=no
+SELECT * FROM `users` WHERE `id` IN (?, ?)
+## dialect=sqlite placeholder=question database get-multi-struct-one-record rowExists=no
+SELECT `Name` FROM `users` WHERE `id` = ?
+## dialect=sqlite placeholder=question transaction get-multi-struct-one-record rowExists=no
+SELECT `Name` FROM `users` WHERE `id` = ?
+## dialect=sqlite placeholder=question database set-multi-two-recordsets rowExists=no
+SELECT `id` FROM `users` WHERE `id` = ?
+INSERT INTO `users`(`id`, `name`) VALUES (?, ?)
+## dialect=sqlite placeholder=question transaction set-multi-two-recordsets rowExists=no
+SELECT `id` FROM `users` WHERE `id` = ?
+INSERT INTO `users`(`id`, `name`) VALUES (?, ?)
+## dialect=sqlite placeholder=question database set-struct rowExists=no
+SELECT `id` FROM `users` WHERE `id` = ?
+INSERT INTO `users`(`id`, `Name`) VALUES (?, ?)
+## dialect=sqlite placeholder=question transaction set-struct rowExists=no
+SELECT `id` FROM `users` WHERE `id` = ?
+INSERT INTO `users`(`id`, `Name`) VALUES (?, ?)
+## dialect=sqlite placeholder=question database insert-struct rowExists=no
+INSERT INTO `users`(`id`, `Name`) VALUES (?, ?)
+## dialect=sqlite placeholder=question transaction insert-struct rowExists=no
+INSERT INTO `users`(`id`, `Name`) VALUES (?, ?)
+## dialect=sqlite placeholder=question database insert-adapter-generated-id rowExists=no
+SELECT 1 FROM `users` WHERE `id` = ?
+INSERT INTO `users`(`id`, `name`) VALUES (?, ?)
+## dialect=sqlite placeholder=question transaction insert-adapter-generated-id rowExists=no
+SELECT 1 FROM `users` WHERE `id` = ?
+INSERT INTO `users`(`id`, `name`) VALUES (?, ?)
+## dialect=sqlite placeholder=question database insert-multi rowExists=no
+## dialect=sqlite placeholder=question transaction insert-multi rowExists=no
+INSERT INTO `users`(`id`, `name`) VALUES (?, ?)
+INSERT INTO `users`(`id`, `name`) VALUES (?, ?)
+## dialect=sqlite placeholder=question database insert-multi-generated-ids rowExists=no
+## dialect=sqlite placeholder=question transaction insert-multi-generated-ids rowExists=no
+SELECT 1 FROM `users` WHERE `id` = ?
+INSERT INTO `users`(`id`, `name`) VALUES (?, ?)
+SELECT 1 FROM `users` WHERE `id` = ?
+INSERT INTO `users`(`id`, `name`) VALUES (?, ?)
+## dialect=sqlite placeholder=dollar database exists rowExists=no
+SELECT 1 FROM `users` WHERE `id` = $1
+## dialect=sqlite placeholder=dollar transaction exists rowExists=no
+SELECT 1 FROM `users` WHERE `id` = $1
+## dialect=sqlite placeholder=dollar database exists rowExists=yes
+SELECT 1 FROM `users` WHERE `id` = $1
+## dialect=sqlite placeholder=dollar transaction exists rowExists=yes
+SELECT 1 FROM `users` WHERE `id` = $1
+## dialect=sqlite placeholder=dollar database get rowExists=no
+SELECT `Name` FROM `users` WHERE `id` = $1
+## dialect=sqlite placeholder=dollar transaction get rowExists=no
+SELECT `Name` FROM `users` WHERE `id` = $1
+## dialect=sqlite placeholder=dollar database get rowExists=yes
+SELECT `Name` FROM `users` WHERE `id` = $1
+## dialect=sqlite placeholder=dollar transaction get rowExists=yes
+SELECT `Name` FROM `users` WHERE `id` = $1
+## dialect=sqlite placeholder=dollar database get-map rowExists=no
+SELECT * FROM `users` WHERE `id` = $1
+## dialect=sqlite placeholder=dollar transaction get-map rowExists=no
+SELECT * FROM `users` WHERE `id` = $1
+## dialect=sqlite placeholder=dollar database get-map rowExists=yes
+SELECT * FROM `users` WHERE `id` = $1
+## dialect=sqlite placeholder=dollar transaction get-map rowExists=yes
+SELECT * FROM `users` WHERE `id` = $1
+## dialect=sqlite placeholder=dollar database get-multi rowExists=no
+SELECT * FROM `users` WHERE `id` IN ($1, $2)
+## dialect=sqlite placeholder=dollar transaction get-multi rowExists=no
+SELECT * FROM `users` WHERE `id` IN ($1, $2)
+## dialect=sqlite placeholder=dollar database get-multi rowExists=yes
+SELECT * FROM `users` WHERE `id` IN ($1, $2)
+## dialect=sqlite placeholder=dollar transaction get-multi rowExists=yes
+SELECT * FROM `users` WHERE `id` IN ($1, $2)
+## dialect=sqlite placeholder=dollar database get-multi-struct rowExists=no
+SELECT `id`, `Name` FROM `users` WHERE `id` IN ($1, $2)
+## dialect=sqlite placeholder=dollar transaction get-multi-struct rowExists=no
+SELECT `id`, `Name` FROM `users` WHERE `id` IN ($1, $2)
+## dialect=sqlite placeholder=dollar database get-multi-struct rowExists=yes
+SELECT `id`, `Name` FROM `users` WHERE `id` IN ($1, $2)
+## dialect=sqlite placeholder=dollar transaction get-multi-struct rowExists=yes
+SELECT `id`, `Name` FROM `users` WHERE `id` IN ($1, $2)
+## dialect=sqlite placeholder=dollar database get-multi-one-record rowExists=no
+SELECT * FROM `users` WHERE `id` = $1
+## dialect=sqlite placeholder=dollar transaction get-multi-one-record rowExists=no
+SELECT * FROM `users` WHERE `id` = $1
+## dialect=sqlite placeholder=dollar database get-multi-one-record rowExists=yes
+SELECT * FROM `users` WHERE `id` = $1
+## dialect=sqlite placeholder=dollar transaction get-multi-one-record rowExists=yes
+SELECT * FROM `users` WHERE `id` = $1
+## dialect=sqlite placeholder=dollar database insert rowExists=no
+INSERT INTO `users`(`id`, `name`) VALUES ($1, $2)
+## dialect=sqlite placeholder=dollar transaction insert rowExists=no
+INSERT INTO `users`(`id`, `name`) VALUES ($1, $2)
+## dialect=sqlite placeholder=dollar database insert rowExists=yes
+INSERT INTO `users`(`id`, `name`) VALUES ($1, $2)
+## dialect=sqlite placeholder=dollar transaction insert rowExists=yes
+INSERT INTO `users`(`id`, `name`) VALUES ($1, $2)
+## dialect=sqlite placeholder=dollar database insert-generated-id rowExists=no
+SELECT 1 FROM `users` WHERE `id` = $1
+INSERT INTO `users`(`id`, `name`) VALUES ($1, $2)
+## dialect=sqlite placeholder=dollar transaction insert-generated-id rowExists=no
+SELECT 1 FROM `users` WHERE `id` = $1
+INSERT INTO `users`(`id`, `name`) VALUES ($1, $2)
+## dialect=sqlite placeholder=dollar database insert-generated-id rowExists=yes
+SELECT 1 FROM `users` WHERE `id` = $1
+SELECT 1 FROM `users` WHERE `id` = $1
+SELECT 1 FROM `users` WHERE `id` = $1
+SELECT 1 FROM `users` WHERE `id` = $1
+SELECT 1 FROM `users` WHERE `id` = $1
+SELECT 1 FROM `users` WHERE `id` = $1
+SELECT 1 FROM `users` WHERE `id` = $1
+SELECT 1 FROM `users` WHERE `id` = $1
+SELECT 1 FROM `users` WHERE `id` = $1
+SELECT 1 FROM `users` WHERE `id` = $1
+## dialect=sqlite placeholder=dollar transaction insert-generated-id rowExists=yes
+SELECT 1 FROM `users` WHERE `id` = $1
+SELECT 1 FROM `users` WHERE `id` = $1
+SELECT 1 FROM `users` WHERE `id` = $1
+SELECT 1 FROM `users` WHERE `id` = $1
+SELECT 1 FROM `users` WHERE `id` = $1
+SELECT 1 FROM `users` WHERE `id` = $1
+SELECT 1 FROM `users` WHERE `id` = $1
+SELECT 1 FROM `users` WHERE `id` = $1
+SELECT 1 FROM `users` WHERE `id` = $1
+SELECT 1 FROM `users` WHERE `id` = $1
+## dialect=sqlite placeholder=dollar database set rowExists=no
+SELECT `id` FROM `users` WHERE `id` = $1
+INSERT INTO `users`(`id`, `name`) VALUES ($1, $2)
+## dialect=sqlite placeholder=dollar transaction set rowExists=no
+SELECT `id` FROM `users` WHERE `id` = $1
+INSERT INTO `users`(`id`, `name`) VALUES ($1, $2)
+## dialect=sqlite placeholder=dollar database set rowExists=yes
+SELECT `id` FROM `users` WHERE `id` = $1
+UPDATE `users` SET  `name` = $1 WHERE `id` = $2
+## dialect=sqlite placeholder=dollar transaction set rowExists=yes
+SELECT `id` FROM `users` WHERE `id` = $1
+UPDATE `users` SET  `name` = $1 WHERE `id` = $2
+## dialect=sqlite placeholder=dollar database set-multi rowExists=no
+SELECT `id` FROM `users` WHERE `id` = $1
+INSERT INTO `users`(`id`, `name`) VALUES ($1, $2)
+SELECT `id` FROM `users` WHERE `id` = $1
+INSERT INTO `users`(`id`, `name`) VALUES ($1, $2)
+## dialect=sqlite placeholder=dollar transaction set-multi rowExists=no
+SELECT `id` FROM `users` WHERE `id` = $1
+INSERT INTO `users`(`id`, `name`) VALUES ($1, $2)
+SELECT `id` FROM `users` WHERE `id` = $1
+INSERT INTO `users`(`id`, `name`) VALUES ($1, $2)
+## dialect=sqlite placeholder=dollar database set-multi rowExists=yes
+SELECT `id` FROM `users` WHERE `id` = $1
+UPDATE `users` SET  `name` = $1 WHERE `id` = $2
+SELECT `id` FROM `users` WHERE `id` = $1
+UPDATE `users` SET  `name` = $1 WHERE `id` = $2
+## dialect=sqlite placeholder=dollar transaction set-multi rowExists=yes
+SELECT `id` FROM `users` WHERE `id` = $1
+UPDATE `users` SET  `name` = $1 WHERE `id` = $2
+SELECT `id` FROM `users` WHERE `id` = $1
+UPDATE `users` SET  `name` = $1 WHERE `id` = $2
+## dialect=sqlite placeholder=dollar database update rowExists=no
+UPDATE `users` SET\n	`name` = $1\n	WHERE `id` = $2
+## dialect=sqlite placeholder=dollar transaction update rowExists=no
+UPDATE `users` SET\n	`name` = $1\n	WHERE `id` = $2
+## dialect=sqlite placeholder=dollar database update rowExists=yes
+UPDATE `users` SET\n	`name` = $1\n	WHERE `id` = $2
+## dialect=sqlite placeholder=dollar transaction update rowExists=yes
+UPDATE `users` SET\n	`name` = $1\n	WHERE `id` = $2
+## dialect=sqlite placeholder=dollar database update-multi rowExists=no
+UPDATE `users` SET\n	`name` = $1\n	WHERE `id` = $2
+UPDATE `users` SET\n	`name` = $1\n	WHERE `id` = $2
+## dialect=sqlite placeholder=dollar transaction update-multi rowExists=no
+UPDATE `users` SET\n	`name` = $1\n	WHERE `id` = $2
+UPDATE `users` SET\n	`name` = $1\n	WHERE `id` = $2
+## dialect=sqlite placeholder=dollar database update-multi rowExists=yes
+UPDATE `users` SET\n	`name` = $1\n	WHERE `id` = $2
+UPDATE `users` SET\n	`name` = $1\n	WHERE `id` = $2
+## dialect=sqlite placeholder=dollar transaction update-multi rowExists=yes
+UPDATE `users` SET\n	`name` = $1\n	WHERE `id` = $2
+UPDATE `users` SET\n	`name` = $1\n	WHERE `id` = $2
+## dialect=sqlite placeholder=dollar database delete rowExists=no
+DELETE FROM `users` WHERE `id` = $1
+## dialect=sqlite placeholder=dollar transaction delete rowExists=no
+DELETE FROM `users` WHERE `id` = $1
+## dialect=sqlite placeholder=dollar database delete rowExists=yes
+DELETE FROM `users` WHERE `id` = $1
+## dialect=sqlite placeholder=dollar transaction delete rowExists=yes
+DELETE FROM `users` WHERE `id` = $1
+## dialect=sqlite placeholder=dollar database delete-multi rowExists=no
+DELETE FROM `users` WHERE `id` IN ($1, $2)
+## dialect=sqlite placeholder=dollar transaction delete-multi rowExists=no
+DELETE FROM `users` WHERE `id` IN ($1, $2)
+## dialect=sqlite placeholder=dollar database delete-multi rowExists=yes
+DELETE FROM `users` WHERE `id` IN ($1, $2)
+## dialect=sqlite placeholder=dollar transaction delete-multi rowExists=yes
+DELETE FROM `users` WHERE `id` IN ($1, $2)
+## dialect=sqlite placeholder=dollar database get-struct-record rowExists=no
+SELECT `Name` FROM `users` WHERE `id` = $1
+## dialect=sqlite placeholder=dollar transaction get-struct-record rowExists=no
+SELECT `Name` FROM `users` WHERE `id` = $1
+## dialect=sqlite placeholder=dollar database update-two-fields rowExists=no
+UPDATE `users` SET\n	`name` = $1,\n	`age` = $2\n	WHERE `id` = $3
+## dialect=sqlite placeholder=dollar transaction update-two-fields rowExists=no
+UPDATE `users` SET\n	`name` = $1,\n	`age` = $2\n	WHERE `id` = $3
+## dialect=sqlite placeholder=dollar database update-multi-two-fields rowExists=no
+UPDATE `users` SET\n	`name` = $1,\n	`age` = $2\n	WHERE `id` = $3
+UPDATE `users` SET\n	`name` = $1,\n	`age` = $2\n	WHERE `id` = $3
+## dialect=sqlite placeholder=dollar transaction update-multi-two-fields rowExists=no
+UPDATE `users` SET\n	`name` = $1,\n	`age` = $2\n	WHERE `id` = $3
+UPDATE `users` SET\n	`name` = $1,\n	`age` = $2\n	WHERE `id` = $3
+## dialect=sqlite placeholder=dollar database update-multi-two-recordsets rowExists=no
+UPDATE `users` SET\n	`name` = $1\n	WHERE `id` = $2
+## dialect=sqlite placeholder=dollar transaction update-multi-two-recordsets rowExists=no
+UPDATE `users` SET\n	`name` = $1\n	WHERE `id` = $2
+## dialect=sqlite placeholder=dollar database delete-multi-one-key rowExists=no
+DELETE FROM `users` WHERE `id` = $1
+## dialect=sqlite placeholder=dollar transaction delete-multi-one-key rowExists=no
+DELETE FROM `users` WHERE `id` = $1
+## dialect=sqlite placeholder=dollar database delete-multi-alternating-recordsets rowExists=no
+DELETE FROM `users` WHERE `id` = $1
+DELETE FROM `accounts` WHERE `ID` = $1
+DELETE FROM `users` WHERE `id` = $1
+## dialect=sqlite placeholder=dollar transaction delete-multi-alternating-recordsets rowExists=no
+DELETE FROM `users` WHERE `id` = $1
+DELETE FROM `accounts` WHERE `ID` = $1
+DELETE FROM `users` WHERE `id` = $1
+## dialect=sqlite placeholder=dollar database delete-multi-consecutive-recordsets rowExists=no
+DELETE FROM `users` WHERE `id` IN ($1, $2)
+DELETE FROM `accounts` WHERE `ID` IN ($1, $2)
+## dialect=sqlite placeholder=dollar transaction delete-multi-consecutive-recordsets rowExists=no
+DELETE FROM `users` WHERE `id` IN ($1, $2)
+DELETE FROM `accounts` WHERE `ID` IN ($1, $2)
+## dialect=sqlite placeholder=dollar database delete-multi-no-keys rowExists=no
+## dialect=sqlite placeholder=dollar transaction delete-multi-no-keys rowExists=no
+## dialect=sqlite placeholder=dollar database get-multi-two-recordsets rowExists=no
+SELECT * FROM `users` WHERE `id` IN ($1, $2)
+## dialect=sqlite placeholder=dollar transaction get-multi-two-recordsets rowExists=no
+SELECT * FROM `users` WHERE `id` IN ($1, $2)
+## dialect=sqlite placeholder=dollar database get-multi-struct-one-record rowExists=no
+SELECT `Name` FROM `users` WHERE `id` = $1
+## dialect=sqlite placeholder=dollar transaction get-multi-struct-one-record rowExists=no
+SELECT `Name` FROM `users` WHERE `id` = $1
+## dialect=sqlite placeholder=dollar database set-multi-two-recordsets rowExists=no
+SELECT `id` FROM `users` WHERE `id` = $1
+INSERT INTO `users`(`id`, `name`) VALUES ($1, $2)
+## dialect=sqlite placeholder=dollar transaction set-multi-two-recordsets rowExists=no
+SELECT `id` FROM `users` WHERE `id` = $1
+INSERT INTO `users`(`id`, `name`) VALUES ($1, $2)
+## dialect=sqlite placeholder=dollar database set-struct rowExists=no
+SELECT `id` FROM `users` WHERE `id` = $1
+INSERT INTO `users`(`id`, `Name`) VALUES ($1, $2)
+## dialect=sqlite placeholder=dollar transaction set-struct rowExists=no
+SELECT `id` FROM `users` WHERE `id` = $1
+INSERT INTO `users`(`id`, `Name`) VALUES ($1, $2)
+## dialect=sqlite placeholder=dollar database insert-struct rowExists=no
+INSERT INTO `users`(`id`, `Name`) VALUES ($1, $2)
+## dialect=sqlite placeholder=dollar transaction insert-struct rowExists=no
+INSERT INTO `users`(`id`, `Name`) VALUES ($1, $2)
+## dialect=sqlite placeholder=dollar database insert-adapter-generated-id rowExists=no
+SELECT 1 FROM `users` WHERE `id` = $1
+INSERT INTO `users`(`id`, `name`) VALUES ($1, $2)
+## dialect=sqlite placeholder=dollar transaction insert-adapter-generated-id rowExists=no
+SELECT 1 FROM `users` WHERE `id` = $1
+INSERT INTO `users`(`id`, `name`) VALUES ($1, $2)
+## dialect=sqlite placeholder=dollar database insert-multi rowExists=no
+## dialect=sqlite placeholder=dollar transaction insert-multi rowExists=no
+INSERT INTO `users`(`id`, `name`) VALUES ($1, $2)
+INSERT INTO `users`(`id`, `name`) VALUES ($1, $2)
+## dialect=sqlite placeholder=dollar database insert-multi-generated-ids rowExists=no
+## dialect=sqlite placeholder=dollar transaction insert-multi-generated-ids rowExists=no
+SELECT 1 FROM `users` WHERE `id` = $1
+INSERT INTO `users`(`id`, `name`) VALUES ($1, $2)
+SELECT 1 FROM `users` WHERE `id` = $1
+INSERT INTO `users`(`id`, `name`) VALUES ($1, $2)

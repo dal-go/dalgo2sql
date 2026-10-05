@@ -11,6 +11,22 @@ import (
 type DbOptions struct {
 	ID         string
 	PrimaryKey []string
+	// Recordsets declares the recordsets (tables) of key reads and writes, by name,
+	// with the primary key each is looked up by.
+	//
+	// The recordset of a key without a parent is declared under the key's
+	// collection. The recordset of a nested key is declared under the collections
+	// of the key and of its parents joined with "_", the key's own collection
+	// first: the key orders/o1/lines/l5 addresses the table "lines_orders", and its
+	// recordset is declared under "lines_orders". A nested key whose joined name is
+	// not declared is refused in every operation, with an error wrapping
+	// ErrUndeclaredNestedRecordset, before any statement is sent.
+	//
+	// A parent's ID is in no statement. The key orders/o1/lines/l5 and the key
+	// orders/o2/lines/l5 address the same row of "lines_orders", and so does the
+	// key of a collection named "lines_orders" with the ID l5: a SQL recordset
+	// cannot tell the rows of different parents apart. Declare a nested recordset
+	// only for a table whose primary key identifies the row without its parent.
 	Recordsets map[string]*Recordset
 	// Placeholder controls how SQL parameter markers are emitted.
 	// The zero value (PlaceholderQuestion) uses "?" — compatible with

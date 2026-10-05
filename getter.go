@@ -74,37 +74,51 @@ func executeExists(_ context.Context, options DbOptions, key *dalrecord.Key, exe
 	return true, nil
 }
 
-func getSingle(_ context.Context, options DbOptions, record dalrecord.Record, exec queryExecutor) error {
-	key := record.Key()
-	rsName := getRecordsetName(key)
-	table, err := options.recordsetIdentifier(key)
-	if err != nil {
-		record.SetError(err)
-		return err
-	}
-	fields := getSelectFields(false, options, record)
-	fieldsStr, err := selectList(options, fields, false)
-	if err != nil {
-		record.SetError(err)
-		return err
-	}
-	if fieldsStr == "" {
-		fieldsStr = "1"
-	}
-	queryText := fmt.Sprintf("SELECT %s FROM %s WHERE ", fieldsStr, table)
+// singleGetNames are the names a read of one record writes into SQL text.
+type singleGetNames struct {
+	table  string // the recordset
+	fields string // the SELECT list, "1" for a record with no field
+	pk     string // the primary-key column
+}
 
+// renderSingleGet returns the names a read of record writes into SQL text, or the
+// error that stops the read. onRecord says whether the error is recorded on the
+// record: a name that cannot be written is, a primary key that cannot be used is
+// only returned.
+func renderSingleGet(options DbOptions, record dalrecord.Record) (names singleGetNames, onRecord bool, err error) {
+	key := record.Key()
+	if names.table, err = options.recordsetIdentifier(key); err != nil {
+		return singleGetNames{}, true, err
+	}
+	fields, _ := dataFieldNames(record)
+	if names.fields, err = selectList(options, fields, false); err != nil {
+		return singleGetNames{}, true, err
+	}
+	if names.fields == "" {
+		names.fields = "1"
+	}
 	pk := options.PrimaryKeyFieldNames(key)
 	if len(pk) == 0 {
-		return fmt.Errorf("%w: primary key is not defined for recorset %s", dalrecord.ErrRecordNotFound, rsName)
+		return singleGetNames{}, false, fmt.Errorf("%w: primary key is not defined for recorset %s", dalrecord.ErrRecordNotFound, getRecordsetName(key))
 	} else if len(pk) > 1 {
-		return fmt.Errorf("%w: select by composite primary key is not supported yet", dal.ErrNotImplementedYet)
+		return singleGetNames{}, false, fmt.Errorf("%w: select by composite primary key is not supported yet", dal.ErrNotImplementedYet)
 	}
-	pkName, err := options.sqlIdentifier(positionPrimaryKey, pk[0])
+	if names.pk, err = options.sqlIdentifier(positionPrimaryKey, pk[0]); err != nil {
+		return singleGetNames{}, true, err
+	}
+	return names, false, nil
+}
+
+func getSingle(_ context.Context, options DbOptions, record dalrecord.Record, exec queryExecutor) error {
+	key := record.Key()
+	names, onRecord, err := renderSingleGet(options, record)
 	if err != nil {
-		record.SetError(err)
+		if onRecord {
+			record.SetError(err)
+		}
 		return err
 	}
-	queryText += pkName + " = " + options.Placeholder.placeholder(1)
+	queryText := fmt.Sprintf("SELECT %s FROM %s WHERE %s = %s", names.fields, names.table, names.pk, options.Placeholder.placeholder(1))
 
 	rows, err := exec(queryText, key.ID)
 	if err != nil {
@@ -132,7 +146,9 @@ func getSingle(_ context.Context, options DbOptions, record dalrecord.Record, ex
 func getMulti(ctx context.Context, options DbOptions, records []dalrecord.Record, exec queryExecutor) error {
 	// The whole batch is checked before its first read: the recordsets below are
 	// read one after the other in map order, so a refusal found half way would
-	// leave it to chance which of the valid ones had been sent.
+	// leave it to chance which of the valid ones had been sent. Every name a read
+	// writes (the collection path of every key, the primary-key column, the fields)
+	// is checked here, for every recordset.
 	for _, r := range records {
 		if _, err := options.recordsetIdentifier(r.Key()); err != nil {
 			return refuseRecords(records, err)
@@ -143,6 +159,11 @@ func getMulti(ctx context.Context, options DbOptions, records []dalrecord.Record
 	for _, r := range records {
 		name := getRecordsetName(r.Key())
 		byRecordset[name] = append(byRecordset[name], r)
+	}
+	for _, recs := range byRecordset {
+		if err := checkGetNames(options, recs); err != nil {
+			return refuseRecords(records, err)
+		}
 	}
 	for _, recs := range byRecordset {
 		if len(recs) == 1 {
@@ -159,6 +180,22 @@ func getMulti(ctx context.Context, options DbOptions, records []dalrecord.Record
 	return nil
 }
 
+// checkGetNames returns the error that refuses a batch because a name the read of
+// records, which share a recordset, would write cannot be written; it is nil for a
+// batch that is read, and also for one whose records only fail to be found.
+func checkGetNames(options DbOptions, records []dalrecord.Record) error {
+	if len(records) == 1 {
+		// A primary key that cannot be used is reported on the record, as it is
+		// when the record is read.
+		if _, _, err := renderSingleGet(options, records[0]); errors.Is(err, ErrUnsafeName) {
+			return err
+		}
+		return nil
+	}
+	_, _, err := renderMultiGet(options, records)
+	return err
+}
+
 // refuseRecords records err on every record of a refused batch and returns it.
 func refuseRecords(records []dalrecord.Record, err error) error {
 	for _, record := range records {
@@ -167,39 +204,44 @@ func refuseRecords(records []dalrecord.Record, err error) error {
 	return err
 }
 
-func getMultiFromSingleTable(_ context.Context, options DbOptions, records []dalrecord.Record, exec queryExecutor) error {
-	if len(records) == 0 {
-		return nil
-	}
-	records = append(make([]dalrecord.Record, 0, len(records)), records...)
+// multiGetNames are the names a read of several records of one recordset writes
+// into SQL text.
+type multiGetNames struct {
+	table      string   // the recordset
+	primaryKey []string // the primary-key fields, as declared
+	pkColumns  []string // the primary-key columns, as written
+	fields     []string // the fields to select, "*" for map data
+	columns    string   // the SELECT list
+	dataIsMap  bool
+}
+
+// renderMultiGet returns the names a read of records, which share a recordset,
+// writes into SQL text. noPrimaryKey is the error of a recordset with no primary
+// key, which is recorded on the records and does not stop the batch; err is any
+// other reason the read cannot be built.
+func renderMultiGet(options DbOptions, records []dalrecord.Record) (names multiGetNames, noPrimaryKey, err error) {
 	// The records share the recordset their keys address, which is the table and
 	// the one the primary key is looked up in.
 	recordset := getRecordsetName(records[0].Key())
-	table, err := options.recordsetIdentifier(records[0].Key())
-	if err != nil {
-		return refuseRecords(records, err)
+	if names.table, err = options.recordsetIdentifier(records[0].Key()); err != nil {
+		return multiGetNames{}, nil, err
 	}
 
 	rs, hasRecordsetDefinition := options.Recordsets[recordset]
-	var primaryKey []string
 	if hasRecordsetDefinition && len(rs.PrimaryKey()) > 0 {
 		for _, pk := range rs.PrimaryKey() {
-			primaryKey = append(primaryKey, pk.Name())
+			names.primaryKey = append(names.primaryKey, pk.Name())
 		}
 	} else if len(options.PrimaryKey) > 0 {
-		primaryKey = options.PrimaryKey
+		names.primaryKey = options.PrimaryKey
 	} else {
-		err := fmt.Errorf("%w: no primary key defined for: '%s'", dalrecord.ErrRecordNotFound, recordset)
-		for _, record := range records {
-			record.SetError(err)
-		}
-		return nil
+		return multiGetNames{}, fmt.Errorf("%w: no primary key defined for: '%s'", dalrecord.ErrRecordNotFound, recordset), nil
 	}
 
-	pkColumns := make([]string, len(primaryKey))
-	for i, pkName := range primaryKey {
-		if pkColumns[i], err = options.sqlIdentifier(positionPrimaryKey, pkName); err != nil {
-			return refuseRecords(records, err)
+	names.pkColumns = make([]string, len(names.primaryKey))
+	for i, pkName := range names.primaryKey {
+		if names.pkColumns[i], err = options.sqlIdentifier(positionPrimaryKey, pkName); err != nil {
+			return multiGetNames{}, nil, err
 		}
 	}
 
@@ -210,19 +252,34 @@ func getMultiFromSingleTable(_ context.Context, options DbOptions, records []dal
 
 	// For map data we use SELECT * and identify the PK column after reading columns.
 	// For struct data we enumerate fields explicitly.
-	dataIsMap := isMapData(records[0].Data())
-
-	var fields []string
-	if dataIsMap {
-		fields = []string{"*"}
-	} else {
-		fields = getSelectFields(true, options, records...)
+	names.dataIsMap = isMapData(records[0].Data())
+	if names.dataIsMap {
+		names.fields = []string{"*"}
+	} else if names.fields, err = getSelectFields(true, options, records...); err != nil {
+		return multiGetNames{}, nil, err
 	}
+	if names.columns, err = selectList(options, names.fields, true); err != nil {
+		return multiGetNames{}, nil, err
+	}
+	return names, nil, nil
+}
 
-	columns, err := selectList(options, fields, true)
+func getMultiFromSingleTable(_ context.Context, options DbOptions, records []dalrecord.Record, exec queryExecutor) error {
+	if len(records) == 0 {
+		return nil
+	}
+	records = append(make([]dalrecord.Record, 0, len(records)), records...)
+	names, noPrimaryKey, err := renderMultiGet(options, records)
+	if noPrimaryKey != nil {
+		for _, record := range records {
+			record.SetError(noPrimaryKey)
+		}
+		return nil
+	}
 	if err != nil {
 		return refuseRecords(records, err)
 	}
+	table, primaryKey, pkColumns, fields, columns, dataIsMap := names.table, names.primaryKey, names.pkColumns, names.fields, names.columns, names.dataIsMap
 	queryText := fmt.Sprintf("SELECT %v FROM %v WHERE ", columns, table)
 	args := make([]interface{}, len(records))
 	if len(records) == 1 /*len(records) == 1*/ {
@@ -527,8 +584,11 @@ func scanIntoDataWithPrimaryKeyIncluded(rows *sql.Rows, data interface{}) error 
 //	return m, nil
 //}
 
-func getSelectFields(includePK bool, options DbOptions, records ...dalrecord.Record) (fields []string) {
-	record := records[0] // TODO: support union of fields from multiple records?
+// dataFieldNames lists the fields a read of record selects: the names of the
+// struct fields of its data, or the one wildcard for map data, whose columns
+// cannot be enumerated ahead of time (the scan path, scanRowIntoMap, handles the
+// result columns generically).
+func dataFieldNames(record dalrecord.Record) (fields []string, isMap bool) {
 	record.SetError(nil)
 	data := record.Data()
 	if data == nil {
@@ -539,39 +599,44 @@ func getSelectFields(includePK bool, options DbOptions, records ...dalrecord.Rec
 	if kind == reflect.Pointer || kind == reflect.Interface {
 		val = val.Elem()
 	} // TODO: throw panic
-
-	// For map data we cannot enumerate columns ahead of time, so use SELECT *.
-	// The scan path (scanRowIntoMap) handles the result columns generically.
 	if val.Kind() == reflect.Map {
-		return []string{"*"}
+		return []string{"*"}, true
 	}
+	if val.Kind() != reflect.Struct {
+		return nil, false
+	}
+	fields = make([]string, val.NumField())
+	for i := range fields {
+		fields[i] = val.Type().Field(i).Name
+	}
+	return fields, false
+}
 
-	valType := val.Type()
-	var numberOfFields int
-	if val.Kind() == reflect.Struct {
-		numberOfFields = valType.NumField()
+// getSelectFields lists the fields of a read of records, which share a recordset,
+// with the primary key first when includePK is set. A declared recordset with no
+// primary key is an error when the primary key is wanted.
+func getSelectFields(includePK bool, options DbOptions, records ...dalrecord.Record) (fields []string, err error) {
+	record := records[0] // TODO: support union of fields from multiple records?
+	fields, isMap := dataFieldNames(record)
+	if !includePK || isMap {
+		return fields, nil
 	}
-	if includePK {
-		key := record.Key()
-		if key == nil {
-			panic("not able to determine key field(s) as a record does not reference a key")
-		}
-		if strings.TrimSpace(key.Collection()) == "" {
-			panic("record key reference an empty collection name")
-		}
-		fields = make([]string, 1, numberOfFields+1)
-		if rs, hasOptions := options.Recordsets[getRecordsetName(key)]; hasOptions {
-			fields[0] = rs.PrimaryKey()[0].Name()
-		} else {
-			fields[0] = "ID"
-		}
-	} else {
-		fields = make([]string, 0, numberOfFields)
+	key := record.Key()
+	if key == nil {
+		panic("not able to determine key field(s) as a record does not reference a key")
 	}
-	for i := 0; i < numberOfFields; i++ {
-		fields = append(fields, valType.Field(i).Name)
+	if strings.TrimSpace(key.Collection()) == "" {
+		panic("record key reference an empty collection name")
 	}
-	return fields
+	primaryKey := "ID"
+	if rs, hasOptions := options.Recordsets[getRecordsetName(key)]; hasOptions {
+		declared := rs.PrimaryKey()
+		if len(declared) == 0 {
+			return nil, fmt.Errorf("primary key is not defined for recordset %s", getRecordsetName(key))
+		}
+		primaryKey = declared[0].Name()
+	}
+	return append([]string{primaryKey}, fields...), nil
 }
 
 // selectList renders the names getSelectFields returned as a SELECT list. The

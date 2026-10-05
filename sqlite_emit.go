@@ -89,21 +89,32 @@ func compileStructuredSQL(q dal.StructuredQuery) (string, []any, error) {
 			b.WriteString(expr)
 			args = append(args, values...)
 			if column.Alias != "" {
+				alias, err := quoteCheckedSQLIdentifier(positionAlias, column.Alias)
+				if err != nil {
+					return "", nil, fmt.Errorf("column %d: %w", i, err)
+				}
 				b.WriteString(" AS ")
-				b.WriteString(quoteSQLIdentifier(column.Alias))
+				b.WriteString(alias)
 			} else if normalizedGroupOutput {
 				name := column.Expression.String()
 				if field, ok := column.Expression.(dal.FieldRef); ok {
 					name = field.Name()
 				}
+				alias, err := quoteCheckedSQLIdentifier(positionAlias, name)
+				if err != nil {
+					return "", nil, fmt.Errorf("column %d: %w", i, err)
+				}
 				b.WriteString(" AS ")
-				b.WriteString(quoteSQLIdentifier(name))
+				b.WriteString(alias)
 			}
 		}
 	}
 	b.WriteString(" FROM ")
 	b.WriteString(fromSQL)
 	if q.Where() != nil {
+		if sqlConditionTestsAggregateForNull(q.Where()) {
+			return "", nil, fmt.Errorf("where: unsupported null test over an aggregate")
+		}
 		condition, values, err := compileSQLConditionWithSources(q.Where(), sourceAliases, hasJoins)
 		if err != nil {
 			return "", nil, fmt.Errorf("where: %w", err)
@@ -201,6 +212,18 @@ func checkSQLJoinOutputIsNew(seen map[string]dal.Expression, index int, column d
 }
 
 func quoteSQLIdentifier(name string) string { return "`" + strings.ReplaceAll(name, "`", "``") + "`" }
+
+// quoteCheckedSQLIdentifier is quoteSQLIdentifier for a name the caller of a read
+// chose: it applies quotableNameProblem, the one rule for the names a SQLite
+// statement writes (it is the rule of the key reads and writes, and of the
+// protected path), and returns an error wrapping ErrUnsafeName for a name that is
+// empty, too long, invalid UTF-8 or holds a control character.
+func quoteCheckedSQLIdentifier(position, name string) (string, error) {
+	if problem := quotableNameProblem(name); problem != "" {
+		return "", newUnsafeNameError(position, name, problem)
+	}
+	return quoteSQLIdentifier(name), nil
+}
 
 // compileSQLRelation emits an ordinary same-database relation tree. A nested
 // right subtree is parenthesized so SQLite preserves LEFT/INNER grouping. The
@@ -303,9 +326,16 @@ func compileSQLTableSource(source dal.RecordsetSource) (string, error) {
 	if alias := collection.Alias(); alias != "" && !isPlainSQLIdentifier(alias) {
 		return "", fmt.Errorf("structured SQL query source alias %q is not a plain identifier", alias)
 	}
-	name := quoteSQLIdentifier(collection.Name())
+	name, err := quoteCheckedSQLIdentifier(positionCollection, collection.Name())
+	if err != nil {
+		return "", err
+	}
 	if schema := collection.Schema(); schema != "" {
-		name = quoteSQLIdentifier(schema) + "." + name
+		quotedSchema, err := quoteCheckedSQLIdentifier(positionSchema, schema)
+		if err != nil {
+			return "", err
+		}
+		name = quotedSchema + "." + name
 	}
 	if alias := collection.Alias(); alias != "" {
 		name += " AS " + quoteSQLIdentifier(alias)
@@ -542,6 +572,9 @@ func compileSQLConditionWithSources(condition dal.Condition, sources map[string]
 		}
 		return "(" + strings.Join(parts, " "+string(c.Operator())+" ") + ")", args, nil
 	case dal.IsNullCondition:
+		if _, star := c.Operand().(dal.StarExpression); star {
+			return "", nil, fmt.Errorf("unsupported null test over *")
+		}
 		operand, args, err := compileSQLExpressionWithSources(c.Operand(), sources, requireQualified)
 		if err != nil {
 			return "", nil, err
@@ -557,6 +590,23 @@ func compileSQLConditionWithSources(condition dal.Condition, sources map[string]
 	default:
 		return "", nil, fmt.Errorf("unsupported condition %T", condition)
 	}
+}
+
+// sqlConditionTestsAggregateForNull reports whether condition holds a null test
+// whose operand holds an aggregate. It is a HAVING condition: in a WHERE it names
+// an aggregate before any group exists.
+func sqlConditionTestsAggregateForNull(condition dal.Condition) bool {
+	switch c := condition.(type) {
+	case dal.IsNullCondition:
+		return sqlExpressionContainsAggregate(c.Operand())
+	case dal.GroupCondition:
+		for _, child := range c.Conditions() {
+			if sqlConditionTestsAggregateForNull(child) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func sqlExpressionContainsAggregate(expression dal.Expression) bool {
@@ -637,9 +687,16 @@ func compileSQLExpressionWithSources(expression dal.Expression, sources map[stri
 			if requireQualified {
 				return "", nil, fmt.Errorf("field %q must name a source in a JOIN query", e.Name())
 			}
-			return quoteSQLIdentifier(e.Name()), nil, nil
+			field, err := quoteCheckedSQLIdentifier(positionField, e.Name())
+			return field, nil, err
 		case hasSQLSource(sources, e.Source()):
-			return quoteSQLIdentifier(e.Source()) + "." + quoteSQLIdentifier(e.Name()), nil, nil
+			// The source is the name or alias of a source that was compiled, so its
+			// own name has been checked.
+			field, err := quoteCheckedSQLIdentifier(positionField, e.Name())
+			if err != nil {
+				return "", nil, err
+			}
+			return quoteSQLIdentifier(e.Source()) + "." + field, nil, nil
 		default:
 			return "", nil, fmt.Errorf("field %q references unknown source %q", e.Name(), e.Source())
 		}
@@ -911,8 +968,15 @@ func guardLegacyEmit(q dal.StructuredQuery) error {
 		}
 	}
 	for i, order := range q.OrderBy() {
-		if err := guardLegacyOrder(order, fmt.Sprintf("orderBy[%d]", i)); err != nil {
+		path := fmt.Sprintf("orderBy[%d]", i)
+		if err := guardLegacyOrder(order, path); err != nil {
 			return err
+		}
+		// A keys-only query is ordered by its primary key, which the reader adds and
+		// the legacy text writes unquoted: a reserved word there is a statement the
+		// server rejects.
+		if field, ok := order.Expression().(dal.FieldRef); ok && isKeysOnlyQuery(q) && isReservedSQLWord(field.Name()) {
+			return legacyRefusal(path, "a keys-only query cannot be ordered by a field that is a reserved word")
 		}
 	}
 	return nil
@@ -1250,9 +1314,10 @@ func guardLegacyTime(path string, value time.Time, rendering legacyRendering) er
 // guardLegacyString refuses text the legacy emitter cannot carry safely: a
 // backslash (MySQL-style escapes), a bracket (stripBracketIdents removes it
 // from the whole statement), a control character, and, when the text is
-// rendered by encoding/json, a double quote and every character json writes as
-// a backslash-u escape instead of as itself (<, >, &, U+2028, U+2029 and bytes
-// that are not valid UTF-8). The error does not repeat the text.
+// rendered by encoding/json, a double quote, every character json writes as a
+// backslash-u escape instead of as itself (<, >, &, U+2028, U+2029) and invalid
+// UTF-8, which json replaces with U+FFFD, so the text sent is not the text checked.
+// The error does not repeat the text.
 func guardLegacyString(path, value string, jsonRendered bool) error {
 	if jsonRendered && !utf8.ValidString(value) {
 		return legacyRefusal(path, "string constant contains a character that is not supported")

@@ -201,13 +201,26 @@ func TestRecordsReader_StructTargetByteValues(t *testing.T) {
 	}
 }
 
+// NULL is held as nil by a pointer, an interface and a []byte field and goes to a
+// Scanner as Scan(nil); for any other field it is an error naming the column, as it
+// is for Get, and nothing is stored in place of it.
 func TestRecordsReader_StructTargetNULL(t *testing.T) {
-	got := scanReaderShapes{Count: 3, Created: sql.NullString{String: "x", Valid: true}}
-	if err := nextStruct(t, &got, sqlmock.NewRows([]string{"count", "created", "blob"}).AddRow(nil, nil, nil)); err != nil {
+	got := scanReaderShapes{Blob: []byte("b"), Created: sql.NullString{String: "x", Valid: true}, Any: 1}
+	if err := nextStruct(t, &got, sqlmock.NewRows([]string{"blob", "created", "any"}).AddRow(nil, nil, nil)); err != nil {
 		t.Fatal(err)
 	}
-	if got.Count != 0 || got.Created.Valid || got.Blob != nil {
-		t.Errorf("NULL stores the zero value, got %+v", got)
+	if got.Created.Valid || got.Blob != nil || got.Any != nil {
+		t.Errorf("NULL is nil, got %+v", got)
+	}
+	for _, column := range []string{"count", "label", "doc"} {
+		got = scanReaderShapes{Count: 3, Label: "keep"}
+		err := nextStruct(t, &got, sqlmock.NewRows([]string{column}).AddRow(nil))
+		if err == nil || !strings.Contains(err.Error(), `column "`+column+`": converting NULL to `) {
+			t.Errorf("%s: error = %v, want one that refuses NULL and names the column", column, err)
+		}
+		if got.Count != 3 || got.Label != "keep" {
+			t.Errorf("%s: a value was stored in place of NULL: %+v", column, got)
+		}
 	}
 }
 
@@ -297,5 +310,36 @@ func TestRecordsReader_StructTargetIntegerFieldsOverNumericTextWithScale(t *test
 	}
 	if got != (totals{Total: 9007199254740993, Big: 9007199254740993}) {
 		t.Errorf("got %+v", got)
+	}
+}
+
+// A NUMERIC just below MinInt64 is an error in an integer field, not MinInt64; the
+// bound itself is stored.
+func TestRecordsReader_StructTargetIntegerFieldsRefuseNumericOutOfRange(t *testing.T) {
+	type total struct{ Total int64 }
+	col := sqlmock.NewColumn("Total").OfType("NUMERIC", float64(0))
+	for _, tt := range []struct {
+		text    string
+		want    int64
+		wantErr bool
+	}{
+		{"-9223372036854775808", math.MinInt64, false},
+		{"-9223372036854775808.00", math.MinInt64, false},
+		{"-9223372036854775809", 0, true},
+		{"-9223372036854775809.00", 0, true},
+	} {
+		t.Run(tt.text, func(t *testing.T) {
+			var got total
+			err := nextStruct(t, &got, sqlmock.NewRowsWithColumnDefinition(col).AddRow(tt.text))
+			if tt.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "out of range") || got.Total != 0 {
+					t.Errorf("got %+v, %v; want an out of range error and nothing stored", got, err)
+				}
+				return
+			}
+			if err != nil || got.Total != tt.want {
+				t.Errorf("got %+v, %v; want %d", got, err, tt.want)
+			}
+		})
 	}
 }

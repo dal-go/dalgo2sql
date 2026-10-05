@@ -33,7 +33,7 @@ func TestKeyPathNames_SQLiteStatementText(t *testing.T) {
 		"update":               "UPDATE `Order Details` SET\n\t`Unit Price` = ?\n\tWHERE `Order ID` = ?",
 		"update-multi":         "UPDATE `Order Details` SET\n\t`Unit Price` = ?\n\tWHERE `Order ID` = ?",
 		"delete":               "DELETE FROM `Order Details` WHERE `Order ID` = ?",
-		"delete-multi":         "DELETE FROM `Order Details` WHERE `Order ID` = ?",
+		"delete-multi":         "DELETE FROM `Order Details` WHERE `Order ID` IN (?, ?)",
 	}
 	if len(want) != len(keyPathOps) {
 		t.Fatalf("%d expectations for %d operations", len(want), len(keyPathOps))

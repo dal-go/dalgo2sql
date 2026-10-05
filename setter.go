@@ -17,11 +17,11 @@ func (t transaction) Set(ctx context.Context, record dalrecord.Record) error {
 }
 
 func (dtb *database) SetMulti(ctx context.Context, records []dalrecord.Record) error {
-	err := dtb.RunReadwriteTransaction(ctx, func(ctx context.Context, tx dal.ReadwriteTransaction) error {
-		return setMulti(ctx, dtb.options, records, dtb.db.Query, dtb.db.ExecContext)
+	// One transaction, and every write runs in it: a failure on a later record
+	// rolls back the earlier ones.
+	return dtb.RunReadwriteTransaction(ctx, func(ctx context.Context, tx dal.ReadwriteTransaction) error {
+		return tx.SetMulti(ctx, records)
 	})
-	return err
-
 }
 
 func (t transaction) SetMulti(ctx context.Context, records []dalrecord.Record) error {
@@ -32,6 +32,9 @@ func setSingle(ctx context.Context, options DbOptions, record dalrecord.Record, 
 	// The existence check below sends a statement before the write is built, so
 	// the names the write will carry are checked first.
 	if err := options.checkRecordNames(record); err != nil {
+		return err
+	}
+	if err := options.checkRecordColumns(record, updateOperation); err != nil {
 		return err
 	}
 	key := record.Key()
@@ -60,6 +63,9 @@ func setMulti(ctx context.Context, options DbOptions, records []dalrecord.Record
 	// by one, outside a transaction on a database handle.
 	for i, record := range records {
 		if err := options.checkRecordNames(record); err != nil {
+			return fmt.Errorf("failed to set record #%d of %d: %w", i+1, len(records), err)
+		}
+		if err := options.checkRecordColumns(record, updateOperation); err != nil {
 			return fmt.Errorf("failed to set record #%d of %d: %w", i+1, len(records), err)
 		}
 	}

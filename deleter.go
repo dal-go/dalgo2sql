@@ -63,19 +63,13 @@ func deleteMulti(ctx context.Context, options DbOptions, keys []*record.Key, exe
 	}
 	var prevRecordset string
 	var tableKeys []*record.Key
-	deleteByKeys := func(_ string, keys []*record.Key) error {
+	// The keys of one recordset are deleted by one statement: the key's own, or an
+	// IN statement for several.
+	deleteByKeys := func(keys []*record.Key) error {
 		if len(keys) == 1 {
 			return deleteSingle(ctx, options, keys[0], exec)
 		}
-		for _, key := range keys {
-			if err := deleteSingle(ctx, options, key, exec); err != nil {
-				return err
-			}
-		}
-		if err := deleteMultiInSingleTable(ctx, options, keys, exec); err != nil {
-			return err
-		}
-		return nil // TODO: code above commented out as tests are failing for RAMSQL driver.
+		return deleteMultiInSingleTable(ctx, options, keys, exec)
 	}
 	for i, key := range keys {
 		recordset := getRecordsetName(key)
@@ -84,7 +78,7 @@ func deleteMulti(ctx context.Context, options DbOptions, keys []*record.Key, exe
 			continue
 		}
 		if prevRecordset != "" {
-			if err := deleteByKeys(prevRecordset, tableKeys); err != nil {
+			if err := deleteByKeys(tableKeys); err != nil {
 				return err
 			}
 		}
@@ -93,7 +87,7 @@ func deleteMulti(ctx context.Context, options DbOptions, keys []*record.Key, exe
 		tableKeys[0] = key
 	}
 	if len(tableKeys) > 0 {
-		if err := deleteByKeys(prevRecordset, tableKeys); err != nil {
+		if err := deleteByKeys(tableKeys); err != nil {
 			return err
 		}
 	}

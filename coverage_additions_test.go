@@ -11,6 +11,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/dal-go/dalgo/dal"
 	"github.com/dal-go/record"
+	"github.com/dal-go/record/update"
 )
 
 // --- transaction.Exists / transaction.GetMulti ---------------------------
@@ -754,7 +755,7 @@ func TestUpdater_Errors(t *testing.T) {
 		// no recordsets and no top-level PrimaryKey -> PrimaryKeyFieldNames returns nil
 		key := record.NewKeyWithID("users", "u1")
 		// update without primary key -> error
-		err = db.Update(ctx, key, nil)
+		err = db.Update(ctx, key, []update.Update{update.ByFieldName("name", "n")})
 		if err == nil {
 			t.Errorf("expected error for missing primary key")
 		}
@@ -772,7 +773,7 @@ func TestUpdater_Errors(t *testing.T) {
 			},
 		})).(*database)
 		key := record.NewKeyWithID("users", "u1")
-		err = db.Update(ctx, key, nil)
+		err = db.Update(ctx, key, []update.Update{update.ByFieldName("name", "n")})
 		if !errors.Is(err, dal.ErrNotImplementedYet) {
 			t.Errorf("expected ErrNotImplementedYet, got %v", err)
 		}
@@ -882,8 +883,6 @@ func TestDeleter_MultiInSingleTable_CustomPK(t *testing.T) {
 		record.NewKeyWithID("users", "u1"),
 		record.NewKeyWithID("users", "u2"),
 	}
-	mock.ExpectExec("DELETE FROM users WHERE uid = ?").WithArgs("u1").WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec("DELETE FROM users WHERE uid = ?").WithArgs("u2").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("DELETE FROM users WHERE uid IN (?, ?)").WithArgs("u1", "u2").WillReturnResult(sqlmock.NewResult(0, 2))
 	if err := db.DeleteMulti(ctx, keys); err != nil {
 		t.Errorf("unexpected: %v", err)
@@ -902,8 +901,6 @@ func TestDeleter_MultiInSingleTable_ExecError(t *testing.T) {
 		record.NewKeyWithID("users", "u1"),
 		record.NewKeyWithID("users", "u2"),
 	}
-	mock.ExpectExec("DELETE FROM users WHERE ID = ?").WithArgs("u1").WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec("DELETE FROM users WHERE ID = ?").WithArgs("u2").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("DELETE FROM users WHERE ID IN (?, ?)").WithArgs("u1", "u2").WillReturnError(errors.New("boom"))
 	if err := db.DeleteMulti(ctx, keys); err == nil {
 		t.Errorf("expected error from multi-in-single-table exec")

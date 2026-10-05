@@ -58,6 +58,9 @@ func renderUpdateNames(options DbOptions, key *record.Key, updates []update.Upda
 }
 
 func updateSingle(ctx context.Context, options DbOptions, execStatement statementExecutor, key *record.Key, updates []update.Update, _ ...dal.Precondition) error {
+	if len(updates) == 0 {
+		return fmt.Errorf("%w: no updates were given", ErrNoFieldsToWrite)
+	}
 	target, err := renderUpdateNames(options, key, updates)
 	if err != nil {
 		return err
@@ -95,6 +98,9 @@ func updateSingle(ctx context.Context, options DbOptions, execStatement statemen
 }
 
 func updateMulti(ctx context.Context, options DbOptions, execStatement statementExecutor, keys []*record.Key, updates []update.Update, preconditions ...dal.Precondition) error {
+	if len(updates) == 0 {
+		return fmt.Errorf("%w: no updates were given", ErrNoFieldsToWrite)
+	}
 	// The whole batch is checked before its first statement: keys are updated
 	// one by one, outside a transaction on a database handle.
 	for i, key := range keys {

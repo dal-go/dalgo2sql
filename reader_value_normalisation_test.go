@@ -355,6 +355,8 @@ func TestReaders_SQLiteResultsUnchanged(t *testing.T) {
 		INSERT INTO blobs VALUES (1, x'7B7D', x'3133', x'3133'), (2, x'5B5D', x'616263', x'616263');
 		CREATE TABLE texts (id INTEGER PRIMARY KEY, n NUMERIC);
 		INSERT INTO texts VALUES (1, 'abc');
+		CREATE TABLE specials (id INTEGER PRIMARY KEY, n NUMERIC, dec DECIMAL);
+		INSERT INTO specials VALUES (1, 'NaN', 'NaN'), (2, 'Infinity', 'Infinity'), (3, '-Infinity', '-Infinity');
 		CREATE TABLE reals (id INTEGER PRIMARY KEY, amount REAL);
 		INSERT INTO reals VALUES (1, 1.5), (2, 'abc-sentinel');`)
 
@@ -411,9 +413,10 @@ func TestReaders_SQLiteResultsUnchanged(t *testing.T) {
 		if got, want := readAllRecords(t, rr, "docb"), []any{"{}", "[]"}; !reflect.DeepEqual(got, want) {
 			t.Errorf("records reader docb: got %v, want %v", got, want)
 		}
-		// The one declared behaviour change: a bare NUMERIC column holding a BLOB
-		// of decimal text is now a float64; DECIMAL is not NUMERIC and keeps the
-		// text. Text that is not a number stays a string.
+		// The first declared behaviour change of the records reader (the README,
+		// "NUMERIC result values", lists both): a bare NUMERIC column holding a BLOB
+		// of decimal text is a float64; DECIMAL is not NUMERIC and keeps the text.
+		// Text that is not a number stays a string. The second is the next test.
 		for column, want := range map[string][]any{
 			"n":   {float64(13), "abc"},
 			"dec": {"13", "abc"},
@@ -425,6 +428,36 @@ func TestReaders_SQLiteResultsUnchanged(t *testing.T) {
 			if got := readAllRecords(t, rr, column); !reflect.DeepEqual(got, want) {
 				t.Errorf("records reader %s: got %v, want %v", column, got, want)
 			}
+		}
+	})
+
+	// The second declared behaviour change of the records reader: the texts NaN,
+	// Infinity and -Infinity in a bare NUMERIC column are float64 values; in a
+	// DECIMAL column, which is not NUMERIC, they stay text.
+	t.Run("NaN and the infinities in a NUMERIC column", func(t *testing.T) {
+		rr, err := getRecordsReader(ctx, dal.NewTextQuery("SELECT n FROM specials ORDER BY id", nil), raw.QueryContext)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := readAllRecords(t, rr, "n")
+		if len(got) != 3 {
+			t.Fatalf("got %v", got)
+		}
+		if f, ok := got[0].(float64); !ok || !math.IsNaN(f) {
+			t.Errorf("NaN: got %T(%v)", got[0], got[0])
+		}
+		if f, ok := got[1].(float64); !ok || !math.IsInf(f, 1) {
+			t.Errorf("Infinity: got %T(%v)", got[1], got[1])
+		}
+		if f, ok := got[2].(float64); !ok || !math.IsInf(f, -1) {
+			t.Errorf("-Infinity: got %T(%v)", got[2], got[2])
+		}
+		rr, err = getRecordsReader(ctx, dal.NewTextQuery("SELECT dec FROM specials ORDER BY id", nil), raw.QueryContext)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, want := readAllRecords(t, rr, "dec"), []any{"NaN", "Infinity", "-Infinity"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("DECIMAL: got %v, want %v", got, want)
 		}
 	})
 

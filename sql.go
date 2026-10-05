@@ -1,6 +1,7 @@
 package dalgo2sql
 
 import (
+	"errors"
 	"fmt"
 	dalrecord "github.com/dal-go/record"
 	"reflect"
@@ -16,6 +17,13 @@ const (
 	insertOperation operation = iota
 	updateOperation
 )
+
+// ErrNoFieldsToWrite is wrapped by the error a key write returns when there is
+// nothing to write, before any statement is sent: an Update or UpdateMulti with no
+// updates; a Set or SetMulti of a record with no field that is not a column of the
+// primary key; an Insert or InsertMulti of a record with neither a key ID nor a
+// field. Test for it with errors.Is.
+var ErrNoFieldsToWrite = errors.New("no fields to write")
 
 type query struct {
 	text string
@@ -151,13 +159,16 @@ func buildSingleRecordQuery(o operation, options DbOptions, record dalrecord.Rec
 
 	switch o {
 	case insertOperation:
+		if len(cols) == 0 {
+			return query{}, fmt.Errorf("%w: the record of recordset %s has neither a key ID nor a field to insert", ErrNoFieldsToWrite, collection)
+		}
 		q.text += fmt.Sprintf("(%v) VALUES (%v)",
 			strings.Join(cols, ", "),
 			strings.Join(argPlaceholders, ", "),
 		)
 	case updateOperation:
 		if setColsCount == 0 {
-			panic(fmt.Sprintf("no fields to updateOperation for: '%s'", collection))
+			return query{}, fmt.Errorf("%w: the record of recordset %s has no field that is not a column of its primary key to update", ErrNoFieldsToWrite, collection)
 		}
 		var pkConditions []string
 		processPrimaryKey(pk, key, func(i int, pkName string, v any) {

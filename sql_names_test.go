@@ -228,9 +228,25 @@ func TestRecordsetIdentifier(t *testing.T) {
 	})
 
 	t.Run("a nested key gives the collections joined as getRecordsetName does", func(t *testing.T) {
-		got, err := (DbOptions{}).recordsetIdentifier(lines)
+		declared := DbOptions{Recordsets: map[string]*Recordset{"lines_orders": NewRecordset("lines_orders", Table, nil)}}
+		got, err := declared.recordsetIdentifier(lines)
 		if err != nil || got != getRecordsetName(lines) || got != "lines_orders" {
 			t.Errorf("= %q, %v; want %q", got, err, "lines_orders")
+		}
+	})
+
+	t.Run("a nested key is refused unless a recordset is declared under the joined name", func(t *testing.T) {
+		for name, options := range map[string]DbOptions{
+			"no recordsets":                     {},
+			"only the leaf and the parent":      {Recordsets: map[string]*Recordset{"lines": NewRecordset("lines", Table, nil), "orders": NewRecordset("orders", Table, nil)}},
+			"the names in the wrong order":      {Recordsets: map[string]*Recordset{"orders_lines": NewRecordset("orders_lines", Table, nil)}},
+			"a nil entry under the joined name": {Recordsets: map[string]*Recordset{"lines_orders": nil}},
+			"sqlite":                            {StructuredQueryDialect: "sqlite"},
+		} {
+			got, err := options.recordsetIdentifier(lines)
+			if got != "" || !errors.Is(err, ErrUndeclaredNestedRecordset) || !strings.Contains(err.Error(), `"lines_orders"`) {
+				t.Errorf("%s: = %q, %v; want a refusal wrapping ErrUndeclaredNestedRecordset that names lines_orders", name, got, err)
+			}
 		}
 	})
 
@@ -287,7 +303,10 @@ func TestRecordsetIdentifier(t *testing.T) {
 	t.Run("a dialect that quotes quotes the joined name once", func(t *testing.T) {
 		parent := dalrecord.NewKeyWithID("Order Details", "o1")
 		child := dalrecord.NewKeyWithParentAndID(parent, "Line Items", "l1")
-		got, err := (DbOptions{StructuredQueryDialect: "sqlite"}).recordsetIdentifier(child)
+		declared := DbOptions{StructuredQueryDialect: "sqlite", Recordsets: map[string]*Recordset{
+			"Line Items_Order Details": NewRecordset("Line Items_Order Details", Table, nil),
+		}}
+		got, err := declared.recordsetIdentifier(child)
 		if err != nil || got != "`Line Items_Order Details`" {
 			t.Errorf("= %q, %v", got, err)
 		}
