@@ -135,7 +135,11 @@ func getSingle(_ context.Context, options DbOptions, record dalrecord.Record, ex
 		return notFound
 	}
 	if isMapData(record.Data()) {
+		record.SetError(nil)
 		err = scanRowIntoMapWithOptions(rows, record.Data(), false, options)
+		if err == nil {
+			record.SetError(dalrecord.ErrNoError)
+		}
 	} else {
 		err = rowIntoRecord(rows, record, false)
 	}

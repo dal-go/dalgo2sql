@@ -164,6 +164,35 @@ func TestDefaultGetAndGetMultiKeepTheirHistoricalNullMapBehavior(t *testing.T) {
 	}
 }
 
+func TestSingleMapGetAfterNotFoundClearsPreviousRecordError(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := openTestSQLiteDB(t, `CREATE TABLE widgets (id TEXT PRIMARY KEY, name TEXT)`)
+	db := NewDatabase(sqlDB, newSchema(), DbOptions{
+		Recordsets: map[string]*Recordset{
+			"widgets": NewRecordset("widgets", Table, []dal.FieldRef{dal.Field("id")}),
+		},
+	})
+	record := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("widgets", "new"), map[string]any{})
+	if err := db.Get(ctx, record); !errors.Is(err, dalrecord.ErrRecordNotFound) {
+		t.Fatalf("initial Get error = %v, want record-not-found", err)
+	}
+	if record.Exists() {
+		t.Fatal("record should remain not found before insertion")
+	}
+	if _, err := sqlDB.Exec(`INSERT INTO widgets VALUES ('new', 'inserted')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Get(ctx, record); err != nil {
+		t.Fatalf("Get after insert: %v", err)
+	}
+	if !record.Exists() || record.Error() != nil {
+		t.Fatalf("successful reused record state: exists=%v error=%v", record.Exists(), record.Error())
+	}
+	if got := record.Data().(map[string]any)["name"]; got != "inserted" {
+		t.Fatalf("record name = %#v, want inserted", got)
+	}
+}
+
 func TestNormalizeReadMapValueUsesDialectAndColumnType(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := openTestSQLiteDB(t, `CREATE TABLE typed (blob_value BLOB, text_value TEXT, number_value INTEGER)`)
