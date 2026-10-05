@@ -70,7 +70,15 @@ arguments of every supported shape are in `testdata/postgres`.
   bytes refused). Pass Go integers for whole numbers: a whole number that arrives as
   a `float64` binds as `numeric`, which is correct but cannot use an index on an
   integer column. A constant that does not match its column (a number against text)
-  is a server error, not an empty result.
+  is a server error, not an empty result. A `float32` or `float64` compared with a column
+  the catalog types as `real` (float4), in a comparison or in an `IN` list, is bound as
+  `?::real` from its decimal text, so the comparison runs in the column's own type and a
+  stored `0.1` is found by `0.1`; as a `numeric` it is not the same number as the float4
+  nearest to 0.1, and an equality finds nothing. `double precision` and `numeric` columns
+  keep the `numeric` binding, and so does a float a real cannot hold (past about 3.4e38 or
+  below the smallest normal real, about 1.2e-38), which the server would refuse as out of
+  range, a column whose type the catalog gives by the name of a domain over `real`, and a
+  float that is not compared with a column (arithmetic, `HAVING` on an aggregate).
 - **Identifier case** is `DbOptions.IdentifierCase`: `IdentifierCaseExact` (the
   default) writes names as the query spells them, for databases created with quoted
   mixed-case names; `IdentifierCaseFoldLower` writes them lower-cased, for databases
@@ -103,7 +111,10 @@ arguments of every supported shape are in `testdata/postgres`.
   (`CanExecuteJoin`) when each ON pair has the same type category (numbers with
   numbers, text with text) or the same type, on the database handle as in a
   transaction; it is declined when the types differ or a key's type has no usable
-  equality (json, xml, geometric types, `oid` and the `reg*` types), when the
+  equality (json, xml, geometric types, `oid` and the `reg*` types), when two text keys
+  have different collations of their own (PostgreSQL cannot choose between them and
+  refuses the comparison, SQLSTATE 42P22; a collation of its own against the database's
+  default, or the same collation, is accepted), when the
   catalog does not hold a key, or when the compiler cannot write the query.
   `JoinFields` lists a table's columns from the catalog, under the names the catalog
   has, whatever the identifier case.
@@ -132,6 +143,19 @@ arguments of every supported shape are in `testdata/postgres`.
   two expressions of a join one output name (`a.id` and `r.id`) is refused with
   `join_field: duplicate output name`, the error DALgo's generic engine gives for the
   same query, with the SQLite dialect too.
+- **A record is keyed by the position of its key column, never by a name two columns
+  share.** Where the reader knows the column it takes that position: the catalog's key of a
+  select-all (its position among the source's columns, which a select-all returns in table
+  order), and the first item of a select list that is the key's own field. Where only a
+  name says which column is the key (a declared key on a select-all, a select-all over
+  joins) the column of exactly that name wins over one that is the same name folded, so on
+  a fold-lower mount the key `id` is not the column `Id`, whichever comes first in the
+  table, and of several columns that are only the name folded the first is taken. A select
+  list over one source that gives one output name to two different expressions
+  (`AlbumId, Title AS AlbumId`) is refused before any statement, as it is for a join, with
+  every dialect and compiler (`columns[1]: duplicate output name "AlbumId"`); one
+  expression written twice is one column asked twice and is left alone. The names a
+  wildcard lists are not known before the statement, so they are not compared.
 - **Records are keyed by the source's primary key.** The records reader keys each record
   by the primary key column of the recordset declared for the source in
   `DbOptions.Recordsets` (else `DbOptions.PrimaryKey`). With no key configured, the key is
@@ -212,6 +236,38 @@ Compared with dalgo2sql v0.20, SQLite results are unchanged in the recordset
 reader. In the records reader a bare `NUMERIC` column changes in two cases: a BLOB
 holding decimal text, and the texts `NaN`, `Infinity` and `-Infinity`, become
 `float64`. A `DECIMAL` column is not `NUMERIC` and keeps its text.
+
+## NULL in a recordset
+
+The recordset readers hold each result column in a column that marks its NULL cells. A NULL
+is `nil` from the column's `GetValue` and `Values()` and from `GetValueByIndex`,
+`GetValueByName` and `Data()` of a row, for every column type the readers build (text,
+integers, floats, booleans, times, bytes, the `sql.Null*` types and the columns a SQLite
+view gives no type). It used to be the zero value of the column's Go type (0, false, an
+empty string, the zero time), which a cell can also hold, so a consumer could not tell a
+NULL from a stored zero; the records reader has always returned `nil`. A consumer that
+relied on the zero value now gets `nil` and tests for it.
+
+A column keeps its Go type: `ValueType()` and `DbType()` answer as before, so a consumer
+that aligns numbers by `ValueType()` still does, and `DefaultValue()` is still the zero
+value. `IsBitmap()` is false for a boolean column, whose values are held in a slice. A
+value that does not fit its column is an error of `Next` that names the column and the
+Go types, never the cell, where it was a panic. The integer columns of `sql.NullInt16`
+and `sql.NullInt32` take the `int64` a driver delivers when the column holds it, and the 0
+and 1 of a SQLite `BOOLEAN` column are `false` and `true`. SQLite takes the type of a
+column from the first row of the result: a result whose first row holds a NULL has no
+column types, and its columns are text columns, as before.
+
+## Reading a record: the target and the key
+
+A read (`Get`, `GetMulti`) fills a pointer to a struct with exported fields, a map with
+string keys whose elements hold any value (a map by value must be made; a pointer to a nil
+map is filled), or a pointer to a scalar or a `sql.Scanner`. A record with no data, a struct
+given by value, a nil pointer, a struct with a field that is not exported, a nil map, a map
+whose keys are not strings or whose elements cannot hold every column value, and a batch
+that mixes map and struct data are errors wrapping `dal.ErrNotSupported`, returned before
+any statement. Every operation that takes a key returns an error wrapping
+`dal.ErrNotSupported` for a nil key.
 
 ## End2end - is a separate module
 

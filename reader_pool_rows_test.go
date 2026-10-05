@@ -98,9 +98,9 @@ func TestTransactionRecordsetReadClosesItsRowsWhenAColumnTypeIsUnsupported(t *te
 }
 
 // The records reader is the twin of the recordset reader: a read that fails returns a literal
-// nil reader with its error, on every entry point. A typed nil pointer in the interface is not
-// nil, so a caller who tests the reader instead of the error, or closes it anyway, gets a
-// reader whose Close panics.
+// nil reader with its error, on every entry point. The reader the failed read allocated holds
+// no rows, and its Close does not panic, but it is not nil, so a caller who tests the reader
+// instead of the error would take it for a result.
 func TestARecordsReadThatFailsReturnsNoReader(t *testing.T) {
 	ctx := context.Background()
 	textQuery := dal.NewTextQuery("SELECT * FROM Album", nil)
