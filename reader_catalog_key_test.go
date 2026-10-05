@@ -165,6 +165,76 @@ func TestPostgresRecordsReaderKeysAJoinByTheCatalogPrimaryKeyOfTheBase(t *testin
 	}
 }
 
+// The key of a join's records is the base source's alone. When the base has no primary key the
+// rows are keyed by ordinal, whatever key the joined source has: it is never taken for the
+// base's, in a select list or in a select-all, and the statement is the one the read always
+// sent (no key column is added).
+func TestPostgresRecordsReaderKeysAJoinByOrdinalWhenOnlyTheJoinedSourceHasAPrimaryKey(t *testing.T) {
+	const from = ` FROM "album" AS "a" INNER JOIN "artist" AS "r" ON ("a"."artist_id" = "r"."id")`
+	for _, tc := range []struct {
+		name      string
+		query     dal.StructuredQuery
+		statement string
+		columns   []string
+		rows      [][]driver.Value
+	}{
+		{"a select list", pgJoinKeyQuery(typedTestColumn(typedTestQualified("a", "title"), ""), typedTestColumn(typedTestQualified("r", "name"), "")),
+			`SELECT "a"."title", "r"."name"` + from, []string{"title", "name"},
+			[][]driver.Value{{"Jazz", "Queen"}, {"Rock", "Queen"}, {"Pop", "Abba"}}},
+		{"a select-all", pgJoinKeyQuery(),
+			`SELECT *` + from, []string{"id", "title", "artist_id", "id", "name"},
+			[][]driver.Value{{int64(1), "Jazz", int64(101), int64(101), "Queen"}, {int64(2), "Rock", int64(101), int64(101), "Queen"}, {int64(3), "Pop", int64(102), int64(102), "Abba"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock := newPostgresReadMock(t)
+			mock.ExpectQuery(postgresCatalogQuery(2)).WithArgs(`"album"`, `"artist"`).WillReturnRows(keyCatalogRelations(
+				keyRelation{`"album"`, []keyColumn{{"id", false}, {"title", false}, {"artist_id", false}}},
+				keyRelation{`"artist"`, []keyColumn{{"id", true}, {"name", false}}},
+			))
+			result := sqlmock.NewRows(tc.columns)
+			for _, row := range tc.rows {
+				result.AddRow(row...)
+			}
+			mock.ExpectQuery(tc.statement).WillReturnRows(result)
+			reader, err := getRecordsReaderWithOptions(context.Background(), tc.query, db.QueryContext, DbOptions{StructuredQueryDialect: "postgres"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			keys, _ := readKeys(t, mock, reader)
+			if want := []any{"0", "1", "2"}; !reflect.DeepEqual(keys, want) {
+				t.Errorf("keys = %v, want the ordinals %v: the joined source's key is not the base's", keys, want)
+			}
+		})
+	}
+}
+
+// A select-all over a join cannot take a key column, so the record is keyed from the base's own
+// column of the key's name, by its position among the columns that lead the result. Both
+// sources have a column of that name here, and the base's value is the key where the data
+// map, which the later column of a name wins, holds the joined source's.
+func TestPostgresRecordsReaderKeysASelectAllJoinByTheCatalogKeyOfTheBaseByPosition(t *testing.T) {
+	db, mock := newPostgresReadMock(t)
+	mock.ExpectQuery(postgresCatalogQuery(2)).WithArgs(`"album"`, `"artist"`).WillReturnRows(keyCatalogRelations(
+		keyRelation{`"album"`, []keyColumn{{"title", false}, {"id", true}, {"artist_id", false}}},
+		keyRelation{`"artist"`, []keyColumn{{"id", true}, {"name", false}}},
+	))
+	mock.ExpectQuery(`SELECT * FROM "album" AS "a" INNER JOIN "artist" AS "r" ON ("a"."artist_id" = "r"."id")`).
+		WillReturnRows(sqlmock.NewRows([]string{"title", "id", "artist_id", "id", "name"}).
+			AddRow("Jazz", int64(1), int64(101), int64(101), "Queen").
+			AddRow("Rock", int64(2), int64(101), int64(101), "Queen"))
+	reader, err := getRecordsReaderWithOptions(context.Background(), pgJoinKeyQuery(), db.QueryContext, DbOptions{StructuredQueryDialect: "postgres"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys, data := readKeys(t, mock, reader)
+	if want := []any{int64(1), int64(2)}; !reflect.DeepEqual(keys, want) {
+		t.Errorf("keys = %v, want the base's id %v, not the joined source's", keys, want)
+	}
+	if got := data[0]["id"]; got != int64(101) {
+		t.Errorf("data id = %v, want the later column's value 101", got)
+	}
+}
+
 // A source with no primary key, a composite one, a view (the catalog reports no primary key
 // for it), and a key the mount cannot write, key their rows by ordinal: no two rows of a
 // result carry the same key. The statements are the ones such a read always sent.
