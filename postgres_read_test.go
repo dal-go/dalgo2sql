@@ -134,7 +134,7 @@ func TestPostgresReaderRefusesWhatItCannotRunOnTheServer(t *testing.T) {
 		mock.ExpectQuery(postgresSuggestionQuery).WithArgs("").WillReturnRows(newPostgresSuggestionRows([2]string{"public", "Album"}, [2]string{"public", "Artist"}))
 		_, err := getReaderBaseWithOptions(ctx, typedTestFrom("album", "").NewQuery().SelectColumns(), db.QueryContext, DbOptions{StructuredQueryDialect: "postgres"})
 		var notFound *TableNotFoundError
-		if !errors.As(err, &notFound) || notFound.Suggestion.Name != "Album" {
+		if !errors.As(err, &notFound) || notFound.SuggestedName != "Album" {
 			t.Fatalf("error = %v, want a not-found error that suggests Album", err)
 		}
 		if want := `table "album" not found; did you mean "Album"? Table names are case-sensitive.`; err.Error() != want {
@@ -242,6 +242,116 @@ func TestPostgresReaderOrdersAKeysOnlyQueryByItsPrimaryKey(t *testing.T) {
 			_ = reader.Close()
 			if err := mock.ExpectationsWereMet(); err != nil {
 				t.Fatal(err)
+			}
+		})
+	}
+}
+
+// A primary key is configured as the caller spells it, and under fold-lower the server
+// returns, and the catalog lists, the lower-case name. The reader matches the two by
+// their folded form, as every other check of the mount does, so each record is keyed.
+func TestPostgresRecordsReaderKeysRecordsByTheFoldedPrimaryKey(t *testing.T) {
+	ctx := context.Background()
+	catalog := func(relation string) *sqlmock.Rows {
+		return sqlmock.NewRows(postgresCatalogColumns).
+			AddRow(relation, "id", "integer", "N", int64(23), int64(0), true, false).
+			AddRow(relation, "title", "text", "S", int64(25), int64(0), false, false)
+	}
+	for _, tc := range []struct {
+		name       string
+		identifier IdentifierCase
+		relation   string
+		q          dal.StructuredQuery
+		statement  string
+		columns    []string
+		row        []driver.Value
+		wantKey    any
+		wantData   map[string]any
+	}{
+		{"a select-all", IdentifierCaseFoldLower, `"album"`, typedTestFrom("Album", "").NewQuery().SelectColumns(),
+			`SELECT * FROM "album"`, []string{"id", "title"}, []driver.Value{int64(7), "Seven"}, int64(7), map[string]any{"id": int64(7), "title": "Seven"}},
+		{"a keys-only read", IdentifierCaseFoldLower, `"album"`, typedTestFrom("Album", "").NewQuery().SelectKeysOnly(reflect.Int64),
+			`SELECT * FROM "album" ORDER BY "id" ASC`, []string{"id", "title"}, []driver.Value{int64(7), "Seven"}, int64(7), map[string]any{"id": int64(7), "title": "Seven"}},
+		{"a wildcard that leaves the key out by another spelling is keyed from the helper column", IdentifierCaseFoldLower, `"album"`, typedTestFrom("Album", "").NewQuery().SelectColumns(dal.AllColumnsExcept("Id")),
+			`SELECT "title", "id" AS "__dalgo_record_id" FROM "album"`, []string{"title", "__dalgo_record_id"}, []driver.Value{"Seven", int64(7)}, int64(7), map[string]any{"title": "Seven"}},
+		{"a wildcard that keeps the key needs no helper column", IdentifierCaseFoldLower, `"album"`, typedTestFrom("Album", "").NewQuery().SelectColumns(dal.AllColumnsExcept("TITLE")),
+			`SELECT "id" FROM "album"`, []string{"id"}, []driver.Value{int64(7)}, int64(7), map[string]any{"id": int64(7)}},
+		{"a field the query spells as the key but for its case", IdentifierCaseFoldLower, `"album"`, typedTestFrom("Album", "").NewQuery().SelectColumns(typedTestColumn(typedTestField("id"), "")),
+			`SELECT "id" FROM "album"`, []string{"id"}, []driver.Value{int64(7)}, int64(7), map[string]any{"id": int64(7)}},
+		{"the exact mode matches names as they are: ID is not id", IdentifierCaseExact, `"album"`, typedTestFrom("album", "").NewQuery().SelectColumns(),
+			`SELECT * FROM "album"`, []string{"id", "title"}, []driver.Value{int64(7), "Seven"}, recordIDHelperColumn, map[string]any{"id": int64(7), "title": "Seven"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock := newPostgresReadMock(t)
+			mock.ExpectQuery(postgresCatalogQuery(1)).WithArgs(tc.relation).WillReturnRows(catalog(tc.relation))
+			mock.ExpectQuery(tc.statement).WillReturnRows(sqlmock.NewRows(tc.columns).AddRow(tc.row...))
+			options := DbOptions{StructuredQueryDialect: "postgres", IdentifierCase: tc.identifier, PrimaryKey: []string{"ID"}}
+			reader, err := getRecordsReaderWithOptions(ctx, tc.q, db.QueryContext, options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = reader.Close() }()
+			record, err := reader.Next()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := record.Key().ID; got != tc.wantKey {
+				t.Fatalf("record key = %v, want %v", got, tc.wantKey)
+			}
+			if got := record.Data(); !reflect.DeepEqual(got, tc.wantData) {
+				t.Fatalf("record data = %#v, want %#v", got, tc.wantData)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestRecordNameFold(t *testing.T) {
+	native := nativeCompilerFunc(func(dal.StructuredQuery, NativeJoinHintFragments) (string, []any, error) { return "", nil, nil })
+	for _, tc := range []struct {
+		name    string
+		options DbOptions
+		folds   bool
+	}{
+		{"fold-lower on the typed PostgreSQL compiler folds", DbOptions{StructuredQueryDialect: "postgres", IdentifierCase: IdentifierCaseFoldLower}, true},
+		{"the exact mode does not", DbOptions{StructuredQueryDialect: "postgres", IdentifierCase: IdentifierCaseExact}, false},
+		{"the default mode does not", DbOptions{StructuredQueryDialect: "postgres"}, false},
+		{"an identifier case the package does not define does not: the read fails first", DbOptions{StructuredQueryDialect: "postgres", IdentifierCase: "upper"}, false},
+		{"a native compiler of the caller's does not", DbOptions{StructuredQueryDialect: "postgres", IdentifierCase: IdentifierCaseFoldLower, NativeStructuredQueryCompiler: native}, false},
+		{"another dialect does not", DbOptions{StructuredQueryDialect: "sqlite", IdentifierCase: IdentifierCaseFoldLower}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := recordNameFold(tc.options).of("Total")
+			if want := map[bool]string{true: "total", false: "Total"}[tc.folds]; got != want {
+				t.Fatalf("the fold gives %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestSelectsIdentityFieldFoldsBothSides(t *testing.T) {
+	fold := nameFold(strings.ToLower)
+	for _, tc := range []struct {
+		name    string
+		columns []dal.Column
+		field   string
+		fold    nameFold
+		want    bool
+	}{
+		{"a field in another case", []dal.Column{{Expression: dal.Field("id")}}, "ID", fold, true},
+		{"the same field, compared as it is", []dal.Column{{Expression: dal.Field("id")}}, "ID", nil, false},
+		{"an alias in another case", []dal.Column{{Expression: dal.Field("Id"), Alias: "ID"}}, "id", fold, true},
+		{"an alias that renames it", []dal.Column{{Expression: dal.Field("Id"), Alias: "other"}}, "id", fold, false},
+		{"a wildcard keeps the column", []dal.Column{{Wildcard: &dal.WildcardProjection{Exclude: []string{"Title"}}}}, "ID", fold, true},
+		{"a wildcard that excludes it in another case does not return it", []dal.Column{{Wildcard: &dal.WildcardProjection{Exclude: []string{"Id"}}}}, "ID", fold, false},
+		{"a wildcard that excludes it in another case, compared as it is", []dal.Column{{Wildcard: &dal.WildcardProjection{Exclude: []string{"Id"}}}}, "ID", nil, true},
+		{"a mask excludes it", []dal.Column{{Wildcard: &dal.WildcardProjection{Exclude: []string{"I*"}}}}, "ID", fold, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := selectsIdentityField(tc.columns, tc.field, tc.fold); got != tc.want {
+				t.Fatalf("selectsIdentityField() = %v, want %v", got, tc.want)
 			}
 		})
 	}

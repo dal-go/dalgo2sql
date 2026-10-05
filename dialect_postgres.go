@@ -375,6 +375,12 @@ const postgresSuggestionQuery = `SELECT n.nspname::text, c.relname::text ` +
 	`ELSE pg_catalog.lower(n.nspname::text) = pg_catalog.lower($1::text) END ` +
 	`ORDER BY n.nspname, c.relname LIMIT 5000`
 
+// suggestSource names the relation the caller most likely meant. On a mount that folds
+// case, only a name the mount can write is a candidate: a stored Album, which no
+// spelling reaches, would be a hint to a name that folds back to the one that was not
+// found. A candidate in the schema the query wrote, spelt in another case, comes
+// first when its name is the one asked: the schema is then the whole mistake. The
+// relation that was asked for, schema and name, is never the hint.
 func (d postgresDialect) suggestSource(ctx context.Context, execute executeQueryFunc, source typedSourceName) (typedSourceName, bool, error) {
 	rows, err := execute(ctx, postgresSuggestionQuery, d.fold(source.Schema))
 	if err != nil {
@@ -391,13 +397,22 @@ func (d postgresDialect) suggestSource(ctx context.Context, execute executeQuery
 		if source.Schema == "" {
 			schema = ""
 		}
+		if d.fold(schema) != schema || d.fold(name) != name {
+			continue // a mount that folds writes it in another form than the stored one
+		}
 		found = append(found, typedSourceName{Schema: schema, Name: name})
 		names = append(names, name)
 	}
 	if err := rows.Err(); err != nil {
 		return typedSourceName{}, false, fmt.Errorf("suggest a table: %w", err)
 	}
-	if nearest := typedNearestName(d.fold(source.Name), names); nearest >= 0 {
+	asked := d.fold(source.Name)
+	for _, candidate := range found {
+		if candidate.Name == asked && candidate.Schema != d.fold(source.Schema) {
+			return candidate, true, nil
+		}
+	}
+	if nearest := typedNearestName(asked, names); nearest >= 0 {
 		return found[nearest], true, nil
 	}
 	return typedSourceName{}, false, nil

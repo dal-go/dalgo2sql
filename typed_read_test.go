@@ -88,10 +88,10 @@ func TestTableNotFoundErrorMessage(t *testing.T) {
 	}{
 		{"a bare name", &TableNotFoundError{Name: "Albm"}, `table "Albm" not found`},
 		{"with a schema", &TableNotFoundError{Schema: "sales", Name: "Albm"}, `table "sales"."Albm" not found`},
-		{"with a hint", &TableNotFoundError{Name: "album", Suggestion: typedSourceName{Name: "Album"}}, `table "album" not found; did you mean "Album"?`},
-		{"with a hint in the schema the query wrote", &TableNotFoundError{Schema: "Sales", Name: "album", Suggestion: typedSourceName{Schema: "sales", Name: "Album"}},
+		{"with a hint", &TableNotFoundError{Name: "album", SuggestedName: "Album"}, `table "album" not found; did you mean "Album"?`},
+		{"with a hint in the schema the query wrote", &TableNotFoundError{Schema: "Sales", Name: "album", SuggestedSchema: "sales", SuggestedName: "Album"},
 			`table "Sales"."album" not found; did you mean "sales"."Album"?`},
-		{"case-sensitive names say so", &TableNotFoundError{Name: "album", Suggestion: typedSourceName{Name: "Album"}, CaseSensitive: true},
+		{"case-sensitive names say so", &TableNotFoundError{Name: "album", SuggestedName: "Album", CaseSensitive: true},
 			`table "album" not found; did you mean "Album"? Table names are case-sensitive.`},
 		{"a very long name is cut", &TableNotFoundError{Name: long}, `table "` + strings.Repeat("n", 80) + `"... not found`},
 		{"a name is quoted, so a hostile one cannot forge a line", &TableNotFoundError{Name: "a\nb\"c"}, `table "a\nb\"c" not found`},
@@ -159,6 +159,24 @@ func TestPostgresSuggestSource(t *testing.T) {
 		{"nothing is near", postgresExact, typedSourceName{Name: "Employee"}, "",
 			newPostgresSuggestionRows([2]string{"public", "Album"}), typedSourceName{}, false},
 		{"no candidates at all", postgresExact, typedSourceName{Name: "Album"}, "", newPostgresSuggestionRows(), typedSourceName{}, false},
+		// The name is right and the schema is spelt in another case: the schema is the
+		// whole mistake, and the candidate's name is the one that was asked for.
+		{"a schema spelt in another case is the hint, though the name is the one asked", postgresExact, typedSourceName{Schema: "Sales", Name: "Album"}, "Sales",
+			newPostgresSuggestionRows([2]string{"sales", "Album"}), typedSourceName{Schema: "sales", Name: "Album"}, true},
+		{"the very relation that was asked for is never the hint", postgresExact, typedSourceName{Schema: "sales", Name: "Album"}, "sales",
+			newPostgresSuggestionRows([2]string{"sales", "Album"}), typedSourceName{}, false},
+		{"a schema in another case wins over a name that is near", postgresExact, typedSourceName{Schema: "Sales", Name: "Album"}, "Sales",
+			newPostgresSuggestionRows([2]string{"sales", "Albums"}, [2]string{"sales", "Album"}), typedSourceName{Schema: "sales", Name: "Album"}, true},
+		// A mount that folds cannot write a stored name that is not in lower case, so
+		// naming it would send the caller to a name every spelling folds away from.
+		{"fold-lower: a stored name the mount cannot write is no hint", postgresFoldLower, typedSourceName{Name: "Album"}, "",
+			newPostgresSuggestionRows([2]string{"public", "Album"}), typedSourceName{}, false},
+		{"fold-lower: a name it can write is still the hint, beside one it cannot", postgresFoldLower, typedSourceName{Name: "Album"}, "",
+			newPostgresSuggestionRows([2]string{"public", "Album"}, [2]string{"public", "albums"}), typedSourceName{Name: "albums"}, true},
+		{"fold-lower: a stored schema the mount cannot write is no hint", postgresFoldLower, typedSourceName{Schema: "SALES", Name: "Albm"}, "sales",
+			newPostgresSuggestionRows([2]string{"Sales", "album"}), typedSourceName{}, false},
+		{"exact: a stored mixed-case name is a fine hint", postgresExact, typedSourceName{Name: "album"}, "",
+			newPostgresSuggestionRows([2]string{"public", "Album"}), typedSourceName{Name: "Album"}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			execute, mock := newPostgresCatalogMock(t)
@@ -242,11 +260,19 @@ func TestTypedFactsForQuery(t *testing.T) {
 		if !errors.As(err, &notFound) || !errors.Is(err, ErrTableNotFound) {
 			t.Fatalf("error = %v, want a *TableNotFoundError", err)
 		}
-		if notFound.Name != "album" || notFound.Schema != "" || notFound.Suggestion.Name != "Album" || !notFound.CaseSensitive {
+		if notFound.Name != "album" || notFound.Schema != "" || notFound.SuggestedName != "Album" || !notFound.CaseSensitive {
 			t.Fatalf("TableNotFoundError = %+v", notFound)
 		}
 		if want := `table "album" not found; did you mean "Album"? Table names are case-sensitive.`; err.Error() != want {
 			t.Fatalf("message = %s, want %s", err, want)
+		}
+	})
+	t.Run("the hint carries its schema and its name as two plain fields", func(t *testing.T) {
+		dialect := &fakeSuggestingDialect{fakeTypedDialect: newFakeTypedDialect(), facts: known, suggestion: typedSourceName{Schema: "sales", Name: "Album"}, suggested: true}
+		_, err := typedFactsForQuery(ctx, dialect, nil, typedTestFrom("album", ""))
+		var notFound *TableNotFoundError
+		if !errors.As(err, &notFound) || notFound.SuggestedSchema != "sales" || notFound.SuggestedName != "Album" {
+			t.Fatalf("error = %#v, want the suggestion sales.Album in SuggestedSchema and SuggestedName", err)
 		}
 	})
 	t.Run("one known source does not excuse an unknown one", func(t *testing.T) {
@@ -278,7 +304,7 @@ func TestTypedFactsForQuery(t *testing.T) {
 		dialect := &fakeSuggestingDialect{fakeTypedDialect: newFakeTypedDialect(), facts: known, suggestErr: errors.New("boom"), suggested: true, suggestion: typedSourceName{Name: "Album"}}
 		_, err := typedFactsForQuery(ctx, dialect, nil, typedTestFrom("album", ""))
 		var notFound *TableNotFoundError
-		if !errors.As(err, &notFound) || notFound.Suggestion.Name != "" {
+		if !errors.As(err, &notFound) || notFound.SuggestedName != "" {
 			t.Fatalf("error = %v, want not-found with no hint", err)
 		}
 	})
@@ -286,7 +312,7 @@ func TestTypedFactsForQuery(t *testing.T) {
 		dialect := &fakeSuggestingDialect{fakeTypedDialect: newFakeTypedDialect(), facts: known}
 		_, err := typedFactsForQuery(ctx, dialect, nil, typedTestFrom("album", ""))
 		var notFound *TableNotFoundError
-		if !errors.As(err, &notFound) || notFound.Suggestion.Name != "" {
+		if !errors.As(err, &notFound) || notFound.SuggestedName != "" {
 			t.Fatalf("error = %v, want not-found with no hint", err)
 		}
 	})

@@ -112,7 +112,11 @@ func canExecuteSQLiteJoin(ctx context.Context, q dal.StructuredQuery, dialect st
 //
 // What it accepts is exactly what the compiler compiles: the whole query is compiled,
 // not only the relation tree, so an unsupported wildcard, FIRST or LAST, or expression
-// takes the generic path instead of failing after a native plan was chosen. A join
+// takes the generic path instead of failing after a native plan was chosen. The records
+// reader adds one column of its own to a query, the base table's configured primary
+// key, and writes it qualified with the base source in a join (recordIdentityField), so
+// the join accepted here is the join it reads; a key that is no column of the table is a
+// configuration error the read reports. A join
 // key pair is accepted when both columns have the same type category (numbers with
 // numbers, text with text, and so on) or are the same type, and declined when the
 // types differ or a key's type has no usable equality (json, xml, geometric types,
@@ -139,9 +143,12 @@ func canExecutePostgresJoin(ctx context.Context, q dal.StructuredQuery, options 
 }
 
 // postgresJoinFields lists a source's columns in table order, from the catalog, for
-// DALgo's generic JOIN wildcard expansion. A column the dialect cannot write under its
-// own name (a mixed-case column under the fold-lower mode) is declined: the
-// expansion would name it in a leaf read the dialect cannot compile.
+// DALgo's generic JOIN wildcard expansion. The names are the catalog's own, whatever
+// the identifier case: the generic engine reads each leaf with a select-all that names
+// no column, and it abandons the whole join when this call fails, so a column the
+// dialect could not write by name (a mixed-case column under the fold-lower mode) must
+// not decline a join that never writes it. A native read that does name such a column
+// refuses it itself, in the compiler's select-all expansion.
 func postgresJoinFields(ctx context.Context, source dal.RecordsetSource, options DbOptions, execute executeQueryFunc) ([]string, error) {
 	dialect, err := postgresDialectFor(options)
 	if err != nil {
@@ -158,9 +165,6 @@ func postgresJoinFields(ctx context.Context, source dal.RecordsetSource, options
 	known, _ := facts.source(typedSourceName{Schema: collection.Schema(), Name: collection.Name()})
 	fields := make([]string, len(known.Columns))
 	for i, column := range known.Columns {
-		if !facts.addressable(column.Name) {
-			return nil, typedUnsupported("join_plan: column %q cannot be addressed: the dialect writes its name in another form", column.Name)
-		}
 		fields[i] = column.Name
 	}
 	return fields, nil

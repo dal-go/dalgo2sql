@@ -321,7 +321,7 @@ func TestSelectsIdentityField(t *testing.T) {
 		{"non-field expression", []dal.Column{{Expression: dal.Constant{Value: 1}}}, "id", false},
 	}
 	for _, tc := range cases {
-		if got := selectsIdentityField(tc.columns, tc.field); got != tc.want {
+		if got := selectsIdentityField(tc.columns, tc.field, nil); got != tc.want {
 			t.Errorf("%s: selectsIdentityField() = %v, want %v", tc.name, got, tc.want)
 		}
 	}

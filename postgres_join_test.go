@@ -201,7 +201,7 @@ func TestPostgresCanExecuteJoin(t *testing.T) {
 					mock.ExpectQuery(postgresSuggestionQuery).WithArgs("").WillReturnRows(newPostgresSuggestionRows([2]string{"public", "Artist"}))
 				})
 				var notFound *TableNotFoundError
-				if !errors.As(err, &notFound) || notFound.Name != "Artst" || notFound.Suggestion.Name != "Artist" {
+				if !errors.As(err, &notFound) || notFound.Name != "Artst" || notFound.SuggestedName != "Artist" {
 					t.Fatalf("CanExecuteJoin() error = %v, want table not found with a hint", err)
 				}
 			})
@@ -308,14 +308,17 @@ func TestPostgresJoinFields(t *testing.T) {
 					t.Fatalf("JoinFields() error = %v, want ErrNotSupported", err)
 				}
 			})
-			t.Run("a column the dialect cannot write under its own name is declined", func(t *testing.T) {
-				_, err := run(t, inTransaction, DbOptions{StructuredQueryDialect: "postgres", IdentifierCase: IdentifierCaseFoldLower}, album, func(mock sqlmock.Sqlmock) {
+			// The generic engine abandons the whole join when JoinFields fails, and reads its
+			// leaves with a select-all that names no column, so a column the dialect cannot
+			// write by name must not fail the call.
+			t.Run("a column the dialect cannot write under its own name is listed as the catalog has it", func(t *testing.T) {
+				got, err := run(t, inTransaction, DbOptions{StructuredQueryDialect: "postgres", IdentifierCase: IdentifierCaseFoldLower}, album, func(mock sqlmock.Sqlmock) {
 					mock.ExpectQuery(postgresCatalogQuery(1)).WithArgs(`"album"`).WillReturnRows(sqlmock.NewRows(postgresCatalogColumns).
 						AddRow(`"album"`, "albumid", "integer", "N", int64(23), int64(0), true, false).
 						AddRow(`"album"`, "Title", "text", "S", int64(25), int64(0), false, false))
 				})
-				if !errors.Is(err, dal.ErrNotSupported) || !strings.Contains(err.Error(), `"Title"`) {
-					t.Fatalf("JoinFields() error = %v, want the column declined", err)
+				if want := []string{"albumid", "Title"}; err != nil || !reflect.DeepEqual(got, want) {
+					t.Fatalf("JoinFields() = %v, %v; want %v", got, err, want)
 				}
 			})
 			t.Run("an identifier case the package does not define is refused", func(t *testing.T) {
@@ -324,6 +327,81 @@ func TestPostgresJoinFields(t *testing.T) {
 					t.Fatalf("JoinFields() error = %v", err)
 				}
 			})
+		})
+	}
+}
+
+// A join CanExecuteJoin accepts is a join the records reader can run. The reader adds
+// the base table's configured primary key to the select list, so each record is keyed,
+// and in a join that column must name its source like every other: DALgo has already
+// chosen the native plan when the read starts and does not retry.
+func TestPostgresAcceptedJoinIsReadAndKeyed(t *testing.T) {
+	ctx := context.Background()
+	joinStatement := `SELECT "r"."Name", "a"."AlbumId" AS "__dalgo_record_id" FROM "Album" AS "a" INNER JOIN "Artist" AS "r" ON ("a"."ArtistId" = "r"."ArtistId")`
+	for _, tc := range []struct {
+		name    string
+		options DbOptions
+	}{
+		{"a primary key of the table's recordset", DbOptions{StructuredQueryDialect: "postgres", Recordsets: map[string]*Recordset{"Album": NewRecordset("Album", Table, []dal.FieldRef{dal.Field("AlbumId")})}}},
+		{"a primary key of the whole database", DbOptions{StructuredQueryDialect: "postgres", PrimaryKey: []string{"AlbumId"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock := newPostgresReadMock(t)
+			q := postgresJoinQuery("ArtistId", "ArtistId")
+			expectPostgresJoinCatalog(mock, `"Album"`, `"Artist"`)
+			if err := (&database{db: db, options: tc.options}).CanExecuteJoin(ctx, q); err != nil {
+				t.Fatalf("CanExecuteJoin() error = %v, want it accepted", err)
+			}
+			expectPostgresJoinCatalog(mock, `"Album"`, `"Artist"`)
+			mock.ExpectQuery(joinStatement).WillReturnRows(sqlmock.NewRows([]string{"Name", "__dalgo_record_id"}).AddRow("Queen", int64(7)))
+			reader, err := getRecordsReaderWithOptions(ctx, q, db.QueryContext, tc.options)
+			if err != nil {
+				t.Fatalf("an accepted join cannot be read: %v", err)
+			}
+			defer func() { _ = reader.Close() }()
+			record, err := reader.Next()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := record.Key().ID; got != int64(7) {
+				t.Fatalf("record key = %v, want the AlbumId 7", got)
+			}
+			if got, want := record.Data(), map[string]any{"Name": "Queen"}; !reflect.DeepEqual(got, want) {
+				t.Fatalf("record data = %#v, want %#v (the key column is not part of the data)", got, want)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+// A native compiler of the caller's, even with the PostgreSQL dialect named, is handed
+// the query as it always was: the key column unqualified. Only the typed compiler
+// needs it qualified.
+func TestRecordIdentityFieldIsQualifiedOnlyForTheTypedCompilerInAJoin(t *testing.T) {
+	join := postgresJoinQuery("ArtistId", "ArtistId")
+	single := typedTestFrom("Album", "").NewQuery().SelectColumns(typedTestColumn(typedTestField("Title"), ""))
+	native := nativeCompilerFunc(func(dal.StructuredQuery, NativeJoinHintFragments) (string, []any, error) { return "", nil, nil })
+	for _, tc := range []struct {
+		name    string
+		options DbOptions
+		q       dal.StructuredQuery
+		source  string
+	}{
+		{"the typed compiler, a join: the base's alias", DbOptions{StructuredQueryDialect: "postgres"}, join, "a"},
+		{"the typed compiler, a join of a source with no alias: its name", DbOptions{StructuredQueryDialect: "postgres"},
+			typedTestFrom("Album", "").Join(dal.NewJoinedSource(dal.NewRootCollectionRef("Artist", "r"), dal.JoinInner, typedTestJoinOn("Album", "ArtistId", "r", "ArtistId"))).NewQuery().SelectColumns(), "Album"},
+		{"the typed compiler, no join", DbOptions{StructuredQueryDialect: "postgres"}, single, ""},
+		{"a native compiler, a join", DbOptions{StructuredQueryDialect: "postgres", NativeStructuredQueryCompiler: native}, join, ""},
+		{"another dialect, a join", DbOptions{StructuredQueryDialect: "sqlite"}, join, ""},
+		{"no dialect, a join", DbOptions{}, join, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			field := recordIdentityField(tc.options, tc.q, "AlbumId")
+			if field.Source() != tc.source || field.Name() != "AlbumId" {
+				t.Fatalf("recordIdentityField() = %q.%q, want %q.AlbumId", field.Source(), field.Name(), tc.source)
+			}
 		})
 	}
 }

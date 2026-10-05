@@ -76,10 +76,14 @@ arguments of every supported shape are in `testdata/postgres`.
   modes (`Total` comes back as `Total`, an unaliased `COUNT(*)` as `COUNT(*)`). A select list
   whose names differ only in case is refused under `IdentifierCaseFoldLower`. Do not
   put a field mask or access check on such a mount unless the names it compares are
-  folded first.
+  folded first. A configured primary key is matched to the result's column by the same
+  fold, so a key configured as `ID` keys the records of a column the server returns as
+  `id`.
 - **A table that is not there** fails with `*TableNotFoundError` (it matches
-  `ErrTableNotFound`), which names the table and the nearest name that exists:
+  `ErrTableNotFound`), which names the table and the nearest name that exists
+  (`SuggestedSchema` and `SuggestedName`; both empty when none is near):
   `table "album" not found; did you mean "Album"? Table names are case-sensitive.`
+  Under `IdentifierCaseFoldLower` only a name the mount can write is suggested.
   A sequence, a name that resolves to nothing and a relation with no readable column
   are all "not found"; a source is never compiled without its catalog facts.
 - **Native aggregation and joins.** The adapter reports GROUP BY, HAVING, ORDER BY,
@@ -91,7 +95,8 @@ arguments of every supported shape are in `testdata/postgres`.
   transaction; it is declined when the types differ or a key's type has no usable
   equality (json, xml, geometric types, `oid` and the `reg*` types), when the
   catalog does not hold a key, or when the compiler cannot write the query.
-  `JoinFields` lists a table's columns from the catalog.
+  `JoinFields` lists a table's columns from the catalog, under the names the catalog
+  has, whatever the identifier case.
 - **Arithmetic** is on double precision: `+`, `-`, `*` and `/` read both operands as
   `double precision`, as DALgo's generic engine does, so an integer overflow cannot
   differ between engines; division by zero is NULL. SUM and AVG are cast to double
@@ -106,7 +111,8 @@ arguments of every supported shape are in `testdata/postgres`.
 
 The catalog query and the statement need the same connection, so the database handle
 takes one connection for the life of a structured read and gives it back when the
-reader is closed or read to its end.
+reader is closed, when it is read to its end, or when the context of the read ends,
+as the pool does for a read of its own.
 
 ### Legacy text path
 

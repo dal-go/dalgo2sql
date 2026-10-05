@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/dal-go/dalgo/dal"
 )
@@ -30,6 +31,9 @@ type connectionRecorder struct {
 	retireAfterQuery  bool
 	failConnect       error
 	failStatementWith func(text string) error
+	// statementScanType, when set, is the Go type the SELECT's columns report, in place
+	// of the type of their first value.
+	statementScanType reflect.Type
 }
 
 type recordedStatement struct {
@@ -85,7 +89,7 @@ func (c *connectionRecorderConn) Begin() (driver.Tx, error) {
 }
 
 // IsValid is database/sql's check before a connection goes back to the pool.
-func (c *connectionRecorderConn) IsValid() bool { return !(c.recorder.retireAfterQuery && c.used) }
+func (c *connectionRecorderConn) IsValid() bool { return !c.recorder.retireAfterQuery || !c.used }
 
 func (c *connectionRecorderConn) QueryContext(_ context.Context, text string, args []driver.NamedValue) (driver.Rows, error) {
 	c.recorder.mu.Lock()
@@ -115,18 +119,22 @@ func (c *connectionRecorderConn) QueryContext(_ context.Context, text string, ar
 	if text == postgresSuggestionQuery {
 		return &connectionRecorderRows{columns: []string{"nspname", "relname"}}, nil
 	}
-	return &connectionRecorderRows{columns: []string{"AlbumId", "Title"}, rows: [][]driver.Value{{int64(1), "One"}, {int64(2), "Two"}}}, nil
+	return &connectionRecorderRows{columns: []string{"AlbumId", "Title"}, rows: [][]driver.Value{{int64(1), "One"}, {int64(2), "Two"}}, scanType: c.recorder.statementScanType}, nil
 }
 
 type connectionRecorderRows struct {
-	columns []string
-	rows    [][]driver.Value
-	next    int
+	columns  []string
+	rows     [][]driver.Value
+	next     int
+	scanType reflect.Type // when set, the type every column reports
 }
 
 // ColumnTypeScanType tells database/sql, and the recordset reader built on it, the Go
 // type of each column from the first row, as a real driver does from the server.
 func (r *connectionRecorderRows) ColumnTypeScanType(index int) reflect.Type {
+	if r.scanType != nil {
+		return r.scanType
+	}
 	if len(r.rows) == 0 {
 		return reflect.TypeOf("")
 	}
@@ -285,6 +293,90 @@ func TestPostgresReadGivesTheConnectionBack(t *testing.T) {
 			t.Fatalf("ExecuteQueryToRecordsetReader() = %v, %v; want no reader and table not found", reader, err)
 		}
 		assertFree(t, db)
+	})
+	// The recordset reader refuses a column whose Go type it cannot hold after the
+	// statement has run, with the rows open: the connection is given back only once they
+	// are closed, so a read that returned its error without closing them would wait for
+	// itself. The call runs in a goroutine so that a regression fails the test instead of
+	// blocking it.
+	for _, tc := range []struct {
+		name     string
+		scanType reflect.Type
+		want     string
+	}{
+		{"a struct it does not know", reflect.TypeOf(struct{}{}), "unsupported type for column"},
+		{"a pointer it does not know", reflect.TypeOf(new(int)), "unsupported pointer type for column"},
+		{"a kind it does not know", reflect.TypeOf(map[string]int{}), "unsupported column type kind"},
+	} {
+		t.Run("a recordset read that fails on "+tc.name+" gives it back", func(t *testing.T) {
+			backend, db := newBackend(t, &connectionRecorder{statementScanType: tc.scanType})
+			type result struct {
+				reader dal.RecordsetReader
+				err    error
+			}
+			done := make(chan result, 1)
+			go func() {
+				reader, err := backend.ExecuteQueryToRecordsetReader(ctx, postgresConnectionQuery())
+				done <- result{reader, err}
+			}()
+			select {
+			case got := <-done:
+				if got.err == nil || !strings.Contains(got.err.Error(), tc.want) || got.reader != nil {
+					t.Fatalf("ExecuteQueryToRecordsetReader() = %v, %v; want no reader and an error that mentions %q", got.reader, got.err, tc.want)
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("ExecuteQueryToRecordsetReader() did not return: the rows of the failed read were left open, and the connection waits for them")
+			}
+			assertFree(t, db)
+		})
+	}
+	// On the pool, database/sql closes the rows and returns the connection when the
+	// context of a read ends, whether or not the caller closes the reader. The leased
+	// connection does the same. The pool holds one connection, so a second request for
+	// one returns only when the read has given its own back; the request runs in a
+	// goroutine so that a regression fails the test instead of blocking it.
+	t.Run("a context that ends gives it back, though the reader is never closed", func(t *testing.T) {
+		for _, read := range []struct {
+			name string
+			open func(context.Context, *database) error
+		}{
+			{"records reader", func(ctx context.Context, backend *database) error {
+				_, err := backend.ExecuteQueryToRecordsReader(ctx, postgresConnectionQuery())
+				return err
+			}},
+			{"recordset reader", func(ctx context.Context, backend *database) error {
+				_, err := backend.ExecuteQueryToRecordsetReader(ctx, postgresConnectionQuery())
+				return err
+			}},
+		} {
+			t.Run(read.name, func(t *testing.T) {
+				backend, db := newBackend(t, &connectionRecorder{})
+				db.SetMaxOpenConns(1)
+				readCtx, cancel := context.WithCancel(ctx)
+				defer cancel()
+				if err := read.open(readCtx, backend); err != nil {
+					t.Fatal(err)
+				}
+				cancel()
+				next := make(chan error, 1)
+				go func() {
+					conn, err := db.Conn(ctx)
+					if err == nil {
+						err = conn.Close()
+					}
+					next <- err
+				}()
+				select {
+				case err := <-next:
+					if err != nil {
+						t.Fatal(err)
+					}
+				case <-time.After(10 * time.Second):
+					t.Fatal("the connection of a read whose context ended was not given back")
+				}
+				assertFree(t, db)
+			})
+		}
 	})
 	t.Run("a statement the server rejects gives it back", func(t *testing.T) {
 		boom := errors.New("syntax error")

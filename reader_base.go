@@ -14,10 +14,29 @@ type executeQueryFunc func(ctx context.Context, query string, args ...any) (*sql
 
 // connLease holds the connection one read runs on, from the catalog lookup to the
 // last row of its statement. It is given back, once, when the reader is done with the
-// rows: closed, or read to its end.
+// rows: closed, or read to its end. It is also given back when the context of the read
+// ends, as the pool does for a read of its own: database/sql closes the rows then, and a
+// caller that stopped on ctx.Done() need not close the reader to free the connection.
 type connLease struct {
 	once sync.Once
 	conn *sql.Conn
+	// stopHook unregisters the hook that gives the connection back when the context
+	// ends. Only release reads it, and only after the lease is built; the hook itself
+	// calls giveBack.
+	stopHook func() bool
+}
+
+// newConnLease takes conn for the read that runs on ctx.
+func newConnLease(ctx context.Context, conn *sql.Conn) *connLease {
+	l := &connLease{conn: conn}
+	l.stopHook = context.AfterFunc(ctx, l.giveBack)
+	return l
+}
+
+// giveBack closes the connection, which returns it to the pool, once. Closing waits for
+// the rows that ran on the connection, which close themselves when their context ends.
+func (l *connLease) giveBack() {
+	l.once.Do(func() { _ = l.conn.Close() })
 }
 
 // release gives the connection back to the pool. It is safe on a nil lease (a read on
@@ -27,7 +46,8 @@ func (l *connLease) release() {
 	if l == nil {
 		return
 	}
-	l.once.Do(func() { _ = l.conn.Close() })
+	l.stopHook()
+	l.giveBack()
 }
 
 type readerBase struct {

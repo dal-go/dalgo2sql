@@ -60,6 +60,12 @@ func (dtb *database) ExecuteQueryToRecordsetReader(ctx context.Context, query da
 		return reader, err
 	}
 	if err != nil {
+		// A read that fails after its statement ran (a column type the recordset cannot
+		// hold) returns the reader with the rows still open, and the connection can only
+		// go back once they are closed: closing it waits for them.
+		if reader != nil {
+			_ = reader.Close()
+		}
 		lease.release()
 		return nil, err
 	}
@@ -73,7 +79,8 @@ func (dtb *database) ExecuteQueryToRecordsetReader(ctx context.Context, query da
 // connection has its own search_path, and database/sql hands each call of a pool to
 // any connection, so the two could describe different relations. The read therefore
 // takes one connection for both, and the lease the reader releases when it is done
-// with the rows. Any other read runs on pool, as before, and holds no lease.
+// with the rows: closed, read to its end, or, as on the pool, when ctx ends. Any other
+// read runs on pool, as before, and holds no lease.
 func (dtb *database) readExecutor(ctx context.Context, query dal.Query, pool executeQueryFunc) (executeQueryFunc, *connLease, error) {
 	if _, structured := query.(dal.StructuredQuery); !structured || dtb.options.StructuredQueryDialect != "postgres" {
 		return pool, nil, nil
@@ -82,7 +89,7 @@ func (dtb *database) readExecutor(ctx context.Context, query dal.Query, pool exe
 	if err != nil {
 		return nil, nil, err
 	}
-	return conn.QueryContext, &connLease{conn: conn}, nil
+	return conn.QueryContext, newConnLease(ctx, conn), nil
 }
 
 //func (dtb *database) Connect(ctx context.Context) (dal.Connection, error) {

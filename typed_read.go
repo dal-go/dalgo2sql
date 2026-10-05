@@ -27,9 +27,10 @@ type TableNotFoundError struct {
 	// Schema and Name are the source as the query wrote it; Schema is empty for a
 	// source without one.
 	Schema, Name string
-	// Suggestion is the nearest existing name, schema included when the query named
-	// one, or the zero value when no name is near.
-	Suggestion typedSourceName
+	// SuggestedSchema and SuggestedName are the nearest existing name, schema
+	// included when the query named one, as the database stores them; both are empty
+	// when no name is near.
+	SuggestedSchema, SuggestedName string
 	// CaseSensitive says the dialect matches names exactly, so a name that differs
 	// from an existing one only in case is a different name.
 	CaseSensitive bool
@@ -38,8 +39,8 @@ type TableNotFoundError struct {
 func (e *TableNotFoundError) Error() string {
 	var message strings.Builder
 	message.WriteString("table " + typedMessageName(e.Schema, e.Name) + " not found")
-	if e.Suggestion.Name != "" {
-		message.WriteString("; did you mean " + typedMessageName(e.Suggestion.Schema, e.Suggestion.Name) + "?")
+	if e.SuggestedName != "" {
+		message.WriteString("; did you mean " + typedMessageName(e.SuggestedSchema, e.SuggestedName) + "?")
 	}
 	if e.CaseSensitive {
 		message.WriteString(" Table names are case-sensitive.")
@@ -96,7 +97,7 @@ func typedFactsForQuery(ctx context.Context, dialect typedDialect, execute execu
 		notFound := &TableNotFoundError{Schema: source.Schema, Name: source.Name, CaseSensitive: facts.Fold == nil}
 		// The hint is a courtesy: a lookup that fails leaves the error without one.
 		if suggestion, ok, err := dialect.suggestSource(ctx, execute, source); err == nil && ok {
-			notFound.Suggestion = suggestion
+			notFound.SuggestedSchema, notFound.SuggestedName = suggestion.Schema, suggestion.Name
 		}
 		return typedCatalogFacts{}, notFound
 	}
