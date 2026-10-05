@@ -529,7 +529,9 @@ func scanRowIntoMapWithOptions(rows *sql.Rows, data interface{}, pkIncluded bool
 			// Callers that do not want the PK in the map can delete it afterward.
 			_ = pkIncluded
 			val := normalizeReadMapValue(cells[i], columnTypeAt(columnTypes, i), options.StructuredQueryDialect)
-			setReadMapValue(v, col, val, options.StructuredQueryDialect)
+			if val != nil || options.StructuredQueryDialect == "sqlite" {
+				setReadMapValue(v, col, val, options.StructuredQueryDialect)
+			}
 		}
 		return nil
 	})

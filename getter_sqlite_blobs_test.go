@@ -126,6 +126,44 @@ func TestSQLiteGetMultiMarksOnlyMissingMapRecordsNotFound(t *testing.T) {
 	}
 }
 
+func TestDefaultGetAndGetMultiKeepTheirHistoricalNullMapBehavior(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := openTestSQLiteDB(t, `CREATE TABLE widgets (id TEXT PRIMARY KEY, nullable TEXT)`)
+	for _, id := range []string{"one", "two"} {
+		if _, err := sqlDB.Exec(`INSERT INTO widgets VALUES (?, NULL)`, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db := NewDatabase(sqlDB, newSchema(), DbOptions{
+		Recordsets: map[string]*Recordset{
+			"widgets": NewRecordset("widgets", Table, []dal.FieldRef{dal.Field("id")}),
+		},
+	})
+
+	single := map[string]any{"nullable": "keep on single Get"}
+	if err := db.Get(ctx, dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("widgets", "one"), single)); err != nil {
+		t.Fatal(err)
+	}
+	if single["nullable"] != "keep on single Get" {
+		t.Errorf("single Get changed reused NULL map value: %#v", single)
+	}
+
+	first := map[string]any{"nullable": "delete on GetMulti"}
+	second := map[string]any{"nullable": "delete on GetMulti"}
+	records := []dalrecord.Record{
+		dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("widgets", "one"), first),
+		dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("widgets", "two"), second),
+	}
+	if err := db.GetMulti(ctx, records); err != nil {
+		t.Fatal(err)
+	}
+	for _, got := range []map[string]any{first, second} {
+		if _, ok := got["nullable"]; ok {
+			t.Errorf("GetMulti retained reused NULL map value: %#v", got)
+		}
+	}
+}
+
 func TestNormalizeReadMapValueUsesDialectAndColumnType(t *testing.T) {
 	ctx := context.Background()
 	sqlDB := openTestSQLiteDB(t, `CREATE TABLE typed (blob_value BLOB, text_value TEXT, number_value INTEGER)`)
