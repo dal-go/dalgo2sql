@@ -27,9 +27,10 @@ type database struct {
 // With the PostgreSQL dialect that is GROUP BY, HAVING, ORDER BY, COUNT, SUM and AVG
 // with their DISTINCT forms, MIN and MAX; with SQLite, the same subset. Any other
 // dialect declares nothing, and DALgo aggregates in its own engine. FIRST and LAST
-// remain local until aggregate-local ORDER BY can be rendered without relying on
+// are not advertised until aggregate-local ORDER BY can be rendered without relying on
 // unspecified row order, and neither dialect promises a group-key order or a stable
-// row order.
+// row order: DALgo's planner refuses a query that uses one for this adapter, as it
+// needs a provider-declared stable input order, and nothing runs it.
 func (dtb *database) QueryCapabilities() dal.QueryCapabilities {
 	switch dtb.options.StructuredQueryDialect {
 	case "postgres":

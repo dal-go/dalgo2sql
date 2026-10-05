@@ -32,7 +32,9 @@ render GROUP BY, COUNT, SUM, AVG, MIN, MAX, DISTINCT aggregates, HAVING, alias
 rewrites, result ordering and pagination natively. SUM/AVG normalize numeric
 inputs to REAL for parity with DALgo's generic `float64` fallback. FIRST/LAST
 are deliberately not advertised until DALgo models aggregate-local ordering;
-using unspecified SQLite row order would not be deterministic.
+using unspecified SQLite row order would not be deterministic. DALgo's planner
+therefore refuses a query that uses them for this adapter (see the PostgreSQL
+section), and nothing runs it.
 
 ## Which path compiles a structured query
 
@@ -79,6 +81,10 @@ arguments of every supported shape are in `testdata/postgres`.
   folded first. A configured primary key is matched to the result's column by the same
   fold, so a key configured as `ID` keys the records of a column the server returns as
   `id`.
+  A query that runs in DALgo's own engine instead of the compiler (a subquery, a join the
+  adapter declines) does not fold: under `IdentifierCaseFoldLower` it must spell table and
+  column names as the catalog stores them, in lower case, until DALgo's engine folds names
+  itself. The compiled path accepts any case.
 - **A table that is not there** fails with `*TableNotFoundError` (it matches
   `ErrTableNotFound`), which names the table and the nearest name that exists
   (`SuggestedSchema` and `SuggestedName`; both empty when none is near):
@@ -88,8 +94,12 @@ arguments of every supported shape are in `testdata/postgres`.
   are all "not found"; a source is never compiled without its catalog facts.
 - **Native aggregation and joins.** The adapter reports GROUP BY, HAVING, ORDER BY,
   COUNT, SUM and AVG with their DISTINCT forms, MIN and MAX as native
-  (`QueryCapabilities`), so DALgo runs them on the server. FIRST and LAST, and any
-  query with a subquery, stay in DALgo's generic engine. A join is accepted
+  (`QueryCapabilities`), so DALgo runs them on the server. A query with a subquery
+  stays in DALgo's generic engine. FIRST and LAST are refused by DALgo's planner for this
+  adapter: they need a provider-declared stable input order, which the adapter does not
+  declare (neither dialect promises a group-key order or a stable row order), so a query
+  that uses one fails with the planner's error and runs nowhere, in the generic engine
+  included. A join is accepted
   (`CanExecuteJoin`) when each ON pair has the same type category (numbers with
   numbers, text with text) or the same type, on the database handle as in a
   transaction; it is declined when the types differ or a key's type has no usable
