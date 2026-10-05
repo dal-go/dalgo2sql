@@ -31,6 +31,15 @@ func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute e
 		},
 	}
 	if q, ok := query.(dal.StructuredQuery); ok {
+		if readsWithTypedPostgres(options) {
+			// The typed compiler refuses what it cannot compute as asked, and reads that
+			// from the query it is handed, which below can be a wrapper of this reader's
+			// own that does not carry it. So the caller's query is asked first.
+			if err = typedRefuseMoney(q); err != nil {
+				err = fmt.Errorf("failed to get SQL reader: %w", err)
+				return
+			}
+		}
 		rr.validateFinite = dal.HasAggregation(q)
 		if rec := q.IntoRecord(); rec != nil {
 			rr.newRecord = func() dalrecord.Record { return q.IntoRecord() }
@@ -64,26 +73,60 @@ func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute e
 				query = q
 			}
 			rr.identityColumn = primaryKey
-			if selected := q.Columns(); len(selected) > 0 && !selectsIdentityField(selected, primaryKey, rr.fold) {
+			// A join read by a compiler of this package keys each record by the base
+			// row, as DALgo's generic join does. Matching a result column by the key's
+			// name cannot: any source can have a column of that name, and the select
+			// list can name it. So the statement always carries the base's key column,
+			// qualified, and the record is keyed from it by position. A select-all, which
+			// no column can be added to, is keyed from the base's own column of that name
+			// (see baseColumnIndex).
+			keyedByBase := len(q.From().Joins()) != 0 && readsWithOwnCompiler(options)
+			if selected := q.Columns(); len(selected) > 0 && (keyedByBase || !selectsIdentityField(selected, primaryKey, rr.fold)) {
 				columns := append([]dal.Column(nil), selected...)
 				helper := unusedHelperColumn(selected)
 				columns = append(columns, dal.Column{Expression: recordIdentityField(options, q, primaryKey), Alias: helper})
 				query = dal.WithColumns(q, columns)
 				rr.identityColumn = helper
 				rr.hideIdentityColumn = true
+				rr.identityByPosition = true
+			} else if keyedByBase && len(selected) == 0 {
+				rr.identityByPosition = true
+				rr.keyInBaseColumns = true
 			}
 		}
 	}
 
-	if rr.readerBase, err = getReaderBaseWithOptions(ctx, query, execute, options); err != nil {
+	if rr.readerBase, err = getReaderBaseFor(ctx, query, execute, options, rr.keyInBaseColumns); err != nil {
 		err = fmt.Errorf("failed to get SQL reader: %w", err)
 		return
 	}
 	if rr.hideIdentityColumn {
 		rr.identityColumnIndex = len(rr.colNames) - 1
+	} else if rr.keyInBaseColumns {
+		rr.identityColumnIndex = baseColumnIndex(rr.baseColumns, rr.identityColumn, rr.fold)
 	}
 
 	return
+}
+
+// baseColumnIndex is the position, in a select-all over joins, of the base source's
+// column called name (under the fold), or -1 when the base has none. The base's columns
+// lead the result, so a position among them is a position in the result; a column of a
+// joined source that carries the name is never taken for it.
+func baseColumnIndex(baseColumns []string, name string, fold nameFold) int {
+	for i, column := range baseColumns {
+		if fold.of(column) == fold.of(name) {
+			return i
+		}
+	}
+	return -1
+}
+
+// readsWithOwnCompiler reports whether a structured read is compiled by one of this
+// package's compilers, the typed PostgreSQL one or the SQLite one, rather than by a native
+// compiler of the caller's or the legacy emitter: those take the query as it always did.
+func readsWithOwnCompiler(options DbOptions) bool {
+	return options.NativeStructuredQueryCompiler == nil && (options.StructuredQueryDialect == "postgres" || options.StructuredQueryDialect == "sqlite")
 }
 
 // readsWithTypedPostgres reports whether a structured read is compiled by the typed
@@ -95,13 +138,13 @@ func readsWithTypedPostgres(options DbOptions) bool {
 
 // recordIdentityField is the field the reader adds to the select list to key each
 // record by the primary key. It is unqualified, as it always was, except for a JOIN
-// read by the typed PostgreSQL compiler: that compiler refuses an unqualified field in
-// a JOIN, so the field names the base source, the table the key belongs to. Without
-// that, a join CanExecuteJoin accepted would fail once DALgo has chosen the native
-// plan, which it does not retry. A native compiler of the caller's keeps the
-// unqualified field it was given.
+// read by a compiler of this package, the typed PostgreSQL one or the SQLite one: both
+// refuse an unqualified field in a JOIN, so the field names the base source, the table
+// the key belongs to. Without that, a join CanExecuteJoin accepted would fail once DALgo
+// has chosen the native plan, which it does not retry. A native compiler of the
+// caller's keeps the unqualified field it was given.
 func recordIdentityField(options DbOptions, q dal.StructuredQuery, primaryKey string) dal.FieldRef {
-	if readsWithTypedPostgres(options) && len(q.From().Joins()) != 0 {
+	if readsWithOwnCompiler(options) && len(q.From().Joins()) != 0 {
 		return dal.NewFieldRef(typedIdentity(q.From().Base()), primaryKey)
 	}
 	return dal.Field(primaryKey)
@@ -172,7 +215,14 @@ type recordsReader struct {
 	identityColumn      string
 	identityColumnIndex int
 	hideIdentityColumn  bool
-	validateFinite      bool
+	// identityByPosition says the record's key is read from the column at
+	// identityColumnIndex, not from the column called identityColumn: set for the helper
+	// column the reader appends, and for a select-all over joins.
+	identityByPosition bool
+	// keyInBaseColumns says the statement is a select-all over joins, keyed from the base
+	// source's own column of the key's name (baseColumnIndex).
+	keyInBaseColumns bool
+	validateFinite   bool
 	// fold is applied to a column name and to the key's name before they are compared.
 	fold nameFold
 }
@@ -325,7 +375,7 @@ func (r recordsReader) Next() (record dalrecord.Record, err error) {
 		}
 		v := textValue(normalized)
 		identityValue := r.fold.of(n) == r.fold.of(r.identityColumn)
-		if r.hideIdentityColumn {
+		if r.identityByPosition {
 			identityValue = i == r.identityColumnIndex
 		}
 		if identityValue {

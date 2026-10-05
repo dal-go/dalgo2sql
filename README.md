@@ -103,9 +103,32 @@ arguments of every supported shape are in `testdata/postgres`.
   precision. NULLs sort first ascending and last descending, as in DALgo, and the
   `NULLS` clause is left out for a NOT NULL column.
 - **A query the compiler cannot run faithfully in one statement** is refused with an
-  error matching `dal.ErrNotSupported`, which is the signal for DALgo's generic
-  engine, among them a result column whose alias, or whose expression text, is over
-  63 bytes. It is never handed to the legacy emitter.
+  error matching `dal.ErrNotSupported`, among them a result column whose alias, or whose
+  expression text, is over 63 bytes. DALgo falls back to its generic engine only where
+  it has a fallback: a join, which it asks the adapter to accept first (`CanExecuteJoin`
+  compiles the whole query, and DALgo runs the generic join when it declines), and a
+  query with a subquery. For a query over one source the refusal is the read's error:
+  a 64-byte alias fails the read, and the remedy is a shorter alias. It is never handed
+  to the legacy emitter.
+- **A join keys each record by the base row** (the first source of `FROM`), as DALgo's
+  generic join does, whichever columns the select list names. The records reader adds
+  the base's configured primary key to the statement as a column of its own, qualified
+  by the base's alias, and reads the key from it by position, so a column of a joined
+  table that carries the key's name never keys a record. A select-all over joins, which
+  no column can be added to, is keyed from the base's own column of that name (the
+  catalog's list of the base's columns, a statement of its own on SQLite); a key the
+  base has no column for leaves the records with the placeholder key, as a select-all
+  over one source does. The same holds for the SQLite dialect. A select list that gives
+  two expressions of a join one output name (`a.id` and `r.id`) is refused with
+  `join_field: duplicate output name`, the error DALgo's generic engine gives for the
+  same query, with the SQLite dialect too.
+- **A stream error is never the end of a result.** Both readers return the error the
+  server raised in the middle of a result (a timeout, an overflow at one row) from
+  `Next`, instead of `ErrNoMoreRecords`; a read whose context ended returns the
+  context's error.
+- **The DTQL money option** is refused (`ErrNotSupported`) whatever the select list:
+  the records reader reads the option from the caller's query before it adds the key
+  column to it.
 - **No protected-write factory.** `NewDatabase` returns the plain adapter for
   PostgreSQL; the protected read/write profile exists for SQLite only.
 

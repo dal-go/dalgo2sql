@@ -65,9 +65,12 @@ func typedUnsupported(format string, args ...any) error {
 // scan or database: see validateTypedJoinSources and validateTypedScanRestated),
 // a reference the server could not match (typedCheckOrderByName), and a bare name
 // the server would read as the whole row (typedCompiler.checkNamesAColumn).
-// DALgo's generic engine remains the place for those queries. A field that the
-// catalog facts of a known source do not list is a plain error, not a refusal:
-// the table has no such column.
+// DALgo's generic engine is the place for those queries only where DALgo has a
+// fallback: a join it asked the adapter about first (CanExecuteJoin compiles the whole
+// query and declines on a refusal), or a query with a subquery, which never reaches the
+// compiler. For a query over one source the refusal is the read's error. A field that
+// the catalog facts of a known source do not list is a plain error, not a refusal: the
+// table has no such column.
 func compileTypedSQL(q dal.StructuredQuery, dialect typedDialect, facts typedCatalogFacts) (string, []any, error) {
 	statement, err := compileTypedStatement(q, dialect, facts)
 	if err != nil {
@@ -87,6 +90,12 @@ type typedStatement struct {
 	// the reader keys each record by outputs, not by the name the server returns. It
 	// is nil when the statement selects *, whose columns are the catalog's own.
 	outputs []string
+	// baseColumns, for a select-all over joins, lists the base source's columns in the
+	// order the server returns them: they come first in the result, before those of the
+	// joined sources, which the reader needs to tell the base's column of a name from
+	// another source's. It is nil for every other statement, and when the facts do not
+	// list the base.
+	baseColumns []string
 }
 
 // compileTypedStatement is compileTypedSQL with the names the query asked for each
@@ -104,12 +113,8 @@ func compileTypedStatement(q dal.StructuredQuery, dialect typedDialect, facts ty
 	if dal.HasSubquery(q) {
 		return typedStatement{}, typedUnsupported("subqueries run in the generic engine, not in one statement")
 	}
-	// A DTQL query can ask for exact decimal results (dtql/query.go, Money()).
-	// DALgo computes those in its federated engine, in decimal text with half-even
-	// rounding; the statement would compute SUM, AVG and division in double
-	// precision, so honouring the option here would be approximating it.
-	if m, ok := q.(interface{ Money() *dal.MoneyConfig }); ok && m.Money() != nil {
-		return typedStatement{}, typedUnsupported("the money option (exact decimal results) is computed by DALgo's federated engine, not in one statement")
+	if err := typedRefuseMoney(q); err != nil {
+		return typedStatement{}, err
 	}
 	if q.Limit() < 0 || q.Offset() < 0 {
 		return typedStatement{}, errors.New("limit and offset must be non-negative")
@@ -142,6 +147,21 @@ func compileTypedStatement(q dal.StructuredQuery, dialect typedDialect, facts ty
 		return typedStatement{}, err
 	}
 	return statement, nil
+}
+
+// typedRefuseMoney refuses a query that carries the DTQL money option, which asks for
+// exact decimal results (dtql/query.go, Money()). DALgo computes those in its federated
+// engine, in decimal text with half-even rounding; a statement would compute SUM, AVG and
+// division in double precision, so honouring the option here would be approximating it.
+//
+// The option is read from the query it is handed. A caller that wraps the query before
+// it reaches the compiler (dal.WithColumns and the key order of the records reader do)
+// hides it, so such a caller reads it from the query it was given first.
+func typedRefuseMoney(q dal.StructuredQuery) error {
+	if m, ok := q.(interface{ Money() *dal.MoneyConfig }); ok && m.Money() != nil {
+		return typedUnsupported("the money option (exact decimal results) is computed by DALgo's federated engine, not in one statement")
+	}
+	return nil
 }
 
 // errTypedInvalidAggregation is the whole of what the compiler says when
@@ -413,6 +433,13 @@ func (c *typedCompiler) query(q dal.StructuredQuery) (typedStatement, error) {
 		}
 		statement.outputs = append(statement.outputs, item.asked)
 	}
+	if c.hasJoins && len(items) == 1 && items[0].expression == nil {
+		if base, known := c.facts.source(c.sources[c.base].table); known {
+			for _, column := range base.Columns {
+				statement.baseColumns = append(statement.baseColumns, column.Name)
+			}
+		}
+	}
 	return statement, nil
 }
 
@@ -427,6 +454,7 @@ func (c *typedCompiler) selectItems(q dal.StructuredQuery, columns []dal.Column)
 		return nil, typedUnsupported("%v", err)
 	}
 	var items []typedSelectItem
+	joinOutputs := map[string]dal.Expression{}
 	for i, column := range columns {
 		if column.Wildcard != nil {
 			expanded, err := c.expandWildcard(wildcard)
@@ -440,12 +468,46 @@ func (c *typedCompiler) selectItems(q dal.StructuredQuery, columns []dal.Column)
 		if err != nil {
 			return nil, fmt.Errorf("column %d: %w", i, err)
 		}
+		// A wildcard is refused in a statement with joins (planWildcardProjection), so
+		// only the columns named one by one can write a name twice there.
+		if err := c.checkJoinOutputIsNew(joinOutputs, i, item); err != nil {
+			return nil, err
+		}
 		items = append(items, item)
 	}
 	if len(items) == 0 {
 		return nil, typedUnsupported("the wildcard projection excludes every column")
 	}
 	return items, c.checkOutputsStayApart(items)
+}
+
+// checkJoinOutputIsNew refuses, in a statement with joins, an output name that an
+// earlier column already writes for another expression. A result is read by name, one
+// value per name, so a.id and r.id in one select list are two columns of the statement
+// of which the reader keeps one and drops the other without a word. DALgo's generic
+// engine refuses the same query with join_field at columns[n]: duplicate output name,
+// and so does this, with the same kind of error: it is no refusal to fall back on, as
+// the generic engine would refuse too. A name repeated for the same expression is one
+// column asked twice, which compiles as it does for a lone source, where a repeated name
+// is left as it was. seen holds, by written output name, the expression that first wrote
+// it; column is the position of the select-list column that item comes from, as DALgo's
+// error names it.
+func (c *typedCompiler) checkJoinOutputIsNew(seen map[string]dal.Expression, column int, item typedSelectItem) error {
+	if !c.hasJoins {
+		return nil
+	}
+	if first, repeated := seen[item.output]; repeated && !typedSameExpression(first, item.expression) {
+		return errJoinOutputRepeated(column, item.asked)
+	}
+	seen[item.output] = item.expression
+	return nil
+}
+
+// errJoinOutputRepeated is the refusal of a select list that gives two expressions of a
+// join one output name, in the words and with the category DALgo's generic engine uses
+// for the same query. The name is quoted: an alias is the caller's.
+func errJoinOutputRepeated(column int, name string) error {
+	return &dal.JoinValidationError{Category: "join_field", Path: fmt.Sprintf("columns[%d]", column), Message: "duplicate output name " + strconv.Quote(name)}
 }
 
 // checkOutputsStayApart refuses a select list in which two outputs the query names
@@ -551,10 +613,18 @@ func (c *typedCompiler) selectItem(column dal.Column) (typedSelectItem, error) {
 // quoteOutputName quotes the name of a result column: an alias, or the text of an
 // unaliased expression. Such a name only labels the column. A name the engine
 // cannot spell because it is too long is therefore no malformed query, and DALgo's
-// generic engine, which writes no name into a statement, can label the column
-// itself: it is refused as unsupported. Any other fault (empty, a NUL byte, not
-// UTF-8) stays a plain error, as for every other name. The message carries the
-// length and the limit, never the name.
+// generic engine, which writes no name into a statement, could label the column
+// itself: the name is refused as unsupported (dal.ErrNotSupported).
+//
+// What that refusal does depends on the query, because DALgo falls back only where it
+// has a fallback. A join is asked of the adapter first (CanExecuteJoin compiles the
+// whole query), and DALgo runs the generic join when the adapter declines it, so a long
+// alias in a join is served by the generic engine. A query over one source goes to the
+// adapter with no such step, so a long alias there fails the read with this error and
+// the caller shortens the alias.
+//
+// Any other fault (empty, a NUL byte, not UTF-8) stays a plain error, as for every
+// other name. The message carries the length and the limit, never the name.
 func (c *typedCompiler) quoteOutputName(name string) (string, error) {
 	quoted, err := c.quote(name)
 	var tooLong *typedIdentifierTooLongError
@@ -684,9 +754,9 @@ func (c *typedCompiler) orderBy(orders []dal.OrderExpression, items []typedSelec
 // cannot be captured, and a join statement writes no bare name (c.expr refuses it
 // first), so a source on the item or on the output needs no comparison here.
 //
-// The refusal sends the query to DALgo's generic engine. Writing the column
-// qualified by the base source would keep it native; refusing is the narrower
-// change, and the shape is rare.
+// The refusal is an error the caller of a one-source read sees: DALgo has no generic
+// engine to send such a query to. Writing the column qualified by the base source would
+// keep it native; refusing is the narrower change, and the shape is rare.
 func typedCheckOrderByName(expression dal.Expression, written string, items []typedSelectItem) error {
 	field, ok := expression.(dal.FieldRef)
 	if !ok || field.Source() != "" {

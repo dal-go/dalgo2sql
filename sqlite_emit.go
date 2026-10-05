@@ -58,6 +58,9 @@ func compileStructuredSQL(q dal.StructuredQuery) (string, []any, error) {
 			aliases[column.Alias] = column.Expression
 		}
 	}
+	// joinOutputs holds, by name, the expression of each column of a statement with
+	// joins that the compiler can name: the alias, else the field's own name.
+	joinOutputs := map[string]dal.Expression{}
 	if len(columns) == 0 {
 		b.WriteByte('*')
 	} else {
@@ -68,6 +71,11 @@ func compileStructuredSQL(q dal.StructuredQuery) (string, []any, error) {
 			if column.Wildcard != nil {
 				b.WriteString(wildcard.sqlExpression(quoteSQLIdentifier))
 				continue
+			}
+			if hasJoins {
+				if err := checkSQLJoinOutputIsNew(joinOutputs, i, column); err != nil {
+					return "", nil, err
+				}
 			}
 			expr, values, err := compileSQLExpressionWithSources(column.Expression, sourceAliases, hasJoins)
 			if err != nil {
@@ -180,6 +188,27 @@ func compileStructuredSQL(q dal.StructuredQuery) (string, []any, error) {
 		args = append(args, q.Offset())
 	}
 	return b.String(), args, nil
+}
+
+// checkSQLJoinOutputIsNew refuses, in a statement with joins, a column that gives an output
+// name an earlier column gave to another expression: a result is read by name, so one of
+// the two would be dropped. It is what the typed compiler's checkJoinOutputIsNew does, and
+// DALgo's generic engine refuses the same query. Only the names SQLite takes from the
+// text are known here, the alias and the field's own name; an unaliased expression is
+// named by SQLite from its own text, which is not known.
+func checkSQLJoinOutputIsNew(seen map[string]dal.Expression, index int, column dal.Column) error {
+	name := column.Alias
+	if field, isField := column.Expression.(dal.FieldRef); name == "" && isField {
+		name = field.Name()
+	}
+	if name == "" {
+		return nil
+	}
+	if first, repeated := seen[name]; repeated && !typedSameExpression(first, column.Expression) {
+		return errJoinOutputRepeated(index, name)
+	}
+	seen[name] = column.Expression
+	return nil
 }
 
 func quoteSQLIdentifier(name string) string { return "`" + strings.ReplaceAll(name, "`", "``") + "`" }

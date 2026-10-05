@@ -377,9 +377,10 @@ func TestPostgresAcceptedJoinIsReadAndKeyed(t *testing.T) {
 }
 
 // A native compiler of the caller's, even with the PostgreSQL dialect named, is handed
-// the query as it always was: the key column unqualified. Only the typed compiler
-// needs it qualified.
-func TestRecordIdentityFieldIsQualifiedOnlyForTheTypedCompilerInAJoin(t *testing.T) {
+// the query as it always was: the key column unqualified. Only the compilers of this
+// package need it qualified, the typed PostgreSQL one and the SQLite one, which refuse
+// an unqualified field in a join.
+func TestRecordIdentityFieldIsQualifiedOnlyForTheCompilersOfThisPackageInAJoin(t *testing.T) {
 	join := postgresJoinQuery("ArtistId", "ArtistId")
 	single := typedTestFrom("Album", "").NewQuery().SelectColumns(typedTestColumn(typedTestField("Title"), ""))
 	native := nativeCompilerFunc(func(dal.StructuredQuery, NativeJoinHintFragments) (string, []any, error) { return "", nil, nil })
@@ -394,7 +395,8 @@ func TestRecordIdentityFieldIsQualifiedOnlyForTheTypedCompilerInAJoin(t *testing
 			typedTestFrom("Album", "").Join(dal.NewJoinedSource(dal.NewRootCollectionRef("Artist", "r"), dal.JoinInner, typedTestJoinOn("Album", "ArtistId", "r", "ArtistId"))).NewQuery().SelectColumns(), "Album"},
 		{"the typed compiler, no join", DbOptions{StructuredQueryDialect: "postgres"}, single, ""},
 		{"a native compiler, a join", DbOptions{StructuredQueryDialect: "postgres", NativeStructuredQueryCompiler: native}, join, ""},
-		{"another dialect, a join", DbOptions{StructuredQueryDialect: "sqlite"}, join, ""},
+		{"the SQLite compiler, a join: the base's alias", DbOptions{StructuredQueryDialect: "sqlite"}, join, "a"},
+		{"a dialect the package does not compile, a join", DbOptions{StructuredQueryDialect: "mysql"}, join, ""},
 		{"no dialect, a join", DbOptions{}, join, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

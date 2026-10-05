@@ -21,6 +21,10 @@ func getRecordsetReaderWithDialect(ctx context.Context, query dal.Query, execute
 	return getRecordsetReaderWithOptions(ctx, query, execute, DbOptions{StructuredQueryDialect: dialect}, options...)
 }
 
+// getRecordsetReaderWithOptions runs the query and returns a reader over its rows. A read
+// that fails returns no reader and holds no rows: one that fails after its statement ran
+// (a column the recordset cannot hold) closes them here, on every path, because a caller
+// who is handed an error does not close a reader it was not given.
 func getRecordsetReaderWithOptions(ctx context.Context, query dal.Query, execute executeQueryFunc, sqlOptions DbOptions, options ...recordset.Option) (rr *recordsetReader, err error) {
 	rr = &recordsetReader{}
 	if q, ok := query.(dal.StructuredQuery); ok {
@@ -29,6 +33,14 @@ func getRecordsetReaderWithOptions(ctx context.Context, query dal.Query, execute
 	if rr.readerBase, err = getReaderBaseWithOptions(ctx, query, execute, sqlOptions); err != nil {
 		return nil, err
 	}
+
+	// From here the statement has run and its rows are open.
+	defer func() {
+		if err != nil {
+			_ = rr.rows.Close()
+			rr = nil
+		}
+	}()
 
 	rsOptions := recordset.NewOptions(options...)
 
@@ -140,7 +152,12 @@ func (r *recordsetReader) Close() error {
 func (r *recordsetReader) Next() (row recordset.Row, rs recordset.Recordset, err error) {
 	if !r.rows.Next() {
 		r.lease.release() // the rows closed themselves at the end: the connection goes back
-		err = dal.ErrNoMoreRecords
+		// Next is false at the end of the result and also when the stream broke (a
+		// timeout, a server error at one row): only Err tells them apart, and a broken
+		// stream is never a shorter result that ended well.
+		if err = r.rows.Err(); err == nil {
+			err = dal.ErrNoMoreRecords
+		}
 		return
 	}
 	var values []any
