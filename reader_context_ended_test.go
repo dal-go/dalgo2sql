@@ -61,7 +61,11 @@ const (
 	endWhileReadingFacts  = "while the catalog answer is read"
 	endBetweenStatements  = "between the catalog statement and the statement"
 	endDuringTheStatement = "during the statement"
-	endWhileStreaming     = "while the result is streamed"
+	// endWhileColumnTypesAreRead is the point between the statement's answer and the
+	// reader having the column types of the result: database/sql closes the rows from its own
+	// goroutine when the context ends, and the lookup of the column types then fails.
+	endWhileColumnTypesAreRead = "while the column types of the result are read"
+	endWhileStreaming          = "while the result is streamed"
 )
 
 // endingScript drives the driver: it ends ctx, with cause, at point.
@@ -69,6 +73,10 @@ type endingScript struct {
 	ctx   *endableContext
 	cause error
 	point string
+	// statementRowsClosed is closed when the rows of the statement have been closed, by
+	// the reader or by database/sql when the context ends.
+	statementRowsClosed chan struct{}
+	closeOnce           sync.Once
 }
 
 func (s *endingScript) end() { s.ctx.end(s.cause) }
@@ -140,6 +148,9 @@ func (r *endingRows) Close() error {
 	if r.catalog && r.script.point == endBetweenStatements {
 		r.script.end()
 	}
+	if !r.catalog {
+		r.script.closeOnce.Do(func() { close(r.script.statementRowsClosed) })
+	}
 	return nil
 }
 
@@ -169,7 +180,7 @@ func (r *endingRows) Next(dest []driver.Value) error {
 func TestAReadWhoseContextEndsReturnsTheContextsError(t *testing.T) {
 	points := []string{
 		endBeforeTheRead, endWhileConnecting, endAfterConnecting, endDuringTheCatalog,
-		endWhileReadingFacts, endBetweenStatements, endDuringTheStatement, endWhileStreaming,
+		endWhileReadingFacts, endBetweenStatements, endDuringTheStatement, endWhileColumnTypesAreRead, endWhileStreaming,
 	}
 	readers := []struct {
 		name string
@@ -205,7 +216,9 @@ func TestAReadWhoseContextEndsReturnsTheContextsError(t *testing.T) {
 					// The point at which the context ends can meet the hook that gives the
 					// connection back in either order: run it a number of times.
 					for range 20 {
-						script := &endingScript{ctx: newEndableContext(), cause: cause, point: point}
+						script := &endingScript{ctx: newEndableContext(), cause: cause, point: point, statementRowsClosed: make(chan struct{})}
+						restore := endTheContextWhenColumnTypesAreRead(script)
+						t.Cleanup(restore)
 						db := sql.OpenDB(endingConnector{script: script})
 						backend := &database{recordsReaderProvider: recordsReaderProvider{executeQuery: db.QueryContext}, db: db, options: postgresConnectionOptions()}
 						if point == endBeforeTheRead {
@@ -213,6 +226,7 @@ func TestAReadWhoseContextEndsReturnsTheContextsError(t *testing.T) {
 						}
 						closeReader, err := reader.read(script.ctx, backend, typedTestFrom("Album", "").NewQuery().SelectColumns())
 						closeReader()
+						restore()
 						if !errors.Is(err, cause) {
 							t.Fatalf("error = %v, want one that matches %v", err, cause)
 						}
@@ -231,6 +245,63 @@ func TestAReadWhoseContextEndsReturnsTheContextsError(t *testing.T) {
 			}
 		}
 	}
+}
+
+// A read on the pool, which holds no lease, meets the same end between the lookups of the
+// names and of the types of its result: the error is the context's, and the rows are closed
+// so that their connection is back in the pool.
+func TestAPoolReadWhoseContextEndsWhileItsColumnTypesAreReadReturnsTheContextsError(t *testing.T) {
+	query := dal.NewTextQuery("SELECT * FROM Album", nil)
+	readers := map[string]func(ctx context.Context, backend *database) error{
+		"records reader": func(ctx context.Context, backend *database) error {
+			_, err := backend.ExecuteQueryToRecordsReader(ctx, query)
+			return err
+		},
+		"recordset reader": func(ctx context.Context, backend *database) error {
+			_, err := backend.ExecuteQueryToRecordsetReader(ctx, query)
+			return err
+		},
+	}
+	for name, read := range readers {
+		for _, cause := range []error{context.Canceled, context.DeadlineExceeded} {
+			t.Run(fmt.Sprintf("%s/%v", name, cause), func(t *testing.T) {
+				for range 20 {
+					script := &endingScript{ctx: newEndableContext(), cause: cause, point: endWhileColumnTypesAreRead, statementRowsClosed: make(chan struct{})}
+					restore := endTheContextWhenColumnTypesAreRead(script)
+					t.Cleanup(restore)
+					db := sql.OpenDB(endingConnector{script: script})
+					err := read(script.ctx, &database{recordsReaderProvider: recordsReaderProvider{executeQuery: db.QueryContext}, db: db})
+					restore()
+					if !errors.Is(err, cause) {
+						t.Fatalf("error = %v, want one that matches %v", err, cause)
+					}
+					if stats := db.Stats(); stats.InUse != 0 {
+						t.Fatalf("%d connections are still in use: %+v", stats.InUse, stats)
+					}
+					_ = db.Close()
+				}
+			})
+		}
+	}
+}
+
+// endTheContextWhenColumnTypesAreRead makes the lookup of the column types of the statement's
+// rows the point at which the script ends the context, when that is its point, and returns
+// the function that puts the lookup back. database/sql closes the rows from its own goroutine
+// when the context ends, and which of its lookups, the names or the types, that meets first is
+// the scheduler's choice, so the lookup is held here until the rows are closed: the error it
+// returns is then the one a read meets when the context ends right between the two.
+func endTheContextWhenColumnTypesAreRead(script *endingScript) (restore func()) {
+	if script.point != endWhileColumnTypesAreRead {
+		return func() {}
+	}
+	original := columnTypesOf
+	columnTypesOf = func(rows *sql.Rows) ([]*sql.ColumnType, error) {
+		script.end()
+		<-script.statementRowsClosed
+		return original(rows)
+	}
+	return func() { columnTypesOf = original }
 }
 
 // Only an error that says the connection is gone is explained by the end of the context;

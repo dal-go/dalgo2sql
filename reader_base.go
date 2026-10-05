@@ -120,6 +120,12 @@ func (l *connLease) release() {
 	l.giveBack()
 }
 
+// columnTypesOf reads the column types of rows. It is a variable so that a test can end the
+// context of a read at the one point between its two lookups on the rows, the names and the
+// types: database/sql closes the rows from its own goroutine when the context ends, and which
+// lookup it meets first is the scheduler's choice.
+var columnTypesOf = func(rows *sql.Rows) ([]*sql.ColumnType, error) { return rows.ColumnTypes() }
+
 type readerBase struct {
 	// lease, when set, is the connection the rows run on; the reader releases it when
 	// it is done (see connLease).
@@ -267,7 +273,14 @@ func getReaderBaseFor(ctx context.Context, query dal.Query, execute executeQuery
 		_ = rb.rows.Close()
 		return rb, fmt.Errorf("the statement returned %d columns where the query asked for %d", len(rb.scanColNames), len(askedNames))
 	}
-	rb.scanColTypes, _ = rb.rows.ColumnTypes()
+	// database/sql closes the rows when the context ends, between the lookup of the names
+	// and this one, and then answers with no types and the context's error: a read without
+	// its types cannot go on, and a result whose columns have no types is never taken for one
+	// that has none.
+	if rb.scanColTypes, err = columnTypesOf(rb.rows); err != nil {
+		_ = rb.rows.Close()
+		return rb, fmt.Errorf("failed to read column types: %w", explainByContext(ctx, err))
+	}
 	rb.visibleIndexes = make([]int, len(rb.scanColNames))
 	for i := range rb.visibleIndexes {
 		rb.visibleIndexes[i] = i
