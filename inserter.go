@@ -13,11 +13,11 @@ import (
 const maxIDGenerationAttempts = 10
 
 func (dtb *database) Insert(ctx context.Context, record dalrecord.Record, opts ...dal.InsertOption) error {
-	return insertSingle(ctx, dtb.options, record, dtb.db.ExecContext, dtb.db.Query, opts...)
+	return insertSingle(ctx, dtb.options, record, dtb.db.ExecContext, dtb.db.QueryContext, opts...)
 }
 
 func (t transaction) Insert(ctx context.Context, record dalrecord.Record, opts ...dal.InsertOption) error {
-	return insertSingle(ctx, t.sqlOptions, record, t.tx.ExecContext, t.tx.Query, opts...)
+	return insertSingle(ctx, t.sqlOptions, record, t.tx.ExecContext, t.tx.QueryContext, opts...)
 }
 
 // insertSingle inserts a single record honoring dal.InsertOptions:
@@ -27,7 +27,7 @@ func (t transaction) Insert(ctx context.Context, record dalrecord.Record, opts .
 //     (per the dal contract), as generic SQL has no portable native ID allocation
 //     for arbitrary key types;
 //   - otherwise the record is inserted as is.
-func insertSingle(ctx context.Context, options DbOptions, record dalrecord.Record, exec statementExecutor, execQuery queryExecutor, opts ...dal.InsertOption) error {
+func insertSingle(ctx context.Context, options DbOptions, record dalrecord.Record, exec statementExecutor, execQuery executeQueryFunc, opts ...dal.InsertOption) error {
 	// An ID generator checks for a taken ID with a statement of its own before
 	// the insert is built, so the names the insert will carry are checked first.
 	if err := options.checkRecordNames(record); err != nil {
@@ -107,7 +107,7 @@ func (t transaction) InsertMulti(ctx context.Context, records []dalrecord.Record
 		}
 	}
 	for _, record := range records {
-		if err := insertSingle(ctx, t.sqlOptions, record, t.tx.ExecContext, t.tx.Query, opts...); err != nil {
+		if err := insertSingle(ctx, t.sqlOptions, record, t.tx.ExecContext, t.tx.QueryContext, opts...); err != nil {
 			return err
 		}
 	}

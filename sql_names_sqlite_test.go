@@ -151,7 +151,7 @@ func TestGetMultiFromSingleTable_RefusesTheCollectionOnItsOwn(t *testing.T) {
 		dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("a b", "k1"), map[string]any{}),
 		dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("a b", "k2"), map[string]any{}),
 	}
-	err := getMultiFromSingleTable(context.Background(), DbOptions{}, records, func(string, ...any) (*sql.Rows, error) {
+	err := getMultiFromSingleTable(context.Background(), DbOptions{}, records, func(context.Context, string, ...any) (*sql.Rows, error) {
 		t.Fatal("a statement was sent")
 		return nil, nil
 	})

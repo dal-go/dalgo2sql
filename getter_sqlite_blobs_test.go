@@ -268,8 +268,8 @@ func TestSQLiteGetMultiReturnsClosedRowsMetadataError(t *testing.T) {
 	mock.ExpectQuery(`SELECT .*`).
 		WithArgs("one", "two").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "payload"}).AddRow("one", []byte{0xff}))
-	exec := func(query string, args ...interface{}) (*sql.Rows, error) {
-		rows, err := sqlDB.Query(query, args...)
+	exec := func(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
+		rows, err := sqlDB.QueryContext(ctx, query, args...)
 		if err == nil {
 			_ = rows.Close()
 		}

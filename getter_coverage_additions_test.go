@@ -58,7 +58,7 @@ func TestGetter_GetSingle_Additional(t *testing.T) {
 		rec := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "u1"), &struct{}{})
 		smock.ExpectQuery("SELECT 1 FROM users WHERE ID = \\?").WithArgs("u1").WillReturnRows(sqlmock.NewRows([]string{"1"}).AddRow(1))
 		opts := DbOptions{Recordsets: map[string]*Recordset{"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("ID")})}}
-		err := getSingle(ctx, opts, rec, sdb.Query)
+		err := getSingle(ctx, opts, rec, sdb.QueryContext)
 		if err == nil || !strings.Contains(err.Error(), `column "1": no corresponding field`) {
 			t.Fatalf("err = %v, want the column 1 to have no field", err)
 		}
@@ -70,7 +70,7 @@ func TestGetter_GetSingle_Additional(t *testing.T) {
 	t.Run("pk_len_0", func(t *testing.T) {
 		rec := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "u1"), &struct{ Name string }{})
 		opts := DbOptions{} // PrimaryKeyFieldNames returns nil
-		err := getSingle(ctx, opts, rec, sdb.Query)
+		err := getSingle(ctx, opts, rec, sdb.QueryContext)
 		if err == nil {
 			t.Fatal("expected error for empty pk")
 		}
@@ -79,7 +79,7 @@ func TestGetter_GetSingle_Additional(t *testing.T) {
 	t.Run("pk_len_greater_than_1", func(t *testing.T) {
 		rec := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "u1"), &struct{ Name string }{})
 		opts := DbOptions{Recordsets: map[string]*Recordset{"users": NewRecordset("users", Table, []dal.FieldRef{dal.Field("id1"), dal.Field("id2")})}}
-		err := getSingle(ctx, opts, rec, sdb.Query)
+		err := getSingle(ctx, opts, rec, sdb.QueryContext)
 		if err == nil {
 			t.Fatal("expected error for composite pk")
 		}
@@ -91,7 +91,7 @@ func TestGetter_GetSingle_Additional(t *testing.T) {
 		// Return a string where int is expected for scanning into Age
 		smock.ExpectQuery("SELECT Age FROM users WHERE ID = \\?").WithArgs("u1").
 			WillReturnRows(sqlmock.NewRows([]string{"Age"}).AddRow("not-an-int"))
-		err := getSingle(ctx, opts, rec, sdb.Query)
+		err := getSingle(ctx, opts, rec, sdb.QueryContext)
 		if err == nil {
 			t.Fatal("expected rowIntoRecord error")
 		}
@@ -111,14 +111,14 @@ func TestGetter_GetMulti_Additional(t *testing.T) {
 		r2 := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "u2"), &struct{ Name string }{})
 		smock.ExpectQuery("SELECT ID, Name FROM users WHERE ID IN").WillReturnError(errors.New("query error"))
 		opts := DbOptions{PrimaryKey: []string{"ID"}}
-		err := getMulti(ctx, opts, []dalrecord.Record{r1, r2}, sdb.Query)
+		err := getMulti(ctx, opts, []dalrecord.Record{r1, r2}, sdb.QueryContext)
 		if err == nil {
 			t.Fatal("expected error from getMulti")
 		}
 	})
 
 	t.Run("getMultiFromSingleTable_empty", func(t *testing.T) {
-		err := getMultiFromSingleTable(ctx, DbOptions{}, nil, sdb.Query)
+		err := getMultiFromSingleTable(ctx, DbOptions{}, nil, sdb.QueryContext)
 		if err != nil {
 			t.Fatalf("unexpected err: %v", err)
 		}
@@ -128,7 +128,7 @@ func TestGetter_GetMulti_Additional(t *testing.T) {
 		r1 := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "u1"), &struct{ Name string }{})
 		smock.ExpectQuery("SELECT ID, Name FROM users WHERE ID = \\?").WithArgs().WillReturnRows(sqlmock.NewRows([]string{"ID", "Name"}).AddRow("u1", "Alice"))
 		opts := DbOptions{PrimaryKey: []string{"ID"}}
-		err := getMultiFromSingleTable(ctx, opts, []dalrecord.Record{r1}, sdb.Query)
+		err := getMultiFromSingleTable(ctx, opts, []dalrecord.Record{r1}, sdb.QueryContext)
 		if err != nil {
 			t.Fatalf("unexpected err: %v", err)
 		}
@@ -139,7 +139,7 @@ func TestGetter_GetMulti_Additional(t *testing.T) {
 		r2 := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "u2"), &struct{ Name string }{})
 		opts := DbOptions{PrimaryKey: []string{"p1", "p2"}}
 		// No statement is expected: the mock fails the test of any it did not expect.
-		err := getMultiFromSingleTable(ctx, opts, []dalrecord.Record{r1, r2}, sdb.Query)
+		err := getMultiFromSingleTable(ctx, opts, []dalrecord.Record{r1, r2}, sdb.QueryContext)
 		if !errors.Is(err, dal.ErrNotImplementedYet) {
 			t.Fatalf("error = %v, want one wrapping dal.ErrNotImplementedYet", err)
 		}
@@ -148,7 +148,7 @@ func TestGetter_GetMulti_Additional(t *testing.T) {
 	t.Run("getMultiFromSingleTable_len_1_with_an_ID_that_does_not_fit_a_composite_pk", func(t *testing.T) {
 		r1 := dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "u1"), &struct{ Name string }{})
 		opts := DbOptions{PrimaryKey: []string{"p1", "p2"}}
-		err := getMultiFromSingleTable(ctx, opts, []dalrecord.Record{r1}, sdb.Query)
+		err := getMultiFromSingleTable(ctx, opts, []dalrecord.Record{r1}, sdb.QueryContext)
 		if !errors.Is(err, dal.ErrNotSupported) || !errors.Is(r1.Error(), dal.ErrNotSupported) {
 			t.Fatalf("error = %v, record error = %v, want both to wrap dal.ErrNotSupported", err, r1.Error())
 		}
@@ -166,7 +166,7 @@ func TestGetter_GetMulti_Additional(t *testing.T) {
 		smock.ExpectQuery("SELECT \\* FROM users WHERE ID IN").WillReturnRows(rows)
 
 		opts := DbOptions{PrimaryKey: []string{"ID"}}
-		err := getMultiFromSingleTable(ctx, opts, []dalrecord.Record{r1, r2}, sdb.Query)
+		err := getMultiFromSingleTable(ctx, opts, []dalrecord.Record{r1, r2}, sdb.QueryContext)
 		if err != nil {
 			t.Fatalf("unexpected err: %v", err)
 		}
@@ -187,7 +187,7 @@ func TestGetter_GetMulti_Additional(t *testing.T) {
 		smock.ExpectQuery("SELECT ID, ID, Age, Name FROM users WHERE ID IN").WillReturnRows(rows)
 
 		opts := DbOptions{PrimaryKey: []string{"ID"}}
-		err := getMultiFromSingleTable(ctx, opts, []dalrecord.Record{r1, r2}, sdb.Query)
+		err := getMultiFromSingleTable(ctx, opts, []dalrecord.Record{r1, r2}, sdb.QueryContext)
 		if err != nil {
 			t.Fatalf("unexpected err: %v", err)
 		}
@@ -207,7 +207,7 @@ func TestGetter_GetMulti_Additional(t *testing.T) {
 		smock.ExpectQuery("SELECT ID, ID, Age, Name FROM users WHERE ID IN").WillReturnRows(rows)
 
 		opts := DbOptions{PrimaryKey: []string{"ID"}}
-		err := getMultiFromSingleTable(ctx, opts, []dalrecord.Record{r1, r2}, sdb.Query)
+		err := getMultiFromSingleTable(ctx, opts, []dalrecord.Record{r1, r2}, sdb.QueryContext)
 		if err == nil {
 			t.Fatal("expected scan error")
 		}
@@ -223,7 +223,7 @@ func TestGetter_GetMulti_Additional(t *testing.T) {
 		smock.ExpectQuery("SELECT \\* FROM users WHERE ID IN").WillReturnRows(rows)
 
 		opts := DbOptions{PrimaryKey: []string{"ID"}}
-		_ = getMultiFromSingleTable(ctx, opts, []dalrecord.Record{r1, r2}, sdb.Query)
+		_ = getMultiFromSingleTable(ctx, opts, []dalrecord.Record{r1, r2}, sdb.QueryContext)
 	})
 
 	t.Run("getMultiFromSingleTable_rows_Err_sqlErrNoRows", func(t *testing.T) {
@@ -238,7 +238,7 @@ func TestGetter_GetMulti_Additional(t *testing.T) {
 		smock.ExpectQuery("SELECT ID, ID, Age, Name FROM users WHERE ID IN").WillReturnRows(rows)
 
 		opts := DbOptions{PrimaryKey: []string{"ID"}}
-		err := getMultiFromSingleTable(ctx, opts, []dalrecord.Record{r1, r2}, sdb.Query)
+		err := getMultiFromSingleTable(ctx, opts, []dalrecord.Record{r1, r2}, sdb.QueryContext)
 		if err != nil {
 			t.Fatalf("expected nil error for ErrNoRows, got %v", err)
 		}
@@ -256,7 +256,7 @@ func TestGetter_GetMulti_Additional(t *testing.T) {
 		smock.ExpectQuery("SELECT ID, ID, Age, Name FROM users WHERE ID IN").WillReturnRows(rows)
 
 		opts := DbOptions{PrimaryKey: []string{"ID"}}
-		err := getMultiFromSingleTable(ctx, opts, []dalrecord.Record{r1, r2}, sdb.Query)
+		err := getMultiFromSingleTable(ctx, opts, []dalrecord.Record{r1, r2}, sdb.QueryContext)
 		if err == nil {
 			t.Fatal("expected error from rows.Err()")
 		}
@@ -276,7 +276,7 @@ func TestGetter_GetMulti_Additional(t *testing.T) {
 		smock.ExpectQuery("SELECT ID, ID, Age, Name FROM users WHERE ID IN").WillReturnRows(rows)
 
 		opts := DbOptions{PrimaryKey: []string{"ID"}}
-		err := getMultiFromSingleTable(ctx, opts, []dalrecord.Record{r1, r2}, sdb.Query)
+		err := getMultiFromSingleTable(ctx, opts, []dalrecord.Record{r1, r2}, sdb.QueryContext)
 		if err == nil {
 			t.Fatal("expected rowIntoRecord error for r2")
 		}

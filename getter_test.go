@@ -241,6 +241,7 @@ func TestGetter_GetMulti(t *testing.T) {
 	})
 
 	t.Run("multiple_tables", func(t *testing.T) {
+		mock.MatchExpectationsInOrder(false)
 		d = NewDatabase(db, newSchema(), DbOptions{
 			Recordsets: map[string]*Recordset{
 				"users":  NewRecordset("users", Table, []dal.FieldRef{dal.Field("id")}),
@@ -254,13 +255,19 @@ func TestGetter_GetMulti(t *testing.T) {
 			dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("users", "u1"), &User{}),
 			dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("groups", "g1"), &User{}),
 		}
-		mock.ExpectQuery("SELECT id, Name FROM users WHERE id IN \\(\\?\\)").WithArgs("u1").
-			WillReturnRows(sqlmock.NewRows([]string{"id", "Name"}).AddRow("u1", "John"))
-		mock.ExpectQuery("SELECT id, Name FROM groups WHERE id IN \\(\\?\\)").WithArgs("g1").
-			WillReturnRows(sqlmock.NewRows([]string{"id", "Name"}).AddRow("g1", "Admins"))
+		mock.ExpectQuery("SELECT Name FROM users WHERE id = \\?").WithArgs("u1").
+			WillReturnRows(sqlmock.NewRows([]string{"Name"}).AddRow("John"))
+		mock.ExpectQuery("SELECT Name FROM groups WHERE id = \\?").WithArgs("g1").
+			WillReturnRows(sqlmock.NewRows([]string{"Name"}).AddRow("Admins"))
 		err := d.GetMulti(ctx, records)
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatal(err)
+		}
+		if records[0].Data().(*User).Name != "John" || records[1].Data().(*User).Name != "Admins" {
+			t.Fatal("singleton groups were not read")
 		}
 	})
 }
