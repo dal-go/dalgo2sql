@@ -489,3 +489,56 @@ func TestPostgresCatalogFactsFeedTheCompiler(t *testing.T) {
 		}
 	})
 }
+
+// TestPostgresCatalogQueryDoesNotCountAnUnvalidatedNotNullAsNotNull: since PostgreSQL 18 a
+// column can be marked not null by a constraint added NOT VALID (pg_constraint.contype 'n',
+// convalidated false) while rows that were there hold NULL, and pg_attribute.attnotnull is
+// then true. The fact the compiler reads for the NULLS clause is true only when no such
+// constraint covers the column. PostgreSQL 17 has no contype 'n' row, so the subquery is
+// empty there and the fact is attnotnull as it was.
+func TestPostgresCatalogQueryDoesNotCountAnUnvalidatedNotNullAsNotNull(t *testing.T) {
+	query := postgresCatalogQuery(1)
+	want := "(a.attnotnull AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint n WHERE n.conrelid = r.oid AND n.contype = 'n' AND a.attnum = ANY (n.conkey) AND NOT n.convalidated)) AS attnotnull"
+	if !strings.Contains(query, want) {
+		t.Fatalf("catalog query does not contain %q:\n%s", want, query)
+	}
+	if strings.Contains(query, "a.attnotnull, ") {
+		t.Errorf("the catalog query still reads a.attnotnull as the fact:\n%s", query)
+	}
+}
+
+// TestPostgresCatalogFactsOfANotValidNotNullColumnKeepTheNullsClause: the catalog answers
+// false for a column whose not-null constraint is not validated, so an order over it,
+// ascending and descending, writes the NULLS clause DALgo's rule needs; over a validated
+// not-null column the statement is the one written without a clause.
+func TestPostgresCatalogFactsOfANotValidNotNullColumnKeepTheNullsClause(t *testing.T) {
+	execute, mock := newPostgresCatalogMock(t)
+	mock.ExpectQuery(postgresCatalogQuery(1)).WithArgs(`"nv"`).WillReturnRows(sqlmock.NewRows(postgresCatalogColumns).
+		AddRow(`"nv"`, "id", "integer", "N", int64(23), int64(0), true, false, true, int64(0)).
+		AddRow(`"nv"`, "v", "integer", "N", int64(23), int64(0), false, false, false, int64(0)).
+		AddRow(`"nv"`, "w", "integer", "N", int64(23), int64(0), true, false, false, int64(0)))
+	dialect := newPostgresDialect(postgresExact)
+	facts, err := dialect.catalogFacts(context.Background(), execute, []typedSourceName{{Name: "nv"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		column, direction, want string
+		order                   func(dal.Expression) dal.OrderExpression
+	}{
+		{"v", "ascending", `SELECT "id" FROM "nv" ORDER BY "v" ASC NULLS FIRST, "id" ASC LIMIT $1`, dal.Ascending},
+		{"v", "descending", `SELECT "id" FROM "nv" ORDER BY "v" DESC NULLS LAST, "id" ASC LIMIT $1`, dal.Descending},
+		{"w", "ascending", `SELECT "id" FROM "nv" ORDER BY "w" ASC, "id" ASC LIMIT $1`, dal.Ascending},
+		{"w", "descending", `SELECT "id" FROM "nv" ORDER BY "w" DESC, "id" ASC LIMIT $1`, dal.Descending},
+	} {
+		t.Run(c.column+" "+c.direction, func(t *testing.T) {
+			q := typedTestFrom("nv", "").NewQuery().
+				OrderBy(c.order(typedTestField(c.column)), dal.Ascending(typedTestField("id"))).Limit(3).
+				SelectColumns(typedTestColumn(typedTestField("id"), ""))
+			text, _, err := compileTypedSQL(q, dialect, facts)
+			if err != nil || text != c.want {
+				t.Fatalf("compileTypedSQL() = %q, %v; want %q", text, err, c.want)
+			}
+		})
+	}
+}

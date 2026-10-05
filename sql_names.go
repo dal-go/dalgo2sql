@@ -32,6 +32,10 @@ import (
 //     underscores, ASCII only, and no longer than 255 bytes. It is written as
 //     given, so the statement text of every name accepted is the text this
 //     package has always sent.
+//   - With DbOptions.StructuredQueryDialect "postgres" a name must also be no
+//     longer than 63 bytes, which is all PostgreSQL keeps of an identifier: a
+//     longer name would address the table or column named by its first 63 bytes.
+//     The name of a nested key is the joined name, which is checked as one.
 //
 // A name used to be pasted into the statement as written, so one that carried
 // its own quoting ("Order Details" with the quote characters, [Order Details],
@@ -72,12 +76,16 @@ const (
 	// dialectSQLite is the StructuredQueryDialect whose identifier quoting
 	// (quoteSQLIdentifier) has been reviewed.
 	dialectSQLite = "sqlite"
-	// maxNameBytes bounds every name, quoted or plain. SQLite sets no limit of
-	// its own; MySQL refuses a name over 64 bytes, and PostgreSQL truncates one
-	// over 63 bytes with a notice, so a longer name would address the table named
-	// by its first 63 bytes. The bound keeps error messages and statements short;
-	// a name of 64 to 255 bytes is still accepted, and PostgreSQL still truncates
-	// it.
+	// dialectPostgres is the StructuredQueryDialect of PostgreSQL. Its key paths write a
+	// plain identifier unquoted, so a name over postgresMaxIdentifierBytes is refused.
+	dialectPostgres = "postgres"
+	// maxNameBytes bounds every name, quoted or plain, of every dialect. SQLite sets
+	// no limit of its own and MySQL refuses a name over 64 bytes; the bound keeps
+	// error messages and statements short. PostgreSQL keeps 63 bytes of an identifier
+	// and silently cuts the rest, so under the "postgres" dialect the bound is
+	// postgresMaxIdentifierBytes, the limit the typed compiler holds: a longer name
+	// would address the table or column named by its first 63 bytes, and sqlIdentifier
+	// refuses it.
 	maxNameBytes = 255
 	// maxNameInError is how many characters of a refused name its error shows.
 	maxNameInError = 32
@@ -153,6 +161,9 @@ func quotableNameProblem(name string) string {
 func (o DbOptions) sqlIdentifier(position, name string) (string, error) {
 	quote := reviewedIdentifierQuoting(o.StructuredQueryDialect)
 	if quote == nil {
+		if o.StructuredQueryDialect == dialectPostgres && len(name) > postgresMaxIdentifierBytes {
+			return "", newUnsafeNameError(position, name, "is too long for PostgreSQL: it keeps 63 bytes")
+		}
 		if len(name) > maxNameBytes {
 			return "", newUnsafeNameError(position, name, "is too long")
 		}
