@@ -52,9 +52,10 @@ var errColumnsChanged = errors.New("the columns of the source changed during the
 // not asked for such a read's key.
 func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute executeQueryFunc, options DbOptions) (rr *recordsReader, err error) {
 	rr = &recordsReader{
-		identityColumnIndex: -1,
-		dialect:             options.StructuredQueryDialect,
-		exactNumericValues:  options.ExactNumericValues,
+		identityColumnIndex:  -1,
+		dialect:              options.StructuredQueryDialect,
+		exactNumericValues:   options.ExactNumericValues,
+		preserveBinaryValues: options.PreserveBinaryValues,
 		newRecord: func() dalrecord.Record {
 			return dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("Unknown", ""), make(map[string]any))
 		},
@@ -78,6 +79,11 @@ func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute e
 		if options.ExactNumericValues {
 			if rec := q.IntoRecord(); rec != nil && !isMapData(rec.Data()) {
 				return nil, errors.New("ExactNumericValues requires map record data so NUMERIC values can remain decimal text")
+			}
+		}
+		if options.PreserveBinaryValues {
+			if rec := q.IntoRecord(); rec != nil && !isMapData(rec.Data()) {
+				return nil, errors.New("PreserveBinaryValues requires map record data so PostgreSQL BYTEA values can remain byte slices")
 			}
 		}
 		if readsWithTypedPostgres(options) {
@@ -444,10 +450,11 @@ type recordsReader struct {
 	hideIdentityColumn  bool
 	// keyInBaseColumns says the statement is a select-all over joins, keyed from the base
 	// source's own column of the key's name (keyColumnIndex).
-	keyInBaseColumns   bool
-	validateFinite     bool
-	dialect            string
-	exactNumericValues bool
+	keyInBaseColumns     bool
+	validateFinite       bool
+	dialect              string
+	exactNumericValues   bool
+	preserveBinaryValues bool
 }
 
 // decimalText matches the text PostgreSQL prints for a finite NUMERIC: an
@@ -623,6 +630,11 @@ func (r recordsReader) Next() (record dalrecord.Record, err error) {
 			// scanRowIntoMapWithOptions on the Get path.
 			value := textValue(normalized)
 			columnType := columnTypeAt(r.colTypes, mapColumnIndex)
+			if r.preserveBinaryValues && r.dialect == dialectPostgres && columnType != nil && strings.EqualFold(columnType.DatabaseTypeName(), "BYTEA") {
+				if bytes, ok := normalized.([]byte); ok {
+					value = bytes
+				}
+			}
 			if r.dialect == "sqlite" && columnType != nil && strings.Contains(strings.ToUpper(columnType.DatabaseTypeName()), "BLOB") {
 				value = normalizeReadMapValue(raw, columnType, r.dialect)
 			}
@@ -647,7 +659,13 @@ func (r recordsReader) Next() (record dalrecord.Record, err error) {
 			mapColumnIndex = i
 		}
 		var normalized any
-		if r.exactNumericValues && strings.EqualFold(r.colTypes[i].DatabaseTypeName(), "NUMERIC") {
+		columnType := columnTypeAt(r.colTypes, i)
+		if r.preserveBinaryValues && r.dialect == dialectPostgres && columnType != nil && strings.EqualFold(columnType.DatabaseTypeName(), "BYTEA") {
+			normalized, err = preservePostgresBytea(values[i])
+			if err != nil {
+				return nil, fmt.Errorf("PostgreSQL BYTEA value in column %q: %w", n, err)
+			}
+		} else if r.exactNumericValues && strings.EqualFold(r.colTypes[i].DatabaseTypeName(), "NUMERIC") {
 			normalized, err = exactNumericValue(values[i])
 			if err != nil {
 				return nil, fmt.Errorf("exact NUMERIC value in column %q: %w", n, err)

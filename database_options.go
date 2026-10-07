@@ -19,6 +19,10 @@ type DbOptions struct {
 	// Drivers must expose NUMERIC as text or bytes; a float scan result is
 	// refused because its original decimal value cannot be recovered safely.
 	ExactNumericValues bool
+	// PreserveBinaryValues keeps PostgreSQL BYTEA values as byte slices in
+	// map-backed reads instead of applying the legacy []byte-to-string
+	// conversion. Other database types and the default behavior are unchanged.
+	PreserveBinaryValues bool
 	// Recordsets declares the recordsets (tables) of key reads and writes, by name,
 	// with the primary key each is looked up by.
 	//
