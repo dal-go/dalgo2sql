@@ -286,6 +286,8 @@ normalized through `float64`. Key reads into struct data are refused because a
 struct field can force a lossy conversion. A driver that already returned a
 `float32` or `float64` is refused because its original decimal cannot be
 recovered. The zero value keeps the legacy behavior.
+PostgreSQL's `NaN`, `Infinity` and `-Infinity` spellings remain text so a
+downstream provider can accept or reject them without inventing a numeric value.
 
 ## NULL in a recordset
 
