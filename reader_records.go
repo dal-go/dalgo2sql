@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/dal-go/dalgo/dal"
 	dalrecord "github.com/dal-go/record"
@@ -74,6 +75,11 @@ func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute e
 	// so that it does not ask again.
 	var facts *typedCatalogFacts
 	if q, ok := query.(dal.StructuredQuery); ok {
+		if options.ExactNumericValues {
+			if rec := q.IntoRecord(); rec != nil && !isMapData(rec.Data()) {
+				return nil, errors.New("ExactNumericValues requires map record data so NUMERIC values can remain decimal text")
+			}
+		}
 		if readsWithTypedPostgres(options) {
 			// The typed compiler refuses what it cannot compute as asked, and reads that
 			// from the query it is handed, which below can be a wrapper of this reader's
@@ -505,9 +511,12 @@ func exactNumericValue(value any) (any, error) {
 	case nil:
 		return nil, nil
 	case string:
-		return v, nil
+		return exactNumericText(v)
 	case []byte:
-		return string(v), nil
+		if !utf8.Valid(v) {
+			return nil, fmt.Errorf("driver returned non-UTF-8 bytes; exact decimal text is required")
+		}
+		return exactNumericText(string(v))
 	case int:
 		return strconv.FormatInt(int64(v), 10), nil
 	case int8:
@@ -531,6 +540,13 @@ func exactNumericValue(value any) (any, error) {
 	default:
 		return nil, fmt.Errorf("driver returned %T; exact decimal text is required", value)
 	}
+}
+
+func exactNumericText(text string) (string, error) {
+	if text == "NaN" || text == "Infinity" || text == "-Infinity" || decimalText.MatchString(text) {
+		return text, nil
+	}
+	return "", fmt.Errorf("driver returned unsupported NUMERIC text; expected decimal text or PostgreSQL NaN/Infinity")
 }
 
 // selectsIdentityField reports whether the select list returns the column name of the base
