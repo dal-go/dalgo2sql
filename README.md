@@ -289,6 +289,14 @@ recovered. The zero value keeps the legacy behavior.
 PostgreSQL's `NaN`, `Infinity` and `-Infinity` spellings remain text so a
 downstream provider can accept or reject them without inventing a numeric value.
 
+PostgreSQL `BYTEA` normally follows the legacy records-reader behavior and is
+converted from `[]byte` to `string`. Callers that need binary fidelity can set
+`DbOptions.PreserveBinaryValues`; in map-backed records reads this keeps only
+columns whose database type is `BYTEA` as copied `[]byte` values. Text columns,
+other database types, and the zero-value behavior are unchanged. Map-backed
+`Get` and `GetMulti` reads honor the same option. Recordset reads already keep
+byte-slice columns as bytes.
+
 ## NULL in a recordset
 
 The recordset readers hold each result column in a column that marks its NULL cells. A NULL

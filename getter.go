@@ -130,6 +130,11 @@ func getSingle(ctx context.Context, options DbOptions, record dalrecord.Record, 
 		record.SetError(err)
 		return err
 	}
+	if options.PreserveBinaryValues && !isMapData(record.Data()) {
+		err := errors.New("PreserveBinaryValues requires map record data so PostgreSQL BYTEA values can remain byte slices")
+		record.SetError(err)
+		return err
+	}
 	names, onRecord, err := renderSingleGet(options, record)
 	if err != nil {
 		if onRecord {
@@ -203,6 +208,9 @@ func getMulti(ctx context.Context, options DbOptions, records []dalrecord.Record
 		}
 		if options.ExactNumericValues && !isMapData(r.Data()) {
 			return refuseRecords(records, errors.New("ExactNumericValues requires map record data so NUMERIC values can remain decimal text"))
+		}
+		if options.PreserveBinaryValues && !isMapData(r.Data()) {
+			return refuseRecords(records, errors.New("PreserveBinaryValues requires map record data so PostgreSQL BYTEA values can remain byte slices"))
 		}
 	}
 	// Records are read together when their keys address the same recordset.
@@ -610,7 +618,7 @@ func scanRowIntoMapWithOptions(rows *sql.Rows, data interface{}, pkIncluded bool
 			if err != nil {
 				return fmt.Errorf("column %q: %w", col, err)
 			}
-			if val != nil || options.StructuredQueryDialect == "sqlite" {
+			if val != nil || options.StructuredQueryDialect == "sqlite" || preservesPostgresBytea(options, columnTypeAt(columnTypes, i)) {
 				setReadMapValue(v, col, val, options.StructuredQueryDialect)
 			}
 		}
@@ -692,7 +700,24 @@ func normalizeReadMapValueWithOptions(value any, columnType *sql.ColumnType, opt
 	if options.ExactNumericValues && columnType != nil && strings.EqualFold(columnType.DatabaseTypeName(), "NUMERIC") {
 		return exactNumericValue(value)
 	}
+	if preservesPostgresBytea(options, columnType) {
+		return preservePostgresBytea(value)
+	}
 	return normalizeReadMapValue(value, columnType, options.StructuredQueryDialect), nil
+}
+
+func preservesPostgresBytea(options DbOptions, columnType *sql.ColumnType) bool {
+	return options.PreserveBinaryValues && options.StructuredQueryDialect == dialectPostgres && columnType != nil && strings.EqualFold(columnType.DatabaseTypeName(), "BYTEA")
+}
+
+func preservePostgresBytea(value any) (any, error) {
+	if value == nil {
+		return nil, nil
+	}
+	if bytes, ok := value.([]byte); ok {
+		return append([]byte{}, bytes...), nil
+	}
+	return nil, fmt.Errorf("PostgreSQL BYTEA value must be []byte, got %T", value)
 }
 
 func normalizeReadMapValue(value any, columnType *sql.ColumnType, dialect string) any {
