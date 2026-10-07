@@ -125,6 +125,11 @@ func getSingle(ctx context.Context, options DbOptions, record dalrecord.Record, 
 		record.SetError(err)
 		return err
 	}
+	if options.ExactNumericValues && !isMapData(record.Data()) {
+		err := errors.New("ExactNumericValues requires map record data so NUMERIC values can remain decimal text")
+		record.SetError(err)
+		return err
+	}
 	names, onRecord, err := renderSingleGet(options, record)
 	if err != nil {
 		if onRecord {
@@ -195,6 +200,9 @@ func getMulti(ctx context.Context, options DbOptions, records []dalrecord.Record
 		}
 		if err := checkReadTarget(r); err != nil {
 			return refuseRecords(records, err)
+		}
+		if options.ExactNumericValues && !isMapData(r.Data()) {
+			return refuseRecords(records, errors.New("ExactNumericValues requires map record data so NUMERIC values can remain decimal text"))
 		}
 	}
 	// Records are read together when their keys address the same recordset.
@@ -410,7 +418,7 @@ func getMultiFromSingleTable(ctx context.Context, options DbOptions, records []d
 		remaining := records
 		err = withMapColumnMetadata(rows, func(columns []string, columnTypes []*sql.ColumnType) error {
 			var scanErr error
-			remaining, scanErr = fillMapRecords(rows, columns, columnTypes, records, pkCol, options.StructuredQueryDialect)
+			remaining, scanErr = fillMapRecords(rows, columns, columnTypes, records, pkCol, options)
 			return scanErr
 		})
 		records = remaining
@@ -598,7 +606,10 @@ func scanRowIntoMapWithOptions(rows *sql.Rows, data interface{}, pkIncluded bool
 			// Include all columns in the map (including PK column).
 			// Callers that do not want the PK in the map can delete it afterward.
 			_ = pkIncluded
-			val := normalizeReadMapValue(cells[i], columnTypeAt(columnTypes, i), options.StructuredQueryDialect)
+			val, err := normalizeReadMapValueWithOptions(cells[i], columnTypeAt(columnTypes, i), options)
+			if err != nil {
+				return fmt.Errorf("column %q: %w", col, err)
+			}
 			if val != nil || options.StructuredQueryDialect == "sqlite" {
 				setReadMapValue(v, col, val, options.StructuredQueryDialect)
 			}
@@ -633,7 +644,7 @@ type mapRowsScanner interface {
 	Err() error
 }
 
-func fillMapRecords(rows mapRowsScanner, columns []string, columnTypes []*sql.ColumnType, records []dalrecord.Record, pkColumn, dialect string) ([]dalrecord.Record, error) {
+func fillMapRecords(rows mapRowsScanner, columns []string, columnTypes []*sql.ColumnType, records []dalrecord.Record, pkColumn string, options DbOptions) ([]dalrecord.Record, error) {
 	for rows.Next() {
 		cells := make([]any, len(columns))
 		pointers := make([]any, len(columns))
@@ -646,7 +657,11 @@ func fillMapRecords(rows mapRowsScanner, columns []string, columnTypes []*sql.Co
 		var rowID any
 		for i, column := range columns {
 			if column == pkColumn {
-				rowID = normalizeReadMapValue(cells[i], columnTypeAt(columnTypes, i), dialect)
+				var err error
+				rowID, err = normalizeReadMapValueWithOptions(cells[i], columnTypeAt(columnTypes, i), options)
+				if err != nil {
+					return records, fmt.Errorf("column %q: %w", column, err)
+				}
 				break
 			}
 		}
@@ -660,14 +675,24 @@ func fillMapRecords(rows mapRowsScanner, columns []string, columnTypes []*sql.Co
 				data = data.Elem()
 			}
 			for columnIndex, column := range columns {
-				value := normalizeReadMapValue(cells[columnIndex], columnTypeAt(columnTypes, columnIndex), dialect)
-				setReadMapValue(data, column, value, dialect)
+				value, err := normalizeReadMapValueWithOptions(cells[columnIndex], columnTypeAt(columnTypes, columnIndex), options)
+				if err != nil {
+					return records, fmt.Errorf("column %q: %w", column, err)
+				}
+				setReadMapValue(data, column, value, options.StructuredQueryDialect)
 			}
 			record.SetError(dalrecord.ErrNoError)
 			break
 		}
 	}
 	return records, rows.Err()
+}
+
+func normalizeReadMapValueWithOptions(value any, columnType *sql.ColumnType, options DbOptions) (any, error) {
+	if options.ExactNumericValues && columnType != nil && strings.EqualFold(columnType.DatabaseTypeName(), "NUMERIC") {
+		return exactNumericValue(value)
+	}
+	return normalizeReadMapValue(value, columnType, options.StructuredQueryDialect), nil
 }
 
 func normalizeReadMapValue(value any, columnType *sql.ColumnType, dialect string) any {

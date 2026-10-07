@@ -358,7 +358,7 @@ func (r failingMapRowsErrScanner) Err() error        { return r.err }
 
 func TestFillMapRecordsReturnsScanError(t *testing.T) {
 	wantErr := errors.New("bad row scan")
-	_, err := fillMapRecords(failingMapRowsScanner{scanErr: wantErr}, []string{"id"}, nil, nil, "id", "sqlite")
+	_, err := fillMapRecords(failingMapRowsScanner{scanErr: wantErr}, []string{"id"}, nil, nil, "id", DbOptions{StructuredQueryDialect: "sqlite"})
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("fillMapRecords error = %v, want %v", err, wantErr)
 	}
@@ -366,7 +366,7 @@ func TestFillMapRecordsReturnsScanError(t *testing.T) {
 
 func TestFillMapRecordsReturnsRowsError(t *testing.T) {
 	wantErr := errors.New("row iteration failed")
-	_, err := fillMapRecords(failingMapRowsErrScanner{err: wantErr}, []string{"id"}, nil, nil, "id", "sqlite")
+	_, err := fillMapRecords(failingMapRowsErrScanner{err: wantErr}, []string{"id"}, nil, nil, "id", DbOptions{StructuredQueryDialect: "sqlite"})
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("fillMapRecords error = %v, want %v", err, wantErr)
 	}
