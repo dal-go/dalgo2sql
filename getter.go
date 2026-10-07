@@ -618,7 +618,7 @@ func scanRowIntoMapWithOptions(rows *sql.Rows, data interface{}, pkIncluded bool
 			if err != nil {
 				return fmt.Errorf("column %q: %w", col, err)
 			}
-			if val != nil || options.StructuredQueryDialect == "sqlite" {
+			if val != nil || options.StructuredQueryDialect == "sqlite" || preservesPostgresBytea(options, columnTypeAt(columnTypes, i)) {
 				setReadMapValue(v, col, val, options.StructuredQueryDialect)
 			}
 		}
@@ -700,10 +700,14 @@ func normalizeReadMapValueWithOptions(value any, columnType *sql.ColumnType, opt
 	if options.ExactNumericValues && columnType != nil && strings.EqualFold(columnType.DatabaseTypeName(), "NUMERIC") {
 		return exactNumericValue(value)
 	}
-	if options.PreserveBinaryValues && options.StructuredQueryDialect == dialectPostgres && columnType != nil && strings.EqualFold(columnType.DatabaseTypeName(), "BYTEA") {
+	if preservesPostgresBytea(options, columnType) {
 		return preservePostgresBytea(value)
 	}
 	return normalizeReadMapValue(value, columnType, options.StructuredQueryDialect), nil
+}
+
+func preservesPostgresBytea(options DbOptions, columnType *sql.ColumnType) bool {
+	return options.PreserveBinaryValues && options.StructuredQueryDialect == dialectPostgres && columnType != nil && strings.EqualFold(columnType.DatabaseTypeName(), "BYTEA")
 }
 
 func preservePostgresBytea(value any) (any, error) {

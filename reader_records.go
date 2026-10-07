@@ -630,7 +630,7 @@ func (r recordsReader) Next() (record dalrecord.Record, err error) {
 			// scanRowIntoMapWithOptions on the Get path.
 			value := textValue(normalized)
 			columnType := columnTypeAt(r.colTypes, mapColumnIndex)
-			if r.preserveBinaryValues && r.dialect == dialectPostgres && columnType != nil && strings.EqualFold(columnType.DatabaseTypeName(), "BYTEA") {
+			if preservesPostgresBytea(DbOptions{StructuredQueryDialect: r.dialect, PreserveBinaryValues: r.preserveBinaryValues}, columnType) {
 				if bytes, ok := normalized.([]byte); ok {
 					value = bytes
 				}
