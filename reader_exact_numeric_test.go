@@ -35,7 +35,11 @@ func TestRecordsReaderExactNumericValuesPreservesTextAndLegacyDefault(t *testing
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer reader.Close()
+			defer func() {
+				if err := reader.Close(); err != nil {
+					t.Errorf("close reader: %v", err)
+				}
+			}()
 			record, err := reader.Next()
 			if err != nil {
 				t.Fatal(err)
@@ -62,7 +66,11 @@ func TestRecordsReaderExactNumericValuesRejectsFloatDriver(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer reader.Close()
+	defer func() {
+		if err := reader.Close(); err != nil {
+			t.Errorf("close reader: %v", err)
+		}
+	}()
 	if _, err := reader.Next(); err == nil || !strings.Contains(err.Error(), "exact decimal text is required") {
 		t.Fatalf("Next() error = %v, want refusal of lossy float driver value", err)
 	}
@@ -118,7 +126,11 @@ func TestRecordsetReaderExactNumericValuesUsesTextColumn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer reader.Close()
+	defer func() {
+		if err := reader.Close(); err != nil {
+			t.Errorf("close reader: %v", err)
+		}
+	}()
 	row, rs, err := reader.Next()
 	if err != nil {
 		t.Fatal(err)
@@ -147,7 +159,11 @@ func TestRecordsetReaderExactNumericValuesRejectsFloatDriver(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer reader.Close()
+	defer func() {
+		if err := reader.Close(); err != nil {
+			t.Errorf("close reader: %v", err)
+		}
+	}()
 	if _, _, err := reader.Next(); err == nil || !strings.Contains(err.Error(), "exact decimal text is required") {
 		t.Fatalf("Next() error = %v, want refusal of lossy float driver value", err)
 	}
@@ -172,7 +188,11 @@ func TestExactNumericMapKeyReadPreservesText(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
+	defer func() {
+		if err := rows.Close(); err != nil {
+			t.Errorf("close rows: %v", err)
+		}
+	}()
 	if !rows.Next() {
 		t.Fatalf("expected row: %v", rows.Err())
 	}
@@ -240,7 +260,11 @@ func TestExactNumericMapScannerRejectsFloatDriver(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
+	defer func() {
+		if err := rows.Close(); err != nil {
+			t.Errorf("close rows: %v", err)
+		}
+	}()
 	if !rows.Next() {
 		t.Fatalf("expected row: %v", rows.Err())
 	}
@@ -264,7 +288,11 @@ func TestExactNumericFillMapRecordsRejectsFloatPrimaryKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
+	defer func() {
+		if err := rows.Close(); err != nil {
+			t.Errorf("close rows: %v", err)
+		}
+	}()
 	columns, err := rows.Columns()
 	if err != nil {
 		t.Fatal(err)
@@ -293,7 +321,11 @@ func TestExactNumericFillMapRecordsRejectsFloatValue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
+	defer func() {
+		if err := rows.Close(); err != nil {
+			t.Errorf("close rows: %v", err)
+		}
+	}()
 	columns, err := rows.Columns()
 	if err != nil {
 		t.Fatal(err)
