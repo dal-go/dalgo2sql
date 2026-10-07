@@ -279,6 +279,16 @@ reader. In the records reader a bare `NUMERIC` column changes in two cases: a BL
 holding decimal text, and the texts `NaN`, `Infinity` and `-Infinity`, become
 `float64`. A `DECIMAL` column is not `NUMERIC` and keeps its text.
 
+Callers that must preserve a database decimal can opt into
+`DbOptions.ExactNumericValues`. With that option, NUMERIC values remain decimal
+text in record, recordset, and map-backed `Get`/`GetMulti` reads; they are never
+normalized through `float64`. Key reads into struct data are refused because a
+struct field can force a lossy conversion. A driver that already returned a
+`float32` or `float64` is refused because its original decimal cannot be
+recovered. The zero value keeps the legacy behavior.
+PostgreSQL's `NaN`, `Infinity` and `-Infinity` spellings remain text so a
+downstream provider can accept or reject them without inventing a numeric value.
+
 ## NULL in a recordset
 
 The recordset readers hold each result column in a column that marks its NULL cells. A NULL

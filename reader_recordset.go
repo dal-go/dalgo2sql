@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/dal-go/dalgo/dal"
@@ -26,7 +27,7 @@ func getRecordsetReaderWithDialect(ctx context.Context, query dal.Query, execute
 // (a column the recordset cannot hold) closes them here, on every path, because a caller
 // who is handed an error does not close a reader it was not given.
 func getRecordsetReaderWithOptions(ctx context.Context, query dal.Query, execute executeQueryFunc, sqlOptions DbOptions, options ...recordset.Option) (rr *recordsetReader, err error) {
-	rr = &recordsetReader{}
+	rr = &recordsetReader{exactNumericValues: sqlOptions.ExactNumericValues}
 	if q, ok := query.(dal.StructuredQuery); ok {
 		rr.validateFinite = dal.HasAggregation(q)
 	}
@@ -53,7 +54,9 @@ func getRecordsetReaderWithOptions(ctx context.Context, query dal.Query, execute
 		scanType := col.ScanType()
 		dbTypeName := col.DatabaseTypeName()
 
-		if scanType == nil {
+		if sqlOptions.ExactNumericValues && strings.EqualFold(dbTypeName, "NUMERIC") {
+			c = newNullableColumn(name, "", dbTypeName)
+		} else if scanType == nil {
 			// This happens for some views in SQLite
 			c = newNullableColumn(name, "", "")
 		} else {
@@ -127,8 +130,9 @@ func getRecordsetReaderWithOptions(ctx context.Context, query dal.Query, execute
 
 type recordsetReader struct {
 	readerBase
-	rs             recordset.Recordset
-	validateFinite bool
+	rs                 recordset.Recordset
+	validateFinite     bool
+	exactNumericValues bool
 }
 
 func (r *recordsetReader) Recordset() recordset.Recordset {
@@ -172,7 +176,13 @@ func (r *recordsetReader) Next() (row recordset.Row, rs recordset.Recordset, err
 		col := r.rs.GetColumnByIndex(i)
 		vt := col.ValueType()
 		value := values[i]
-		if vt.Kind() == reflect.Float64 {
+		if r.exactNumericValues && strings.EqualFold(r.colTypes[i].DatabaseTypeName(), "NUMERIC") {
+			value, err = exactNumericValue(value)
+			if err != nil {
+				err = fmt.Errorf("exact NUMERIC value in column %q: %w", r.colNames[i], err)
+				return
+			}
+		} else if vt.Kind() == reflect.Float64 {
 			// Only a float64 column can hold the converted value; any other column
 			// keeps what the driver delivered.
 			value = normalizeValueByDatabaseType(r.colTypes[i].DatabaseTypeName(), value)

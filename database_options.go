@@ -11,6 +11,14 @@ import (
 type DbOptions struct {
 	ID         string
 	PrimaryKey []string
+	// ExactNumericValues keeps the database's text representation of NUMERIC
+	// values instead of converting them to float64 in record, recordset, and
+	// key reads. Key reads require map record data; struct targets are refused
+	// because their field types may force a lossy conversion. It is opt-in
+	// because existing callers rely on the legacy float64 representation.
+	// Drivers must expose NUMERIC as text or bytes; a float scan result is
+	// refused because its original decimal value cannot be recovered safely.
+	ExactNumericValues bool
 	// Recordsets declares the recordsets (tables) of key reads and writes, by name,
 	// with the primary key each is looked up by.
 	//

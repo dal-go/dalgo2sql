@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/dal-go/dalgo/dal"
 	dalrecord "github.com/dal-go/record"
@@ -53,6 +54,7 @@ func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute e
 	rr = &recordsReader{
 		identityColumnIndex: -1,
 		dialect:             options.StructuredQueryDialect,
+		exactNumericValues:  options.ExactNumericValues,
 		newRecord: func() dalrecord.Record {
 			return dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("Unknown", ""), make(map[string]any))
 		},
@@ -73,6 +75,11 @@ func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute e
 	// so that it does not ask again.
 	var facts *typedCatalogFacts
 	if q, ok := query.(dal.StructuredQuery); ok {
+		if options.ExactNumericValues {
+			if rec := q.IntoRecord(); rec != nil && !isMapData(rec.Data()) {
+				return nil, errors.New("ExactNumericValues requires map record data so NUMERIC values can remain decimal text")
+			}
+		}
 		if readsWithTypedPostgres(options) {
 			// The typed compiler refuses what it cannot compute as asked, and reads that
 			// from the query it is handed, which below can be a wrapper of this reader's
@@ -437,9 +444,10 @@ type recordsReader struct {
 	hideIdentityColumn  bool
 	// keyInBaseColumns says the statement is a select-all over joins, keyed from the base
 	// source's own column of the key's name (keyColumnIndex).
-	keyInBaseColumns bool
-	validateFinite   bool
-	dialect          string
+	keyInBaseColumns   bool
+	validateFinite     bool
+	dialect            string
+	exactNumericValues bool
 }
 
 // decimalText matches the text PostgreSQL prints for a finite NUMERIC: an
@@ -493,6 +501,52 @@ func normalizeValueByDatabaseType(databaseTypeName string, value any) any {
 		return number
 	}
 	return text
+}
+
+// exactNumericValue returns NUMERIC as decimal text without a float conversion.
+// pgx returns NUMERIC this way; other drivers that provide a float64 are refused
+// because the source decimal cannot be reconstructed from its rounded value.
+func exactNumericValue(value any) (any, error) {
+	switch v := value.(type) {
+	case nil:
+		return nil, nil
+	case string:
+		return exactNumericText(v)
+	case []byte:
+		if !utf8.Valid(v) {
+			return nil, fmt.Errorf("driver returned non-UTF-8 bytes; exact decimal text is required")
+		}
+		return exactNumericText(string(v))
+	case int:
+		return strconv.FormatInt(int64(v), 10), nil
+	case int8:
+		return strconv.FormatInt(int64(v), 10), nil
+	case int16:
+		return strconv.FormatInt(int64(v), 10), nil
+	case int32:
+		return strconv.FormatInt(int64(v), 10), nil
+	case int64:
+		return strconv.FormatInt(v, 10), nil
+	case uint:
+		return strconv.FormatUint(uint64(v), 10), nil
+	case uint8:
+		return strconv.FormatUint(uint64(v), 10), nil
+	case uint16:
+		return strconv.FormatUint(uint64(v), 10), nil
+	case uint32:
+		return strconv.FormatUint(uint64(v), 10), nil
+	case uint64:
+		return strconv.FormatUint(v, 10), nil
+	default:
+		return nil, fmt.Errorf("driver returned %T; exact decimal text is required", value)
+	}
+}
+
+func exactNumericText(text string) (string, error) {
+	if text == "NaN" || text == "Infinity" || text == "-Infinity" || decimalText.MatchString(text) {
+		return text, nil
+	}
+	return "", fmt.Errorf("driver returned unsupported NUMERIC text; expected decimal text or PostgreSQL NaN/Infinity")
 }
 
 // selectsIdentityField reports whether the select list returns the column name of the base
@@ -592,7 +646,15 @@ func (r recordsReader) Next() (record dalrecord.Record, err error) {
 		if _, isMap := data.(map[string]any); isMap {
 			mapColumnIndex = i
 		}
-		normalized := normalizeValueByDatabaseType(r.colTypes[i].DatabaseTypeName(), values[i])
+		var normalized any
+		if r.exactNumericValues && strings.EqualFold(r.colTypes[i].DatabaseTypeName(), "NUMERIC") {
+			normalized, err = exactNumericValue(values[i])
+			if err != nil {
+				return nil, fmt.Errorf("exact NUMERIC value in column %q: %w", n, err)
+			}
+		} else {
+			normalized = normalizeValueByDatabaseType(r.colTypes[i].DatabaseTypeName(), values[i])
+		}
 		if r.validateFinite {
 			if number, ok := normalized.(float64); ok && (math.IsNaN(number) || math.IsInf(number, 0)) {
 				return nil, fmt.Errorf("non-finite aggregate result in column %q", n)
