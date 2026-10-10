@@ -2,13 +2,13 @@ module github.com/dal-go/dalgo2sql
 
 go 1.26.0
 
-toolchain go1.27.1
+toolchain go1.27.2
 
 //replace github.com/dal-go/dalgo => ../dalgo
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
-	github.com/dal-go/dalgo v0.89.1
+	github.com/dal-go/dalgo v0.93.4
 	github.com/dal-go/record v0.1.4
 	github.com/georgysavva/scany/v2 v2.1.4
 	modernc.org/sqlite v1.60.1
