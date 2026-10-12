@@ -109,7 +109,7 @@ $1 int64 100
 === GROUP BY without selected columns groups by its keys
 sql: SELECT "billingcountry" FROM "invoice" GROUP BY "billingcountry"
 === FIRST needs an input order SQL does not give
-refused: not supported: FIRST/LAST require a provider-declared stable input order; aggregate ORDER BY is not yet supported
+refused: not supported: FIRST/LAST require a provider-declared stable input order, or an order of their own (aggregate orderBy)
 === an aggregate in WHERE is refused
 error: where: aggregate functions are not allowed in WHERE
 === ORDER BY without facts keeps the NULLS clause
