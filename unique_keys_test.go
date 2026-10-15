@@ -65,6 +65,18 @@ INSERT INTO NullablePk VALUES (NULL, 'a'), (NULL, 'b'), ('x', 'c'), (NULL, 'd');
 CREATE TABLE UntypedPk (K PRIMARY KEY, Label TEXT);
 INSERT INTO UntypedPk VALUES (1, 'int'), ('1', 'text'), (x'31', 'blob');
 
+CREATE TABLE DescPk (Id INTEGER PRIMARY KEY DESC, Label TEXT);
+INSERT INTO DescPk VALUES (NULL, 'a'), (NULL, 'b'), (1, 'c');
+
+CREATE TABLE WithoutRowidPk (Id INTEGER PRIMARY KEY, Label TEXT) WITHOUT ROWID;
+INSERT INTO WithoutRowidPk VALUES (3, 'same'), (4, 'same');
+
+CREATE TABLE BlobPk (K TEXT NOT NULL PRIMARY KEY, Label TEXT);
+INSERT INTO BlobPk VALUES ('ab', 'text'), (x'6162', 'blob'), ('cd', 'text');
+
+CREATE TABLE BlobInIntPk (K INT NOT NULL PRIMARY KEY, Label TEXT);
+INSERT INTO BlobInIntPk VALUES (1, 'int'), (x'31', 'blob');
+
 CREATE TABLE TextPk (Slug TEXT NOT NULL PRIMARY KEY, Label TEXT);
 INSERT INTO TextPk VALUES ('a', 'same'), ('b', 'same'), ('c', 'same');
 `
@@ -171,6 +183,10 @@ func sqliteReads() []uniqueKeysRead {
 		{"a table whose name needs quoting", selectAll("Order Details"), 4, nil},
 		{"a nullable primary key that holds NULL", selectAll("NullablePk"), 4, nil},
 		{"a primary key with no type, holding 1 and '1'", selectAll("UntypedPk"), 3, nil},
+		{"INTEGER PRIMARY KEY DESC, which accepts NULL", selectAll("DescPk"), 3, nil},
+		{"a WITHOUT ROWID table", selectAll("WithoutRowidPk"), 2, nil},
+		{"a text key holding a BLOB and the text of the same bytes", selectAll("BlobPk"), 3, nil},
+		{"an integer key holding a BLOB and the integer of the same text", selectAll("BlobInIntPk"), 2, nil},
 		{"a GROUP BY", groupBy, 3, nil},
 		{"an aggregate over the whole source", count, 1, nil},
 		{"a one-to-many join", oneToMany, invoiceRows, nil},
@@ -304,6 +320,10 @@ func TestTheSQLiteDialectKeysBySingleColumnPrimaryKeysAndByOrdinalOtherwise(t *t
 		{"a view", selectAll("InvoiceView"), invoiceRows, ordinalKeys},
 		{"a nullable primary key", selectAll("NullablePk"), 4, ordinalKeys},
 		{"a primary key with no type", selectAll("UntypedPk"), 3, ordinalKeys},
+		{"INTEGER PRIMARY KEY DESC", selectAll("DescPk"), 3, ordinalKeys},
+		{"a WITHOUT ROWID table, whose key is never NULL", selectAll("WithoutRowidPk"), 2, keyedBy("Id")},
+		{"a text key that holds a BLOB", selectAll("BlobPk"), 3, ordinalKeys},
+		{"an integer key that holds a BLOB", selectAll("BlobInIntPk"), 2, ordinalKeys},
 		{"a GROUP BY", ukFrom("Invoice", "").NewQuery().GroupBy(typedTestField("BillingCountry")).
 			SelectColumns(ukField("BillingCountry"), dal.Count()), 3, ordinalKeys},
 		{"a join", dal.From(dal.NewRootCollectionRef("Customer", "c")).Join(
@@ -457,23 +477,48 @@ func TestThePostgresDialectKeepsItsKeysUniqueWithinTheRead(t *testing.T) {
 func TestTheSQLiteDialectReportsWhatItCannotReadOfItsCatalog(t *testing.T) {
 	group := dal.From(dal.NewCollectionGroupRef("Invoice", "")).NewQuery().SelectColumns()
 	table := selectAll("Invoice").(dal.StructuredQuery)
+	failure := errors.New("disk I/O error")
+	catalog := func(name, declared string, notNull, pk any) func(mock sqlmock.Sqlmock) {
+		return func(mock sqlmock.Sqlmock) {
+			mock.ExpectQuery(sqliteKeyCatalogStatement).WithArgs("Invoice").
+				WillReturnRows(sqlmock.NewRows([]string{"name", "type", "notnull", "pk"}).AddRow(name, declared, notNull, pk))
+		}
+	}
+	indexes := `SELECT COUNT(*) FROM pragma_index_list(?) WHERE origin = 'pk'`
+	blobs := `SELECT COUNT(*) FROM (SELECT 1 FROM ` + "`Invoice`" + ` WHERE typeof(` + "`K`" + `) = 'blob' LIMIT 1)`
 	for _, tc := range []struct {
-		name  string
-		query dal.StructuredQuery
-		rows  *sqlmock.Rows
-		want  string
+		name   string
+		query  dal.StructuredQuery
+		script func(mock sqlmock.Sqlmock)
+		want   string
 	}{
-		{"a source that is not a table", group, nil, "no SQLite table metadata"},
-		{"a pk that is not a number", table,
-			sqlmock.NewRows([]string{"name", "type", "notnull", "pk"}).AddRow("InvoiceId", "INTEGER", 1, "first"), "scan SQLite table metadata"},
-		{"a stream that fails", table,
-			sqlmock.NewRows([]string{"name", "type", "notnull", "pk"}).AddRow("InvoiceId", "INTEGER", 1, 1).RowError(0, errors.New("disk I/O error")), "disk I/O error"},
+		{"a source that is not a table", group, func(sqlmock.Sqlmock) {}, "no SQLite table metadata"},
+		{"a pk that is not a number", table, catalog("InvoiceId", "INTEGER", 1, "first"), "scan SQLite table metadata"},
+		{"a stream that fails", table, func(mock sqlmock.Sqlmock) {
+			mock.ExpectQuery(sqliteKeyCatalogStatement).WithArgs("Invoice").WillReturnRows(
+				sqlmock.NewRows([]string{"name", "type", "notnull", "pk"}).AddRow("InvoiceId", "INTEGER", 1, 1).RowError(0, failure))
+		}, "disk I/O error"},
+		{"an index lookup that fails", table, func(mock sqlmock.Sqlmock) {
+			catalog("InvoiceId", "INTEGER", 1, 1)(mock)
+			mock.ExpectQuery(indexes).WithArgs("Invoice").WillReturnError(failure)
+		}, "inspect SQLite indexes"},
+		{"an index count that cannot be read", table, func(mock sqlmock.Sqlmock) {
+			catalog("InvoiceId", "INTEGER", 1, 1)(mock)
+			mock.ExpectQuery(indexes).WithArgs("Invoice").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow("many"))
+		}, "inspect SQLite indexes"},
+		{"a key column that holds a BLOB lookup that fails", table, func(mock sqlmock.Sqlmock) {
+			catalog("K", "TEXT", 1, 1)(mock)
+			mock.ExpectQuery(blobs).WillReturnError(failure)
+		}, "inspect SQLite key column"},
+		{"a table whose name cannot be quoted", selectAll("bad\x01table").(dal.StructuredQuery), func(mock sqlmock.Sqlmock) {
+			mock.ExpectQuery(sqliteKeyCatalogStatement).WithArgs("bad\x01table").
+				WillReturnRows(sqlmock.NewRows([]string{"name", "type", "notnull", "pk"}).AddRow("K", "TEXT", 1, 1))
+		}, "bad"},
+		{"a key column whose name cannot be quoted", table, catalog("bad\x01name", "TEXT", 1, 1), "name"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			db, mock := newPostgresReadMock(t)
-			if tc.rows != nil {
-				mock.ExpectQuery(sqliteKeyCatalogStatement).WithArgs("Invoice").WillReturnRows(tc.rows)
-			}
+			tc.script(mock)
 			_, err := getRecordsReaderWithOptions(context.Background(), tc.query, db.QueryContext, DbOptions{StructuredQueryDialect: "sqlite"})
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("error = %v, want one that says %q", err, tc.want)

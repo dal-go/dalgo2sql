@@ -53,7 +53,7 @@ type DbOptions struct {
 	// PrimaryKey, the typed PostgreSQL dialect keys them by the primary key the catalog
 	// reports for the source when it is one column, and the SQLite dialect does the same
 	// when that column holds one value per row and never NULL (an INTEGER or TEXT column
-	// that is NOT NULL or is the rowid alias); every other read is keyed by ordinal, the
+	// that is NOT NULL or is the rowid alias, and holds no BLOB); every other read is keyed by ordinal, the
 	// position of the row in the result counted from 0 and written as decimal text: no
 	// primary key, a composite one, a view, a grouped or aggregated query, a SQLite join,
 	// and the legacy emitter, which has no catalog to ask. Within one read no two records

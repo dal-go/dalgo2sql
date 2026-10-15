@@ -53,6 +53,7 @@ func streamReads(t *testing.T, failure error, check func(t *testing.T, next func
 			// Only the records reader asks the catalog for the key.
 			mock.MatchExpectationsInOrder(false)
 			expectSQLiteKeyCatalog(mock, "album", sqliteKeyColumn{"id", "INTEGER", false, 1}, sqliteKeyColumn{"title", "TEXT", false, 0})
+			mock.ExpectQuery(`SELECT COUNT(*) FROM pragma_index_list(?) WHERE origin = 'pk'`).WithArgs("album").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 			mock.ExpectQuery("SELECT `id`, `title` FROM `album`").WillReturnRows(streamRows(failure))
 		}},
 		{"postgres", "postgres", structured, func(mock sqlmock.Sqlmock) {

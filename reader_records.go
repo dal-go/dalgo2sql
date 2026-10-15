@@ -50,9 +50,11 @@ var errColumnsChanged = errors.New("the columns of the source changed during the
 //   - With the SQLite dialect and a source nobody declared (no join, no grouping), by the
 //     primary key the SQLite catalog reports (pragma_table_xinfo, one statement before the
 //     read), when it is exactly one column that holds one value per row and never NULL:
-//     an INTEGER or TEXT column that is NOT NULL or is the rowid alias INTEGER PRIMARY KEY.
-//     A key column that can hold NULL, or has no declared type (which keeps 1 and '1' apart),
-//     is not used, so that no two records can share its text.
+//     an INTEGER or TEXT column that is NOT NULL or is the rowid alias INTEGER PRIMARY KEY
+//     (INTEGER PRIMARY KEY DESC is not the alias and accepts NULL), and holds no BLOB (which
+//     one text can spell as a TEXT value). A key column that can hold NULL, has no declared
+//     type (which keeps 1 and '1' apart) or holds a BLOB is not used, so that no two records
+//     can share its text.
 //   - By ordinal in every other case: the position of the row in the result counted from 0
 //     and written as decimal text, which is unique by construction. That is the rows of a
 //     grouped or aggregated query (which have no source row); of a source with no primary
