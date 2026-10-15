@@ -117,7 +117,7 @@ func TestPostgresJoinSelectAllKeysRecordsByTheBasesColumn(t *testing.T) {
 			[]driver.Value{"Jazz", int64(1), int64(101), int64(101), "Queen"}, int64(1), int64(101)},
 		{"a key the base has no column for is not taken from the joined table", DbOptions{StructuredQueryDialect: "postgres", PrimaryKey: []string{"name"}},
 			[]string{"id", "title", "artist_id"}, []string{"id", "title", "artist_id", "id", "name"},
-			[]driver.Value{int64(1), "Jazz", int64(101), int64(101), "Queen"}, recordIDHelperColumn, int64(101)},
+			[]driver.Value{int64(1), "Jazz", int64(101), int64(101), "Queen"}, "0", int64(101)},
 		{"the key spelt in another case, on a fold-lower mount", DbOptions{StructuredQueryDialect: "postgres", IdentifierCase: IdentifierCaseFoldLower, PrimaryKey: []string{"ID"}},
 			[]string{"id", "title", "artist_id"}, []string{"id", "title", "artist_id", "id", "name"},
 			[]driver.Value{int64(1), "Jazz", int64(101), int64(101), "Queen"}, int64(1), int64(101)},

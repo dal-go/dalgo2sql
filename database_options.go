@@ -51,10 +51,14 @@ type DbOptions struct {
 	// name folded to lower case, as the catalog lookup folds it; the primary key of the
 	// recordset keys the records of the read. With no recordset declared and no
 	// PrimaryKey, the typed PostgreSQL dialect keys them by the primary key the catalog
-	// reports for the source when it is one column, and by ordinal when it is not (no
-	// primary key, a composite one, a view); a grouped or aggregated query keys its rows
-	// by ordinal too. Every other path gives the records the literal ID
-	// "__dalgo_record_id".
+	// reports for the source when it is one column, and the SQLite dialect does the same
+	// when that column holds one value per row and never NULL (an INTEGER or TEXT column
+	// that is NOT NULL or is the rowid alias, and holds no BLOB); every other read is keyed by ordinal, the
+	// position of the row in the result counted from 0 and written as decimal text: no
+	// primary key, a composite one, a view, a grouped or aggregated query, a SQLite join,
+	// and the legacy emitter, which has no catalog to ask. Within one read no two records
+	// have the same key; only a record with no key (a nil key, or a nil or empty ID) may
+	// repeat, and the reader makes none. No path gives the records one constant ID.
 	Recordsets map[string]*Recordset
 	// Placeholder controls how SQL parameter markers are emitted.
 	// The zero value (PlaceholderQuestion) uses "?" — compatible with

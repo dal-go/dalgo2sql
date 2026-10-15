@@ -29,23 +29,39 @@ const recordIDHelperColumn = "__dalgo_record_id"
 // changed between the two. The catalog's answer is not used to key records then.
 var errColumnsChanged = errors.New("the columns of the source changed during the read")
 
-// getRecordsReaderWithOptions runs the query and returns a reader over its records. How
-// each record is keyed:
+// getRecordsReaderWithOptions runs the query and returns a reader over its records.
+//
+// THE RULE: within one read (one result set of one query against one recordset) no two
+// records have the same key. The only exception is a record with no key at all: a nil
+// key, or a key whose ID is nil or the empty string (dalgotest.HasNoKey), which may repeat;
+// the reader makes none for a structured read of a recordset. dalgotest.AssertUniqueKeys
+// holds every read path of this package to it (unique_keys_test.go). No path returns one
+// constant ID for every record.
+//
+// How each record is keyed:
 //
 //   - By the primary key of the recordset declared for the source in DbOptions.Recordsets,
-//     or, when it declares none, DbOptions.PrimaryKey: the value of that column.
+//     or, when it declares none, DbOptions.PrimaryKey: the value of that column. Declaring a
+//     key is the caller's word that its values are unique and present; a join keys each
+//     record by the base row's key, so a join that matches one base row many times repeats it.
 //   - With the typed PostgreSQL dialect and a source nobody declared, by the primary key the
 //     catalog reports for it, when that is exactly one column. The catalog lookup is the
 //     one the read makes anyway for its compiler.
-//   - By ordinal, the position of the row in the result counted from 0 and written as
-//     decimal text, for the rows of a grouped or aggregated query (which have no source
-//     row) and, with the typed PostgreSQL dialect and a source nobody declared, for those of
-//     a source with no primary key, a composite one, or a view, a materialized view or
-//     a foreign table, which have none.
-//   - In every other case (the SQLite dialect, the legacy emitter or a native compiler of
-//     the caller's with no key configured, and a recordset declared with no single-column
-//     primary key) by the literal ID "__dalgo_record_id", the same for every record: those
-//     paths have no catalog to ask.
+//   - With the SQLite dialect and a source nobody declared (no join, no grouping), by the
+//     primary key the SQLite catalog reports (pragma_table_xinfo, one statement before the
+//     read), when it is exactly one column that holds one value per row and never NULL:
+//     an INTEGER or TEXT column that is NOT NULL or is the rowid alias INTEGER PRIMARY KEY
+//     (INTEGER PRIMARY KEY DESC is not the alias and accepts NULL), and holds no BLOB (which
+//     one text can spell as a TEXT value). A key column that can hold NULL, has no declared
+//     type (which keeps 1 and '1' apart) or holds a BLOB is not used, so that no two records
+//     can share its text.
+//   - By ordinal in every other case: the position of the row in the result counted from 0
+//     and written as decimal text, which is unique by construction. That is the rows of a
+//     grouped or aggregated query (which have no source row); of a source with no primary
+//     key, a composite one, or a view, with the typed PostgreSQL or the SQLite dialect and
+//     nothing declared; of a join read by SQLite with nothing declared; of a recordset
+//     declared with no single-column primary key; and of the legacy emitter or a native
+//     compiler of the caller's with no key configured, which have no catalog to ask.
 //
 // A read into a record the query names (dal.StructuredQuery.IntoRecord) keeps that record's
 // own key, except that a key configured by the first rule is written into it; the catalog is
@@ -113,9 +129,9 @@ func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute e
 				// helper column in its data.
 				rr.newRecord = ordinalRecords(collection)
 			} else {
-				rr.newRecord = func() dalrecord.Record {
-					return dalrecord.NewRecordWithData(dalrecord.NewKeyWithID(collection, recordIDHelperColumn), make(map[string]any))
-				}
+				// A record keyed by no column of the result keeps the ID it is made with, so
+				// that is the ordinal, never one ID for every record.
+				rr.newRecord = ordinalRecords(collection)
 			}
 		}
 		primaryKey := primaryKeyForQuery(options, query)
@@ -135,6 +151,19 @@ func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute e
 			}
 			if primaryKey = column; primaryKey == "" {
 				rr.newRecord = ordinalRecords(q.From().Base().Name())
+			}
+		}
+		if primaryKey == "" && keyedBySQLiteCatalog(options, q) {
+			// The SQLite catalog names the key as the PostgreSQL one does: the primary key
+			// when it is one column that holds one present value per row, else the rows are
+			// keyed by ordinal. Refusals come before the lookup, which is a statement.
+			if err = refusedBeforeAnyStatement(q); err != nil {
+				err = fmt.Errorf("failed to get SQL reader: %w", err)
+				return
+			}
+			if primaryKey, err = sqliteCatalogPrimaryKey(ctx, q, execute); err != nil {
+				err = fmt.Errorf("failed to get SQL reader: %w", err)
+				return
 			}
 		}
 		if primaryKey != "" && !rr.validateFinite {

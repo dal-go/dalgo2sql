@@ -310,10 +310,10 @@ func TestPostgresRecordsReaderDoesNotAskTheCatalogForTheKeyOfADeclaredSource(t *
 		wantKey any
 	}{
 		{"a recordset declared with another column", declared("Title"), "Seven"},
-		{"a recordset declared with a composite key keeps the literal ID", declared("AlbumId", "Title"), recordIDHelperColumn},
-		{"a recordset declared with no key keeps the literal ID", declared(), recordIDHelperColumn},
+		{"a recordset declared with a composite key is keyed by ordinal", declared("AlbumId", "Title"), "0"},
+		{"a recordset declared with no key is keyed by ordinal", declared(), "0"},
 		{"DbOptions.PrimaryKey", DbOptions{StructuredQueryDialect: "postgres", PrimaryKey: []string{"Title"}}, "Seven"},
-		{"a composite DbOptions.PrimaryKey keeps the literal ID", DbOptions{StructuredQueryDialect: "postgres", PrimaryKey: []string{"AlbumId", "Title"}}, recordIDHelperColumn},
+		{"a composite DbOptions.PrimaryKey is keyed by ordinal", DbOptions{StructuredQueryDialect: "postgres", PrimaryKey: []string{"AlbumId", "Title"}}, "0"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			db, mock := newPostgresReadMock(t)
@@ -450,26 +450,19 @@ func TestPostgresRecordsReaderRefusesBeforeAskingTheCatalogForAKey(t *testing.T)
 	}
 }
 
-// The other dialects have no catalog to ask: a source with no key configured keeps the
-// literal ID, and its statement is the one it always was.
-func TestRecordsReaderOfOtherDialectsKeepsTheLiteralIDForAnUndeclaredSource(t *testing.T) {
-	for _, dialect := range []string{"", "sqlite"} {
-		t.Run("dialect "+dialect, func(t *testing.T) {
-			db, mock := newPostgresReadMock(t)
-			statement := "SELECT * FROM Album"
-			if dialect == "sqlite" {
-				statement = "SELECT * FROM `Album`"
-			}
-			mock.ExpectQuery(statement).WillReturnRows(sqlmock.NewRows([]string{"AlbumId"}).AddRow(int64(7)).AddRow(int64(8)))
-			reader, err := getRecordsReaderWithOptions(context.Background(), typedTestFrom("Album", "").NewQuery().SelectColumns(), db.QueryContext, DbOptions{StructuredQueryDialect: dialect})
-			if err != nil {
-				t.Fatal(err)
-			}
-			keys, _ := readKeys(t, mock, reader)
-			if want := []any{recordIDHelperColumn, recordIDHelperColumn}; !reflect.DeepEqual(keys, want) {
-				t.Errorf("keys = %v, want %v", keys, want)
-			}
-		})
+// The legacy emitter has no catalog to ask: a source with no key configured is keyed by ordinal,
+// one ID per record, and its statement is the one it always was. The SQLite dialect asks its own
+// catalog (see TestRecordsReaderOfTheSQLiteDialectKeysAnUndeclaredSourceByItsCatalog).
+func TestRecordsReaderOfTheLegacyEmitterKeysAnUndeclaredSourceByOrdinal(t *testing.T) {
+	db, mock := newPostgresReadMock(t)
+	mock.ExpectQuery("SELECT * FROM Album").WillReturnRows(sqlmock.NewRows([]string{"AlbumId"}).AddRow(int64(7)).AddRow(int64(8)))
+	reader, err := getRecordsReaderWithOptions(context.Background(), typedTestFrom("Album", "").NewQuery().SelectColumns(), db.QueryContext, DbOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys, _ := readKeys(t, mock, reader)
+	if want := []any{"0", "1"}; !reflect.DeepEqual(keys, want) {
+		t.Errorf("keys = %v, want %v", keys, want)
 	}
 }
 

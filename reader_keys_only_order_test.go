@@ -3,6 +3,7 @@ package dalgo2sql
 import (
 	"context"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -72,6 +73,10 @@ func TestRecordsReader_KeysOnlyQueryIsOrderedByPrimaryKey(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer closeDatabase(t, db)
+				if dialect == "sqlite" && len(tt.options.PrimaryKey) == 0 && len(tt.options.Recordsets) == 0 {
+					// No key is configured: the SQLite dialect asks its catalog, which has none.
+					mock.ExpectQuery(regexp.QuoteMeta(sqliteKeyCatalogStatement)).WithArgs("cities").WillReturnRows(sqlmock.NewRows([]string{"name", "type", "notnull", "pk"}))
+				}
 				mock.ExpectQuery(pattern).WillReturnRows(sqlmock.NewRows([]string{"ID"}))
 				options := tt.options
 				options.StructuredQueryDialect = dialect
