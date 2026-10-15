@@ -22,7 +22,7 @@ import (
 // the joined table's column keyed the records; the key column is now asked of the base, and
 // the base has none, so the read fails. DALgo has planned the join natively by then:
 // CanExecuteJoin compiles the query without the key column, and accepts it. A select-all of
-// the same mount, which no column is added to, keeps the placeholder key.
+// the same mount, which no column is added to, is keyed by ordinal.
 
 func TestPostgresJoinWithAKeyThatIsNotAColumnOfTheBaseFailsWhenTheSelectListNamesAnotherTablesColumnOfThatName(t *testing.T) {
 	ctx := context.Background()
@@ -49,7 +49,7 @@ func TestPostgresJoinWithAKeyThatIsNotAColumnOfTheBaseFailsWhenTheSelectListName
 			t.Fatal(err)
 		}
 	})
-	t.Run("a select-all of the same mount keeps the placeholder key", func(t *testing.T) {
+	t.Run("a select-all of the same mount is keyed by ordinal", func(t *testing.T) {
 		db, mock := newPostgresReadMock(t)
 		pgJoinKeyCatalog(mock, album, exact)
 		mock.ExpectQuery(`SELECT * FROM "album" AS "a" INNER JOIN "artist" AS "r" ON ("a"."artist_id" = "r"."id")`).
@@ -63,8 +63,8 @@ func TestPostgresJoinWithAKeyThatIsNotAColumnOfTheBaseFailsWhenTheSelectListName
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := record.Key().ID; got != recordIDHelperColumn {
-			t.Fatalf("record key = %v, want the placeholder: a column of the joined table never keys a record", got)
+		if got := record.Key().ID; got != "0" {
+			t.Fatalf("record key = %v, want the ordinal: a column of the joined table never keys a record", got)
 		}
 	})
 }
@@ -99,13 +99,13 @@ INSERT INTO album VALUES (1, 'Jazz', 101), (2, 'Arrival', 102);`)
 			t.Fatalf("error = %v, want the server's: the base has no such column", err)
 		}
 	})
-	t.Run("a select-all of the same mount keeps the placeholder key", func(t *testing.T) {
+	t.Run("a select-all of the same mount is keyed by ordinal", func(t *testing.T) {
 		keys, _, err := readJoinRecords(ctx, database, join())
 		if err != nil {
 			t.Fatal(err)
 		}
-		if want := []any{recordIDHelperColumn, recordIDHelperColumn}; !reflect.DeepEqual(keys, want) {
-			t.Fatalf("keys = %v, want the placeholder: a column of the joined table never keys a record", keys)
+		if want := []any{"0", "1"}; !reflect.DeepEqual(keys, want) {
+			t.Fatalf("keys = %v, want the ordinals: a column of the joined table never keys a record", keys)
 		}
 	})
 }

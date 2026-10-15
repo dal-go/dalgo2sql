@@ -50,6 +50,9 @@ func streamReads(t *testing.T, failure error, check func(t *testing.T, next func
 			mock.ExpectQuery("SELECT id, title\nFROM album").WillReturnRows(streamRows(failure))
 		}},
 		{"sqlite", "sqlite", structured, func(mock sqlmock.Sqlmock) {
+			// Only the records reader asks the catalog for the key.
+			mock.MatchExpectationsInOrder(false)
+			expectSQLiteKeyCatalog(mock, "album", sqliteKeyColumn{"id", "INTEGER", false, 1}, sqliteKeyColumn{"title", "TEXT", false, 0})
 			mock.ExpectQuery("SELECT `id`, `title` FROM `album`").WillReturnRows(streamRows(failure))
 		}},
 		{"postgres", "postgres", structured, func(mock sqlmock.Sqlmock) {

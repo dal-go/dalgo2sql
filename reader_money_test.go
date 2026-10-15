@@ -73,6 +73,7 @@ func TestRecordsReaderRefusesTheMoneyOptionWhateverItWrapsTheQueryIn(t *testing.
 		// Only the typed compiler promises to honour or refuse the option; the reader
 		// does not refuse for a compiler that never read it.
 		db, mock := newPostgresReadMock(t)
+		expectSQLiteKeyCatalog(mock, "Album") // the SQLite dialect asks its catalog for the key
 		mock.ExpectQuery("SELECT `Total` FROM `Album`").WillReturnRows(sqlmock.NewRows([]string{"Total"}))
 		q := typedMoneyQuery{StructuredQuery: albums().SelectColumns(typedTestColumn(typedTestField("Total"), "")), money: money}
 		reader, err := getRecordsReaderWithOptions(ctx, q, db.QueryContext, DbOptions{StructuredQueryDialect: "sqlite"})

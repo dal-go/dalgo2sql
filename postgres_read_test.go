@@ -279,7 +279,7 @@ func TestPostgresRecordsReaderKeysRecordsByTheFoldedPrimaryKey(t *testing.T) {
 		{"a field the query spells as the key but for its case", IdentifierCaseFoldLower, `"album"`, typedTestFrom("Album", "").NewQuery().SelectColumns(typedTestColumn(typedTestField("id"), "")),
 			`SELECT "id" FROM "album"`, []string{"id"}, []driver.Value{int64(7)}, int64(7), map[string]any{"id": int64(7)}},
 		{"the exact mode matches names as they are: ID is not id", IdentifierCaseExact, `"album"`, typedTestFrom("album", "").NewQuery().SelectColumns(),
-			`SELECT * FROM "album"`, []string{"id", "title"}, []driver.Value{int64(7), "Seven"}, recordIDHelperColumn, map[string]any{"id": int64(7), "title": "Seven"}},
+			`SELECT * FROM "album"`, []string{"id", "title"}, []driver.Value{int64(7), "Seven"}, "0", map[string]any{"id": int64(7), "title": "Seven"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			db, mock := newPostgresReadMock(t)
