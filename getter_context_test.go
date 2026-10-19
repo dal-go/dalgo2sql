@@ -396,8 +396,8 @@ func TestKeyedReadDeadlineDuringPoolWait(t *testing.T) {
 				}
 			case <-time.After(2 * time.Second):
 				_ = held.Close()
-				<-done
-				t.Fatal("pool wait ignored deadline")
+				result := <-done
+				t.Fatalf("pool wait ignored deadline: %v", result)
 			}
 			if raw.Stats().WaitCount <= before {
 				t.Fatal("read never waited in the modernc pool")
