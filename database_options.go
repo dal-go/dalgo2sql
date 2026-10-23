@@ -165,7 +165,7 @@ type NativeStructuredQueryCompiler interface {
 
 // NativeJoinHintTranslator translates a complete, validated relation tree for
 // one native SQL query. It is implemented by trusted database adapters, never
-// from DTQL input. An error prevents SQL from being emitted.
+// from TugQL input. An error prevents SQL from being emitted.
 type NativeJoinHintTranslator interface {
 	TranslateNativeJoinHints(dal.FromSource) (NativeJoinHintFragments, error)
 }

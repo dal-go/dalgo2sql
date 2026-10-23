@@ -6,23 +6,23 @@ import (
 
 	"github.com/dal-go/dalgo/condeval"
 	"github.com/dal-go/dalgo/dal"
-	"github.com/dal-go/dalgo/dtql"
+	"github.com/dal-go/dalgo/tugql"
 )
 
-// TestDatatugShippedDTQLQueriesCompile is S114 Stage 1 step 2's inventory:
-// every DTQL-YAML text datatug actually ships or tests, deserialized with
-// dal-go/dalgo's own dtql.Deserialize and run through this package's
+// TestDatatugShippedTugQLQueriesCompile is S114 Stage 1 step 2's inventory:
+// every TugQL-YAML text datatug actually ships or tests, deserialized with
+// dal-go/dalgo's own tugql.Deserialize and run through this package's
 // compileStructuredSQL, the same two steps datatug-cli's protected sqlite
 // read path performs once StructuredQueryDialect: "sqlite" is opted in
 // (pkg/dbcopy/url.go OpenProtected). Sources, at the time this test was
 // written (2026-09-10):
 //
 //   - datatug/datatug-demo-projects demo-project-1 is the ONLY datatug repo
-//     under /Users/alex/projects/datatug with a *.query.dtql file anywhere
-//     in it (`find ... -iname '*.query.dtql'`, org-wide): exactly one,
-//     queries/customers/customer-invoices.query.dtql.
-//   - datatug/datatug-cli has no *.dtql fixture files; its structured-query
-//     tests embed DTQL-YAML as Go string constants. Every `from:`-rooted
+//     under /Users/alex/projects/datatug with a *.query.tugql file anywhere
+//     in it (`find ... -iname '*.query.tugql'`, org-wide): exactly one,
+//     queries/customers/customer-invoices.query.tugql.
+//   - datatug/datatug-cli has no *.tugql fixture files; its structured-query
+//     tests embed TugQL-YAML as Go string constants. Every `from:`-rooted
 //     constant in pkg/server, pkg/server/endpoints and pkg/secureread is
 //     reproduced verbatim below (`grep -rln '`from:' --include='*.go'`
 //     across datatug-cli found exactly pkg/dbcopy/url.go [a doc comment,
@@ -34,8 +34,8 @@ import (
 // pre-existing, deliberate restriction this dialect keeps (column alias
 // policy lives one layer up, in datatug-cli's pkg/accesspolicies — see the
 // case comment) rather than something Stage 1 needed to fix.
-func TestDatatugShippedDTQLQueriesCompile(t *testing.T) {
-	for _, tc := range datatugShippedDTQLCases {
+func TestDatatugShippedTugQLQueriesCompile(t *testing.T) {
+	for _, tc := range datatugShippedTugQLCases {
 		t.Run(tc.name, func(t *testing.T) {
 			q := datatugInventoryQuery(t, tc)
 			_, _, err := compileStructuredSQL(q)
@@ -55,25 +55,25 @@ func TestDatatugShippedDTQLQueriesCompile(t *testing.T) {
 	}
 }
 
-// datatugShippedDTQLCase is one DTQL text datatug ships or tests.
-type datatugShippedDTQLCase struct {
+// datatugShippedTugQLCase is one TugQL text datatug ships or tests.
+type datatugShippedTugQLCase struct {
 	name string
 	// source cites the exact file (and, for embedded fixtures, the Go
 	// constant) this query text was copied from.
 	source  string
-	dtql    string
+	tugql   string
 	wantErr string // "" means compile must succeed
 }
 
-// datatugShippedDTQLCases is the inventory TestDatatugShippedDTQLQueriesCompile
+// datatugShippedTugQLCases is the inventory TestDatatugShippedTugQLQueriesCompile
 // compiles with the SQLite dialect and the PostgreSQL golden tests compile with
 // the PostgreSQL one.
-var datatugShippedDTQLCases = []datatugShippedDTQLCase{
+var datatugShippedTugQLCases = []datatugShippedTugQLCase{
 	{
 		name: "demo-project-1 customer-invoices (the query this stream exists for)",
 		source: "datatug/datatug-demo-projects demo-project-1 " +
-			"queries/customers/customer-invoices.query.dtql",
-		dtql: `from:
+			"queries/customers/customer-invoices.query.tugql",
+		tugql: `from:
   name: Invoice
   alias: i
 columns:
@@ -95,9 +95,9 @@ orderBy:
 		wantErr: "",
 	},
 	{
-		name:   "datatug-cli runQueryTestCustomerByIDDTQL (wildcard select, no alias)",
-		source: "datatug/datatug-cli pkg/server/endpoints/exec_run_query_test.go:runQueryTestCustomerByIDDTQL",
-		dtql: `from:
+		name:   "datatug-cli runQueryTestCustomerByIDTugQL (wildcard select, no alias)",
+		source: "datatug/datatug-cli pkg/server/endpoints/exec_run_query_test.go:runQueryTestCustomerByIDTugQL",
+		tugql: `from:
   name: Customer
 where:
   op: "=="
@@ -109,9 +109,9 @@ where:
 		wantErr: "",
 	},
 	{
-		name:   "datatug-cli customerByIDDTQL (wildcard select, no alias)",
-		source: "datatug/datatug-cli pkg/server/security_matrix_test.go:customerByIDDTQL",
-		dtql: `from:
+		name:   "datatug-cli customerByIDTugQL (wildcard select, no alias)",
+		source: "datatug/datatug-cli pkg/server/security_matrix_test.go:customerByIDTugQL",
+		tugql: `from:
   name: Customer
 where:
   op: "=="
@@ -123,9 +123,9 @@ where:
 		wantErr: "",
 	},
 	{
-		name:   "datatug-cli customerEmailExplicitDTQL (explicit hidden-column probe, no alias)",
-		source: "datatug/datatug-cli pkg/server/security_matrix_test.go:customerEmailExplicitDTQL",
-		dtql: `from:
+		name:   "datatug-cli customerEmailExplicitTugQL (explicit hidden-column probe, no alias)",
+		source: "datatug/datatug-cli pkg/server/security_matrix_test.go:customerEmailExplicitTugQL",
+		tugql: `from:
   name: Customer
 columns:
   - field: CustomerId
@@ -141,7 +141,7 @@ where:
 	},
 	{
 		// This is a COLUMN alias ("as: display_name"), not a FROM-source
-		// alias — a different DTQL feature from the one this stream
+		// alias — a different TugQL feature from the one this stream
 		// adds. The dialect has always compiled column aliases (see
 		// TestCompileStructuredSQLParameterizedAndQuoted's `display"name`
 		// case); datatug-cli's own security_matrix_task13_test.go
@@ -150,9 +150,9 @@ where:
 		// dialect ever sees it. Listed here to record that the dialect
 		// itself does not reject it, so nobody mistakes this repo for
 		// the enforcement point.
-		name:   "datatug-cli customerAliasedColumnDTQL (COLUMN alias, not source alias; refused upstream by accesspolicies, not by this dialect)",
-		source: "datatug/datatug-cli pkg/server/security_matrix_task13_test.go:customerAliasedColumnDTQL",
-		dtql: `from:
+		name:   "datatug-cli customerAliasedColumnTugQL (COLUMN alias, not source alias; refused upstream by accesspolicies, not by this dialect)",
+		source: "datatug/datatug-cli pkg/server/security_matrix_task13_test.go:customerAliasedColumnTugQL",
+		tugql: `from:
   name: Customer
 columns:
   - field: CustomerId
@@ -168,9 +168,9 @@ where:
 		wantErr: "",
 	},
 	{
-		name:   "datatug-cli customerInvoiceDTQL (wildcard select, no alias)",
-		source: "datatug/datatug-cli pkg/server/security_matrix_task13_test.go:customerInvoiceDTQL",
-		dtql: `from:
+		name:   "datatug-cli customerInvoiceTugQL (wildcard select, no alias)",
+		source: "datatug/datatug-cli pkg/server/security_matrix_task13_test.go:customerInvoiceTugQL",
+		tugql: `from:
   name: Invoice
 where:
   op: "=="
@@ -185,11 +185,11 @@ where:
 
 // datatugInventoryQuery deserializes one inventory case and binds its parameter
 // the way datatug-cli does before a query reaches the adapter.
-func datatugInventoryQuery(t *testing.T, tc datatugShippedDTQLCase) dal.StructuredQuery {
+func datatugInventoryQuery(t *testing.T, tc datatugShippedTugQLCase) dal.StructuredQuery {
 	t.Helper()
-	q, err := dtql.Deserialize([]byte(tc.dtql))
+	q, err := tugql.Deserialize([]byte(tc.tugql))
 	if err != nil {
-		t.Fatalf("dtql.Deserialize(%s): %v", tc.source, err)
+		t.Fatalf("tugql.Deserialize(%s): %v", tc.source, err)
 	}
 	// Every case above binds its `param:` node to CustomerId via
 	// datatug-cli's own pkg/accesspolicies.Run -> substituteParams,

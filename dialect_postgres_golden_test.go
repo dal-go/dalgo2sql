@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/dal-go/dalgo/dal"
-	"github.com/dal-go/dalgo/dtql"
+	"github.com/dal-go/dalgo/tugql"
 )
 
 // The PostgreSQL golden files live in testdata/postgres. Each holds, for one group
@@ -525,28 +525,28 @@ func postgresOutsideQuotes(t *testing.T, text string) string {
 	return out.String()
 }
 
-// TestPostgresGoldenDatatugShippedDTQL compiles every DTQL text DataTug ships
-// (dtql_datatug_inventory_test.go) with the PostgreSQL dialect, with the catalog
+// TestPostgresGoldenDatatugShippedTugQL compiles every TugQL text DataTug ships
+// (tugql_datatug_inventory_test.go) with the PostgreSQL dialect, with the catalog
 // facts of the sample database, as DataTug's protected read path will.
-func TestPostgresGoldenDatatugShippedDTQL(t *testing.T) {
+func TestPostgresGoldenDatatugShippedTugQL(t *testing.T) {
 	var cases []postgresGoldenCase
-	for _, tc := range datatugShippedDTQLCases {
+	for _, tc := range datatugShippedTugQLCases {
 		cases = append(cases, postgresGoldenCase{name: tc.name, query: datatugInventoryQuery(t, tc), facts: postgresChinookFacts})
 	}
-	for _, tc := range datatugShippedDTQLCases {
+	for _, tc := range datatugShippedTugQLCases {
 		cases = append(cases, postgresGoldenCase{name: tc.name + ", without catalog facts", query: datatugInventoryQuery(t, tc)})
 	}
-	assertPostgresGoldenGroup(t, "datatug-dtql", cases)
+	assertPostgresGoldenGroup(t, "datatug-tugql", cases)
 }
 
-// postgresJoinFixture deserializes one of the vendored DTQL join fixtures.
+// postgresJoinFixture deserializes one of the vendored TugQL join fixtures.
 func postgresJoinFixture(t *testing.T, name string) (dal.StructuredQuery, error) {
 	t.Helper()
 	contents, err := os.ReadFile(filepath.Join("testdata", "joins", name))
 	if err != nil {
 		t.Fatal(err)
 	}
-	return dtql.Deserialize(contents)
+	return tugql.Deserialize(contents)
 }
 
 // TestPostgresGoldenJoins compiles the join fixtures of testdata/joins, and the
@@ -554,10 +554,10 @@ func postgresJoinFixture(t *testing.T, name string) (dal.StructuredQuery, error)
 // database.
 func TestPostgresGoldenJoins(t *testing.T) {
 	var cases []postgresGoldenCase
-	for _, name := range []string{"chinook-nested.dtql.yaml", "chinook-hinted.dtql.yaml", "chinook-wildcard.dtql.yaml"} {
+	for _, name := range []string{"chinook-nested.tugql.yaml", "chinook-hinted.tugql.yaml", "chinook-wildcard.tugql.yaml"} {
 		query, err := postgresJoinFixture(t, name)
 		if err != nil {
-			t.Fatalf("dtql.Deserialize(%s): %v", name, err)
+			t.Fatalf("tugql.Deserialize(%s): %v", name, err)
 		}
 		cases = append(cases, postgresGoldenCase{name: name, query: query, facts: postgresChinookFacts})
 	}
@@ -613,7 +613,7 @@ func TestPostgresJoinErrorFixtures(t *testing.T) {
 			if err := json.Unmarshal(contents, &want); err != nil {
 				t.Fatal(err)
 			}
-			query, err := postgresJoinFixture(t, name+".dtql.yaml")
+			query, err := postgresJoinFixture(t, name+".tugql.yaml")
 			if err == nil {
 				_, _, err = compileTypedSQL(query, newPostgresDialect(postgresExact), postgresChinookFacts(postgresExact))
 			}

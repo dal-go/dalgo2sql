@@ -13,7 +13,7 @@ import (
 	"testing"
 
 	"github.com/dal-go/dalgo/dal"
-	"github.com/dal-go/dalgo/dtql"
+	"github.com/dal-go/dalgo/tugql"
 	_ "modernc.org/sqlite"
 )
 
@@ -44,7 +44,7 @@ func chinookNestedSQLQuery() dal.StructuredQuery {
 }
 
 func TestCompileStructuredSQLRecursiveJoinsPreserveSubtreeAndSchema(t *testing.T) {
-	contents, err := os.ReadFile("testdata/joins/chinook-nested.dtql.yaml")
+	contents, err := os.ReadFile("testdata/joins/chinook-nested.tugql.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestCanonicalJoinFixtureManifestPinsEveryVendoredFixture(t *testing.T) {
 	if len(manifest.Files) == 0 {
 		t.Fatal("canonical fixture manifest is empty")
 	}
-	if got, want := manifest.SourceCommit, "c999c7372fd944c57e89dad7e75f9f42c8afaae1"; got != want {
+	if got, want := manifest.SourceCommit, "56b804de624ade79efdc3d61970da7ac7562dc68"; got != want {
 		t.Fatalf("canonical fixture source commit = %q, want exact %q", got, want)
 	}
 	for name, want := range manifest.Files {
@@ -479,15 +479,15 @@ func TestSQLiteNativeJoinHintedFixtureMatchesCanonicalRows(t *testing.T) {
 	db := NewDatabase(raw, dal.NewSchema(nil, nil), DbOptions{StructuredQueryDialect: "sqlite"})
 
 	want := []string{"3/Bea/false/", "2/Ada/true/Evan", "1/Ada/true/Evan"}
-	for _, name := range []string{"chinook-nested.dtql.yaml", "chinook-hinted.dtql.yaml"} {
+	for _, name := range []string{"chinook-nested.tugql.yaml", "chinook-hinted.tugql.yaml"} {
 		t.Run(name, func(t *testing.T) {
 			contents, err := os.ReadFile("testdata/joins/" + name)
 			if err != nil {
 				t.Fatal(err)
 			}
-			query, err := dtql.Deserialize(contents)
+			query, err := tugql.Deserialize(contents)
 			if err != nil {
-				t.Fatalf("dtql.Deserialize(%s): %v", name, err)
+				t.Fatalf("tugql.Deserialize(%s): %v", name, err)
 			}
 			text, args, err := compileStructuredSQL(query)
 			if err != nil {
@@ -514,7 +514,7 @@ func TestSQLiteNativeJoinHintedFixtureMatchesCanonicalRows(t *testing.T) {
 			if fmt.Sprint(got) != fmt.Sprint(want) {
 				t.Fatalf("%s rows = %#v, want %#v", name, got, want)
 			}
-			if name != "chinook-hinted.dtql.yaml" {
+			if name != "chinook-hinted.tugql.yaml" {
 				return
 			}
 

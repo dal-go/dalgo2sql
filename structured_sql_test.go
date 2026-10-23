@@ -44,7 +44,7 @@ func TestCompileStructuredSQLParameterizedAndQuoted(t *testing.T) {
 	}
 }
 
-// TestCompileStructuredSQLSourceAlias covers the DTQL shape datatug's
+// TestCompileStructuredSQLSourceAlias covers the TugQL shape datatug's
 // customer-invoices demo query actually ships (`from: {name: Invoice,
 // alias: i}` with unqualified column/where/orderBy field references):
 // the alias must appear in the FROM clause and unqualified fields must

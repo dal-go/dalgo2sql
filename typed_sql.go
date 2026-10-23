@@ -61,7 +61,7 @@ func typedUnsupported(format string, args ...any) error {
 //
 // Anything the engine cannot run faithfully returns an error matching
 // dal.ErrNotSupported rather than an approximation: an unrecognised node, a
-// query option the statement cannot honour (the DTQL money option, a source's
+// query option the statement cannot honour (the TugQL money option, a source's
 // scan or database: see validateTypedJoinSources and validateTypedScanRestated),
 // a reference the server could not match (typedCheckOrderByName), and a bare name
 // the server would read as the whole row (typedCompiler.checkNamesAColumn).
@@ -149,8 +149,8 @@ func compileTypedStatement(q dal.StructuredQuery, dialect typedDialect, facts ty
 	return statement, nil
 }
 
-// typedRefuseMoney refuses a query that carries the DTQL money option, which asks for
-// exact decimal results (dtql/query.go, Money()). DALgo computes those in its federated
+// typedRefuseMoney refuses a query that carries the TugQL money option, which asks for
+// exact decimal results (tugql/query.go, Money()). DALgo computes those in its federated
 // engine, in decimal text with half-even rounding; a statement would compute SUM, AVG and
 // division in double precision, so honouring the option here would be approximating it.
 //

@@ -186,7 +186,7 @@ type typedDialect interface {
 	// with the schema the query wrote when the query named one.
 	suggestSource(ctx context.Context, execute executeQueryFunc, source typedSourceName) (typedSourceName, bool, error)
 
-	// window is reserved for window functions. DTQL has none today and the
+	// window is reserved for window functions. TugQL has none today and the
 	// compiler never calls it; the seam exists so a dialect can add them later
 	// without changing this interface.
 	window(function string, args, partitionBy, orderBy []string) (string, error)
