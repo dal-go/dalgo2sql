@@ -303,7 +303,7 @@ func getReaderBaseFor(ctx context.Context, query dal.Query, execute executeQuery
 	return rb, nil
 }
 
-// rejectRawRecursiveStructuredQuery keeps recursive DTQL evaluation in DALgo's
+// rejectRawRecursiveStructuredQuery keeps recursive TugQL evaluation in DALgo's
 // generic executor. This adapter only compiles one SQL statement at a time, so
 // attempting a nested query here could bypass the framework's planner and
 // policy-aware leaf execution.

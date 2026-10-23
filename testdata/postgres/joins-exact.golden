@@ -1,12 +1,12 @@
-=== chinook-nested.dtql.yaml
+=== chinook-nested.tugql.yaml
 sql: SELECT "i"."InvoiceId" AS "invoice_id", "c"."FirstName" AS "customer", "e"."FirstName" AS "employee" FROM "main"."Invoice" AS "i" INNER JOIN ("main"."Customer" AS "c" LEFT JOIN "main"."Employee" AS "e" ON ("c"."SupportRepId" = "e"."EmployeeId")) ON ("i"."CustomerId" = "c"."CustomerId") WHERE "c"."CustomerId" >= $1::bigint ORDER BY "i"."InvoiceId" DESC LIMIT $2
 $1 int64 10
 $2 int64 10
-=== chinook-hinted.dtql.yaml
+=== chinook-hinted.tugql.yaml
 sql: SELECT "i"."InvoiceId" AS "invoice_id", "c"."FirstName" AS "customer", "e"."FirstName" AS "employee" FROM "main"."Invoice" AS "i" INNER JOIN ("main"."Customer" AS "c" LEFT JOIN "main"."Employee" AS "e" ON ("c"."SupportRepId" = "e"."EmployeeId")) ON ("i"."CustomerId" = "c"."CustomerId") LEFT JOIN "main"."Customer" AS "c2" ON ("i"."CustomerId" = "c2"."CustomerId") WHERE "c"."CustomerId" >= $1::bigint ORDER BY "i"."InvoiceId" DESC LIMIT $2
 $1 int64 10
 $2 int64 10
-=== chinook-wildcard.dtql.yaml
+=== chinook-wildcard.tugql.yaml
 refused: not supported: wildcard projection must precede explicit columns
 === inner join
 sql: SELECT "a"."Title", "r"."Name" AS "artist" FROM "Album" AS "a" INNER JOIN "Artist" AS "r" ON ("a"."ArtistId" = "r"."ArtistId")

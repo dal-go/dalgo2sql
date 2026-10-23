@@ -13,8 +13,8 @@ type fakeTypedCondition struct{}
 
 func (fakeTypedCondition) String() string { return "fake" }
 
-// typedMoneyQuery is a query that carries the DTQL money option, as the query
-// dtql.Deserialize returns does (dtql/query.go in DALgo).
+// typedMoneyQuery is a query that carries the TugQL money option, as the query
+// tugql.Deserialize returns does (tugql/query.go in DALgo).
 type typedMoneyQuery struct {
 	dal.StructuredQuery
 	money *dal.MoneyConfig
@@ -224,7 +224,7 @@ func TestCompileTypedSQLRefusesUnsupportedNodesWithErrNotSupported(t *testing.T)
 				SelectColumns(typedTestColumn(dal.Binary(typedTestField("a"), dal.Add, typedTestField("b")), "")),
 			folding, `ORDER BY resolves to column "(A + B)" (written "(a + b)")`,
 		},
-		{"query carrying a DTQL money option", typedMoneyQuery{StructuredQuery: album().SelectColumns(), money: &dal.MoneyConfig{MinorUnitScale: 2, DivisionScale: 4, Rounding: "halfEven"}}, nil, "money"},
+		{"query carrying a TugQL money option", typedMoneyQuery{StructuredQuery: album().SelectColumns(), money: &dal.MoneyConfig{MinorUnitScale: 2, DivisionScale: 4, Rounding: "halfEven"}}, nil, "money"},
 		{"scan-bounded base source in a join", joinedTo(scanned, plainCustomer), nil, "from: join_plan: a scan-bounded source"},
 		{"scan limit alone on the base source of a join", joinedTo(scanLimitOnly, plainCustomer), nil, "scan-bounded"},
 		{"scan order alone on a joined source", joinedTo(dal.NewRootCollectionRef("Invoice", "i"), scanOrderOnly), nil, "from.joins[0].from: join_plan: a scan-bounded source"},

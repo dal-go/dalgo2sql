@@ -11,7 +11,7 @@ import (
 	"github.com/dal-go/dalgo/dal"
 )
 
-// The DTQL money option asks for exact decimal results, which a statement computes in
+// The TugQL money option asks for exact decimal results, which a statement computes in
 // double precision, so the typed compiler refuses a query that carries it. The compiler
 // looks for the option on the query it is handed, and the records reader hands it a
 // wrapper of its own when it adds the key column or the key order to the query: a wrapper

@@ -219,7 +219,7 @@ arguments of every supported shape are in `testdata/postgres`.
   `context.DeadlineExceeded`), also when the driver reports its connection broken
   (`driver.ErrBadConn`) or database/sql reports it closed (`sql.ErrConnDone`) because of
   it; the connection goes back to the pool in every case.
-- **The DTQL money option** is refused (`ErrNotSupported`) whatever the select list:
+- **The TugQL money option** is refused (`ErrNotSupported`) whatever the select list:
   the records reader reads the option from the caller's query before it adds the key
   column to it.
 - **No protected-write factory.** `NewDatabase` returns the plain adapter for

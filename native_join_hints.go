@@ -10,7 +10,7 @@ import (
 // translateNativeJoinHints calls an optional trusted adapter translator for a
 // complete validated relation tree. A configured translator must explicitly
 // acknowledge every edge that carries algorithm preferences so no preference is
-// silently lost between DTQL and the native compiler.
+// silently lost between TugQL and the native compiler.
 func translateNativeJoinHints(from dal.FromSource, translator NativeJoinHintTranslator) (NativeJoinHintFragments, error) {
 	if translator == nil || from == nil {
 		return NativeJoinHintFragments{}, nil
