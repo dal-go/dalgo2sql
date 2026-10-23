@@ -32,7 +32,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: end2end/go.mod
           cache-dependency-path: end2end/go.sum
@@ -59,7 +59,7 @@ jobs:
           --health-retries 40
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: end2end/go.mod
           cache-dependency-path: end2end/go.sum
@@ -90,7 +90,7 @@ jobs:
           --health-retries 60
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: end2end/go.mod
           cache-dependency-path: end2end/go.sum
@@ -121,7 +121,7 @@ jobs:
           --health-retries 30
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: end2end/go.mod
           cache-dependency-path: end2end/go.sum
