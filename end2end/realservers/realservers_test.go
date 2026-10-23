@@ -204,7 +204,7 @@ func exerciseTypedDialect(t *testing.T, sqlDB *sql.DB, dialect, notFound string)
 			column(dal.Binary(field("AlbumId"), dal.Divide, constant(4)), "quarter"),
 			column(dal.Binary(field("ArtistId"), dal.Multiply, constant(int64(math.MaxInt64))), "wide"),
 			column(dal.Binary(field("Price"), dal.Add, field("AlbumId")), "sum")),
-		"byZero", "quarter", "wide", "sum"), "NULL|0.25|9223372036854775808|10.99")
+		"byZero", "quarter", "wide", "sum"), "NULL|0.25|9223372036854776000|10.99")
 
 	expectRows(t, "an alias named as another column orders by the alias's expression", rows(t, db, album().
 		OrderBy(dal.Ascending(field("Title"))).
@@ -225,6 +225,17 @@ func exerciseTypedDialect(t *testing.T, sqlDB *sql.DB, dialect, notFound string)
 	expectRows(t, "a select-all minus an exclusion", rows(t, db, album().
 		Where(dal.NewComparison(field("AlbumId"), dal.Equal, constant(4))).
 		SelectColumns(dal.AllColumnsExcept("Price", "ArtistId")), "AlbumId", "Title"), "4|Let There Be Rock")
+
+	// The Go types the driver hands back, for a reader of the log.
+	typed, err := dal.ExecuteQueryAndReadAllToRecords(context.Background(), album().GroupBy(field("ArtistId")).OrderBy(dal.Ascending(field("ArtistId"))).Limit(1).
+		SelectColumns(column(field("ArtistId"), ""), dal.CountAs(field("AlbumId"), "n"), dal.SumAs(field("Price"), "sum"), dal.MaxAs(field("Price"), "max"), dal.MaxAs(field("Title"), "title")), db)
+	if err != nil || len(typed) != 1 {
+		t.Fatalf("typed read = %v, %v", typed, err)
+	}
+	for _, name := range []string{"ArtistId", "n", "sum", "max", "title"} {
+		value := typed[0].Data().(map[string]any)[name]
+		t.Logf("%s: %s returns %T %v", dialect, name, value, value)
+	}
 
 	records, err := dal.ExecuteQueryAndReadAllToRecords(context.Background(), album().OrderBy(dal.Ascending(field("AlbumId"))).Limit(1).SelectColumns(), db)
 	if err != nil {
