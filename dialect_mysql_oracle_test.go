@@ -64,7 +64,7 @@ func TestMySQLAndOracleDialectFragments(t *testing.T) {
 		notEmpty                string
 	}{
 		{mysqlDialect{}, "x ASC", "x DESC", "x ASC", "SUM(x)", "COUNT(x)", "FALSE", "TRUE"},
-		{oracleDialect{}, "x ASC NULLS FIRST", "x DESC NULLS LAST", "x ASC", "(CAST(SUM(x) AS BINARY_DOUBLE))", "COUNT(x)", "(1 = 0)", "(1 = 1)"},
+		{oracleDialect{}, "x ASC NULLS FIRST", "x DESC NULLS LAST", "x ASC", "(CAST(SUM(x) AS BINARY_DOUBLE))", "(CAST(COUNT(x) AS NUMBER(18)))", "(1 = 0)", "(1 = 1)"},
 		{sqlserverDialect{}, "x ASC", "x DESC", "x ASC", "SUM(x)", "COUNT(x)", "(1 = 0)", "(1 = 1)"},
 	} {
 		d := tc.dialect
@@ -566,17 +566,20 @@ func TestOracleNumbersAreReadAsNumbers(t *testing.T) {
 	}
 }
 
-// An int64 column refuses a float64 that is not a whole int64 instead of truncating it,
-// and takes a whole one.
+// On Oracle an int64 column refuses a float64 that is not a whole int64 instead of
+// truncating it, and takes a whole one; other dialects convert as they always did.
 func TestRecordsetInt64ColumnNeverTruncates(t *testing.T) {
 	ctx := context.Background()
 	for _, tc := range []struct {
-		value any
-		want  any
-	}{{3.0, int64(3)}, {2.5, nil}, {1e19, nil}, {-1e19, nil}} {
+		value   any
+		want    any
+		dialect string
+	}{{3.0, int64(3), "oracle"}, {2.5, nil, "oracle"}, {1e19, nil, "oracle"}, {-1e19, nil, "oracle"},
+		// Every other dialect keeps the conversion it always had.
+		{2.5, int64(2), ""}, {2.5, int64(2), "sqlite"}} {
 		db, mock := newPostgresReadMock(t)
 		mock.ExpectQuery("SELECT 1").WillReturnRows(sqlmock.NewRowsWithColumnDefinition(sqlmock.NewColumn("n").OfType("INTEGER", int64(0))).AddRow(tc.value))
-		reader, err := getRecordsetReaderWithOptions(ctx, dal.NewTextQuery("SELECT 1", nil), db.QueryContext, DbOptions{})
+		reader, err := getRecordsetReaderWithOptions(ctx, dal.NewTextQuery("SELECT 1", nil), db.QueryContext, DbOptions{StructuredQueryDialect: tc.dialect})
 		if err != nil {
 			t.Fatal(err)
 		}

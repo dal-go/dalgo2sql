@@ -140,10 +140,14 @@ func (oracleDialect) arithmeticOperand(operand string) string {
 }
 
 // aggregateResult casts SUM and AVG, which Oracle returns as NUMBER, to the float64
-// DALgo's generic engine returns.
+// DALgo's generic engine returns, and COUNT (DISTINCT included), an unconstrained
+// NUMBER, to NUMBER(18), so a reader types it as an integer column (oracleNumberColumn).
 func (oracleDialect) aggregateResult(function, aggregate string) string {
-	if function == dal.SUM || function == dal.AVERAGE {
+	switch function {
+	case dal.SUM, dal.AVERAGE:
 		return "(CAST(" + aggregate + " AS BINARY_DOUBLE))"
+	case dal.COUNT:
+		return "(CAST(" + aggregate + " AS NUMBER(18)))"
 	}
 	return aggregate
 }

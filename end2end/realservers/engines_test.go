@@ -75,8 +75,8 @@ func TestRealOracle(t *testing.T) {
 		exact bool
 		want  map[string]any
 	}{
-		{false, map[string]any{"Id": int64(1), "Price": 9.99, "Star": 2.5, "Free": 2.5, "Huge": 1.2345678901234568e22, "n": 1.0}},
-		{true, map[string]any{"Id": int64(1), "Price": "9.99", "Star": "2.5", "Free": "2.5", "Huge": "12345678901234567890123", "n": "1"}},
+		{false, map[string]any{"Id": int64(1), "Price": 9.99, "Star": 2.5, "Free": 2.5, "Huge": 1.2345678901234568e22, "n": int64(1)}},
+		{true, map[string]any{"Id": int64(1), "Price": "9.99", "Star": "2.5", "Free": "2.5", "Huge": "12345678901234567890123", "n": int64(1)}},
 	} {
 		got := recordsetRow(t, dalgo2sql.NewDatabase(db, dalgo2sql.NewSimpleSchema("ID"), dalgo2sql.DbOptions{StructuredQueryDialect: "oracle", ExactNumericValues: tc.exact}), q)
 		for name, want := range tc.want {

@@ -1,7 +1,8 @@
 name: Real servers
 
 # Runs the typed MySQL, Oracle and SQL Server dialects against real servers
-# (end2end/realservers). Each job sets DALGO2SQL_REQUIRE_REAL_SERVERS, so a test
+# (end2end/realservers), and the recordset regression tests on mattn/go-sqlite3.
+# Each server job sets DALGO2SQL_REQUIRE_REAL_SERVERS, so a test
 # that cannot reach its server fails instead of skipping.
 #
 # The Oracle Database Free and SQL Server Developer images are used for automated
@@ -25,6 +26,20 @@ permissions:
   contents: read
 
 jobs:
+  sqlite:
+    name: SQLite (mattn/go-sqlite3)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: end2end/go.mod
+          cache-dependency-path: end2end/go.sum
+      - name: Recordset reads on DataTug's SQLite driver
+        working-directory: end2end
+        run: go test -count=1 -v -run '^TestMattnSQLite' .
+
   mysql:
     name: MySQL 8.4
     runs-on: ubuntu-latest

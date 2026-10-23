@@ -28,7 +28,7 @@ sql: SELECT ((CAST(("Album"."aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") AS BINARY_DOUBLE))
 === two outputs that are one name once folded
 sql: SELECT "Album"."Title", "Album"."TITLE" FROM "Album"
 === count(*) is named as DALgo names it
-sql: SELECT COUNT(*) AS "COUNT(*)" FROM "Invoice"
+sql: SELECT (CAST(COUNT(*) AS NUMBER(18))) AS "COUNT(*)" FROM "Invoice"
 === dal.ID names a real column and is read as one
 sql: SELECT * FROM "Album" WHERE "Album"."AlbumId" = :1
 #1 int64 7
@@ -94,13 +94,13 @@ sql: SELECT (CAST((((CAST(("Album"."a") AS BINARY_DOUBLE)) + (CAST((:1) AS BINAR
 #1 int64 1
 #2 int64 2
 === COUNT(*)
-sql: SELECT COUNT(*) AS "COUNT(*)" FROM "Invoice"
+sql: SELECT (CAST(COUNT(*) AS NUMBER(18))) AS "COUNT(*)" FROM "Invoice"
 === every aggregate
-sql: SELECT COUNT("Invoice"."InvoiceId") AS "n", (CAST(SUM("Invoice"."Total") AS BINARY_DOUBLE)) AS "sum", (CAST(AVG("Invoice"."Total") AS BINARY_DOUBLE)) AS "avg", MIN("Invoice"."Total") AS "min", MAX("Invoice"."Total") AS "max" FROM "Invoice"
+sql: SELECT (CAST(COUNT("Invoice"."InvoiceId") AS NUMBER(18))) AS "n", (CAST(SUM("Invoice"."Total") AS BINARY_DOUBLE)) AS "sum", (CAST(AVG("Invoice"."Total") AS BINARY_DOUBLE)) AS "avg", MIN("Invoice"."Total") AS "min", MAX("Invoice"."Total") AS "max" FROM "Invoice"
 === distinct aggregates
-sql: SELECT COUNT(DISTINCT "Invoice"."CustomerId") AS "customers", (CAST(SUM(DISTINCT "Invoice"."Total") AS BINARY_DOUBLE)) AS "sum", (CAST(AVG(DISTINCT "Invoice"."Total") AS BINARY_DOUBLE)) AS "avg" FROM "Invoice"
+sql: SELECT (CAST(COUNT(DISTINCT "Invoice"."CustomerId") AS NUMBER(18))) AS "customers", (CAST(SUM(DISTINCT "Invoice"."Total") AS BINARY_DOUBLE)) AS "sum", (CAST(AVG(DISTINCT "Invoice"."Total") AS BINARY_DOUBLE)) AS "avg" FROM "Invoice"
 === GROUP BY with HAVING and ORDER BY through select aliases
-sql: SELECT "Invoice"."BillingCountry" AS "country", (CAST(SUM("Invoice"."Total") AS BINARY_DOUBLE)) AS "revenue", COUNT("Invoice"."InvoiceId") AS "invoices" FROM "Invoice" GROUP BY "Invoice"."BillingCountry" HAVING (CAST(SUM("Invoice"."Total") AS BINARY_DOUBLE)) > :1 ORDER BY (CAST(SUM("Invoice"."Total") AS BINARY_DOUBLE)) DESC NULLS LAST, "Invoice"."BillingCountry" ASC NULLS FIRST FETCH FIRST :2 ROWS ONLY
+sql: SELECT "Invoice"."BillingCountry" AS "country", (CAST(SUM("Invoice"."Total") AS BINARY_DOUBLE)) AS "revenue", (CAST(COUNT("Invoice"."InvoiceId") AS NUMBER(18))) AS "invoices" FROM "Invoice" GROUP BY "Invoice"."BillingCountry" HAVING (CAST(SUM("Invoice"."Total") AS BINARY_DOUBLE)) > :1 ORDER BY (CAST(SUM("Invoice"."Total") AS BINARY_DOUBLE)) DESC NULLS LAST, "Invoice"."BillingCountry" ASC NULLS FIRST FETCH FIRST :2 ROWS ONLY
 #1 int64 1000
 #2 int64 10
 === a grouped expression carrying a constant is referenced by position
@@ -130,7 +130,7 @@ sql: SELECT * FROM "Album" OFFSET :1 ROWS FETCH NEXT :2 ROWS ONLY
 #1 int64 5
 #2 int64 10
 === numbering follows the text across clauses
-sql: SELECT "Invoice"."g", ((CAST((COUNT(*)) AS BINARY_DOUBLE)) + (CAST((:1) AS BINARY_DOUBLE))) AS "n" FROM "Invoice" WHERE "Invoice"."a" = :2 GROUP BY "Invoice"."g" HAVING (CAST(SUM("Invoice"."t") AS BINARY_DOUBLE)) > :3 ORDER BY ((CAST(("Invoice"."g") AS BINARY_DOUBLE)) + (CAST((:4) AS BINARY_DOUBLE))) ASC NULLS FIRST OFFSET :5 ROWS FETCH NEXT :6 ROWS ONLY
+sql: SELECT "Invoice"."g", ((CAST(((CAST(COUNT(*) AS NUMBER(18)))) AS BINARY_DOUBLE)) + (CAST((:1) AS BINARY_DOUBLE))) AS "n" FROM "Invoice" WHERE "Invoice"."a" = :2 GROUP BY "Invoice"."g" HAVING (CAST(SUM("Invoice"."t") AS BINARY_DOUBLE)) > :3 ORDER BY ((CAST(("Invoice"."g") AS BINARY_DOUBLE)) + (CAST((:4) AS BINARY_DOUBLE))) ASC NULLS FIRST OFFSET :5 ROWS FETCH NEXT :6 ROWS ONLY
 #1 int64 6
 #2 int64 1
 #3 int64 2
