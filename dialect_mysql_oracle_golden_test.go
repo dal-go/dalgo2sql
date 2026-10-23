@@ -160,6 +160,19 @@ type oracleWithPositionalGroupBy struct{ oracleDialect }
 
 func (oracleWithPositionalGroupBy) groupByPosition() bool { return true }
 
+// bind lets the draws' empty strings and bytes through, which Oracle refuses
+// (TestMySQLOracleSQLServerRefuseConstantsTheEngineCannotHold), so the proof runs over
+// every other constant.
+func (d oracleWithPositionalGroupBy) bind(value any) (string, any, error) {
+	if text, ok := value.(string); ok && text == "" {
+		return "?", value, nil
+	}
+	if bytes, ok := value.([]byte); ok && len(bytes) == 0 {
+		return "?", value, nil
+	}
+	return d.oracleDialect.bind(value)
+}
+
 // sqlserverWithPositionalGroupBy is the SQL Server dialect with GROUP BY by position,
 // for the same reason.
 type sqlserverWithPositionalGroupBy struct{ sqlserverDialect }
@@ -172,5 +185,53 @@ func TestMySQLOracleTextDoesNotDependOnValues(t *testing.T) {
 			assertTypedTextIgnoresValues(t, dialect)
 			assertTypedTextHasTwoShapesForTwoConstants(t, dialect)
 		})
+	}
+}
+
+// typedUngroupedProbeQuery puts one probe in a comparison, an IN list, arithmetic and
+// HAVING, with a GROUP BY that carries no constant, so it compiles on Oracle and SQL
+// Server too, which refuse the grouped shape of postgresProbeQuery.
+func typedUngroupedProbeQuery(probe string) dal.StructuredQuery {
+	field := typedTestField
+	return typedTestFrom("Invoice", "").NewQuery().
+		Where(dal.NewGroupCondition(dal.And,
+			typedTestEq(field("BillingCity"), probe),
+			dal.NewComparison(field("BillingCountry"), dal.In, dal.NewArray([]string{"FR", probe})),
+			dal.NewComparison(dal.Binary(field("Total"), dal.Add, typedTestConst(probe)), dal.GreaterThen, typedTestConst(0)),
+		)).
+		GroupBy(field("BillingCountry")).
+		Having(dal.NewComparison(field("revenue"), dal.GreaterThen, typedTestConst(probe))).
+		OrderBy(dal.Ascending(field("BillingCountry"))).
+		SelectColumns(typedTestColumn(field("BillingCountry"), "country"), dal.SumAs(field("Total"), "revenue"))
+}
+
+// TestMySQLOracleGoldenUngroupedInjectionProbes pins the statements built around hostile
+// values on every dialect, and proves each value is bound and never in the text.
+func TestMySQLOracleGoldenUngroupedInjectionProbes(t *testing.T) {
+	var cases []postgresGoldenCase
+	for i, probe := range postgresInjectionProbes {
+		cases = append(cases, postgresGoldenCase{name: fmt.Sprintf("probe %d in every position", i+1), query: typedUngroupedProbeQuery(probe)})
+	}
+	assertTypedDialectGoldens(t, "probes-ungrouped", cases)
+	for _, d := range typedGoldenDialects {
+		reference, _, err := compileTypedSQL(typedUngroupedProbeQuery("harmless"), d.dialect, typedCatalogFacts{})
+		if err != nil {
+			t.Fatalf("%s: %v", d.dir, err)
+		}
+		for i, probe := range postgresInjectionProbes {
+			text, args, err := compileTypedSQL(typedUngroupedProbeQuery(probe), d.dialect, typedCatalogFacts{})
+			if err != nil || text != reference {
+				t.Fatalf("%s probe %d: %v; the statement changed:\n%s\n%s", d.dir, i+1, err, text, reference)
+			}
+			found := 0
+			for _, arg := range args {
+				if arg == probe {
+					found++
+				}
+			}
+			if found != 4 {
+				t.Fatalf("%s: probe %q is bound %d times, want 4: %v", d.dir, probe, found, args)
+			}
+		}
 	}
 }

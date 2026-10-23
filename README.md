@@ -264,23 +264,34 @@ and `dialect_sqlserver.go` document the rest):
   descending, as DALgo does, so no NULLS clause is written; Oracle writes `NULLS FIRST`/`NULLS LAST`
   unless the catalog says the column is NOT NULL.
 - **Arithmetic and aggregates** are on `DOUBLE` (MySQL), `BINARY_DOUBLE` (Oracle) and
-  `FLOAT` (SQL Server), with a zero divisor read as NULL; SUM and AVG are cast to them
-  (SQL Server casts their argument, since its AVG of an int is an int).
+  `FLOAT` (SQL Server), with a zero divisor read as NULL. SUM and AVG cast their
+  argument on MySQL and SQL Server (MySQL's AVG of an INT is a DECIMAL rounded to four
+  places, SQL Server's is an int) and their result on Oracle.
+- **Result values**: go-ora delivers every Oracle NUMBER as text; the readers turn it
+  into an `int64` when the column's scale is 0 or unconstrained (COUNT included) and the
+  value is whole, else into a `float64` (decimal text with `ExactNumericValues`). MySQL
+  and SQL Server deliver integers as `int64` and DECIMAL as text, as before.
 - **Refused** (`dal.ErrNotSupported`), as with PostgreSQL: FIRST and LAST, window
-  functions, subqueries, cursors, the money option, RIGHT and FULL joins, and on
-  Oracle and SQL Server a GROUP BY expression that carries a constant (neither has
-  GROUP BY by position). SQL Server refuses a statement that binds over 2100 values.
-- **Comparisons follow the engine.** MySQL compares text by the column's collation
-  (the default `utf8mb4_0900_ai_ci` ignores case and accents); Oracle reads the empty
-  string as NULL, so `== ""` finds nothing. go-ora sends a float as a NUMBER, so NaN
-  and the infinities are refused by the driver. SQL Server compares by the column's
-  collation too (the default ignores case), and has no NaN or infinity.
+  functions, subqueries, cursors, the money option, RIGHT and FULL joins; a NaN or
+  infinite float constant (none of the three engines has one); on Oracle and SQL
+  Server a GROUP BY expression that carries a constant (neither has GROUP BY by
+  position); on Oracle an empty string or byte constant, which Oracle reads as NULL,
+  so `!= ""` and `NOT IN ("")` would find no row. SQL Server refuses a statement that
+  binds over 2100 values, and its COUNT fails past 2^31 - 1 rows.
+- **Text follows the engine's collation.** MySQL (default `utf8mb4_0900_ai_ci`, which
+  ignores case and accents) and SQL Server (default `SQL_Latin1_General_CP1_CI_AS`,
+  which ignores case) compare text by the column's collation, so `=`, `IN`, ORDER BY,
+  GROUP BY, DISTINCT, MIN and MAX treat `'a'` and `'A'` alike, where DALgo's generic
+  engine compares bytes. Oracle's default is binary.
 - **Catalog**: `information_schema.COLUMNS` for the named schema or `DATABASE()`;
   `ALL_TAB_COLUMNS` for the named schema or the session's `CURRENT_SCHEMA`;
   `sys.columns` of the relation `OBJECT_ID` resolves from the statement's own name
-  (default schema, then dbo). A temporary MySQL or SQL Server table and an Oracle or
-  SQL Server synonym are not seen, so a read of one is
-  refused as table-not-found rather than compiled against another relation.
+  (default schema, then dbo). A synonym (Oracle, SQL Server) and a SQL Server `#temp`
+  table are not seen, so a read of one is refused as table-not-found. A MySQL
+  TEMPORARY table is not seen either: alone it is not found, but one that shadows a
+  base table of the same name is read by the statement while the facts describe the
+  base table (its columns, NOT NULL and primary key), so do not read through a
+  connection that holds one.
 
 Key reads and writes (Get, Set, Insert, ...) do not use these dialects: their names
 must be plain identifiers, as with no dialect.

@@ -34,7 +34,8 @@ const sqlserverMaxIdentifierUnits = 128
 // []byte and string as they are (go-mssqldb sends a string as nvarchar). An unsigned
 // integer is sent as its decimal text and cast to DECIMAL(20, 0), because the driver
 // refuses a uint64 past the range of bigint. SQL Server's float has no NaN or
-// infinity, so those are refused. A statement binds at most 2100 values; past that
+// infinity, so those are refused (dal.ErrNotSupported). COUNT is an int and fails past
+// 2^31 - 1 rows. A statement binds at most 2100 values; past that
 // the server refuses it.
 //
 // Statements. OFFSET n ROWS and FETCH NEXT m ROWS ONLY are bound; a limit alone is
@@ -87,7 +88,8 @@ func (sqlserverDialect) bind(value any) (string, any, error) {
 	case typedValueUnsigned:
 		return "CAST(? AS DECIMAL(20, 0))", strconv.FormatUint(v.Uint(), 10), nil
 	case typedValueFloat:
-		return "?", typedFloat64(v), nil
+		f, err := typedFiniteFloat64(v)
+		return "?", f, err
 	case typedValueBool:
 		return "?", v.Bool(), nil
 	case typedValueBytes:
@@ -150,8 +152,14 @@ func (sqlserverDialect) pagingOrderBy() string      { return "(SELECT NULL)" }
 // int is an int (the average of 1 and 2 is 1) and its SUM of an int fails past the int
 // range, where DALgo's generic engine computes in float64.
 func (sqlserverDialect) aggregateArgument(function, argument string) string {
+	return sqlserverCastArgument(function, argument, "FLOAT")
+}
+
+// sqlserverCastArgument casts the argument of SUM and AVG to the engine's float type
+// (SQL Server's FLOAT, MySQL's DOUBLE), and leaves every other aggregate's as it is.
+func sqlserverCastArgument(function, argument, float string) string {
 	if function == dal.SUM || function == dal.AVERAGE {
-		return "CAST((" + argument + ") AS FLOAT)"
+		return "CAST((" + argument + ") AS " + float + ")"
 	}
 	return argument
 }

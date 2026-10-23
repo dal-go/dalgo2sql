@@ -26,5 +26,5 @@ sql: SELECT `a`.`Title` FROM `Album` AS `a` WHERE `a`.`AlbumId` = ?
 === an output named as another column is no capture: every field is qualified
 sql: SELECT `Album`.`AlbumId` AS `Title`, `Album`.`Title` AS `AlbumId` FROM `Album` ORDER BY `Album`.`AlbumId` ASC, ((CAST((`Album`.`Title`) AS DOUBLE)) + (CAST((`Album`.`ArtistId`) AS DOUBLE))) DESC
 === GROUP BY a column, HAVING an aggregate of a column an output is named after
-sql: SELECT `Invoice`.`BillingCountry` AS `Total`, (CAST(SUM(`Invoice`.`Total`) AS DOUBLE)) AS `BillingCountry` FROM `Invoice` GROUP BY `Invoice`.`BillingCountry` HAVING (CAST(SUM(`Invoice`.`Total`) AS DOUBLE)) > ?
+sql: SELECT `Invoice`.`BillingCountry` AS `Total`, SUM(CAST((`Invoice`.`Total`) AS DOUBLE)) AS `BillingCountry` FROM `Invoice` GROUP BY `Invoice`.`BillingCountry` HAVING SUM(CAST((`Invoice`.`Total`) AS DOUBLE)) > ?
 #1 int64 1

@@ -155,17 +155,14 @@ func typedCatalogInt(value any) (int64, error) {
 	return 0, fmt.Errorf("the catalog returned %T where a whole number belongs", value)
 }
 
-// typedSchemaNameArgsTwice binds every source as (schema, name), all of them twice, as
-// the MySQL and Oracle catalog queries read them: once to number a row, once to select
-// it. schema writes the schema argument of a source (NULL or the empty string for
-// none).
-func typedSchemaNameArgsTwice(schema func(string) any) func([]typedSourceName) []any {
+// typedSchemaNameArgs binds every source as (schema, name), in order, as the MySQL
+// and Oracle catalog queries read them. schema writes the schema argument of a source
+// (NULL or the empty string for none).
+func typedSchemaNameArgs(schema func(string) any) func([]typedSourceName) []any {
 	return func(sources []typedSourceName) []any {
-		args := make([]any, 0, 4*len(sources))
-		for range 2 {
-			for _, source := range sources {
-				args = append(args, schema(source.Schema), source.Name)
-			}
+		args := make([]any, 0, 2*len(sources))
+		for _, source := range sources {
+			args = append(args, schema(source.Schema), source.Name)
 		}
 		return args
 	}

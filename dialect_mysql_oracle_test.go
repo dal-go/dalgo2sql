@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql/driver"
 	"errors"
+	"math"
 	"reflect"
 	"strings"
 	"testing"
@@ -62,7 +63,7 @@ func TestMySQLAndOracleDialectFragments(t *testing.T) {
 		aggregate, count, empty string
 		notEmpty                string
 	}{
-		{mysqlDialect{}, "x ASC", "x DESC", "x ASC", "(CAST(SUM(x) AS DOUBLE))", "COUNT(x)", "FALSE", "TRUE"},
+		{mysqlDialect{}, "x ASC", "x DESC", "x ASC", "SUM(x)", "COUNT(x)", "FALSE", "TRUE"},
 		{oracleDialect{}, "x ASC NULLS FIRST", "x DESC NULLS LAST", "x ASC", "(CAST(SUM(x) AS BINARY_DOUBLE))", "COUNT(x)", "(1 = 0)", "(1 = 1)"},
 		{sqlserverDialect{}, "x ASC", "x DESC", "x ASC", "SUM(x)", "COUNT(x)", "(1 = 0)", "(1 = 1)"},
 	} {
@@ -110,7 +111,7 @@ func TestMySQLAndOracleDialectFragments(t *testing.T) {
 		average         string
 	}{
 		{typedPostgresRules{}, " AS ", true, false, "", "x"},
-		{mysqlDialect{}, " AS ", true, true, "", "x"},
+		{mysqlDialect{}, " AS ", true, true, "", "CAST((x) AS DOUBLE)"},
 		{oracleDialect{}, " ", false, true, "", "x"},
 		{sqlserverDialect{}, " AS ", false, true, "(SELECT NULL)", "CAST((x) AS FLOAT)"},
 	}
@@ -192,8 +193,8 @@ type numberedCatalogCase struct {
 }
 
 var numberedCatalogCases = []numberedCatalogCase{
-	{"mysql", mysqlDialect{}, mysqlCatalogQuery, []driver.Value{nil, "Album", "S", "Artist", nil, "Album", "S", "Artist"}},
-	{"oracle", oracleDialect{}, oracleCatalogQuery, []driver.Value{"", "Album", "S", "Artist", "", "Album", "S", "Artist"}},
+	{"mysql", mysqlDialect{}, mysqlCatalogQuery, []driver.Value{nil, "Album", "S", "Artist"}},
+	{"oracle", oracleDialect{}, oracleCatalogQuery, []driver.Value{"", "Album", "S", "Artist"}},
 	{"sqlserver", sqlserverDialect{}, sqlserverCatalogQuery, []driver.Value{"[Album]", "[S].[Artist]"}},
 }
 
@@ -340,7 +341,7 @@ func TestMySQLAndOracleReadsGoThroughTheTypedCompiler(t *testing.T) {
 	} {
 		t.Run(tc.dialect, func(t *testing.T) {
 			db, mock := newPostgresReadMock(t)
-			catalogArgs, statementArgs := []driver.Value{tc.none, "Album", tc.none, "Album"}, []driver.Value{int64(1), int64(5)}
+			catalogArgs, statementArgs := []driver.Value{tc.none, "Album"}, []driver.Value{int64(1), int64(5)}
 			if tc.dialect == "sqlserver" {
 				catalogArgs, statementArgs = []driver.Value{"[Album]"}, []driver.Value{int64(1), int64(0), int64(5)}
 			}
@@ -435,5 +436,113 @@ func TestTypedCompilerRefusesAnAggregateArgumentThatDropsItsOperand(t *testing.T
 	q := typedTestFrom("Invoice", "").NewQuery().SelectColumns(dal.SumAs(dal.Binary(typedTestField("Total"), dal.Add, typedTestConst(1)), "s"))
 	if _, _, err := compileTypedSQL(q, badAggregateArgument{}, typedCatalogFacts{}); err == nil || !strings.Contains(err.Error(), "placeholders") {
 		t.Fatalf("error = %v, want the fragment refused", err)
+	}
+}
+
+// Two spellings of one relation (Album and S.Album, where S is the current schema) are
+// two sources, and the catalog answers each with every column.
+func TestMySQLAndOracleCatalogFactsForTwoSpellingsOfOneRelation(t *testing.T) {
+	for _, tc := range numberedCatalogCases {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock := newPostgresReadMock(t)
+			rows := sqlmock.NewRows(typedNumberedCatalogColumns)
+			for k := int64(1); k <= 2; k++ {
+				rows.AddRow(k, "AlbumId", "int", int64(1), int64(1), int64(0), int64(1))
+			}
+			mock.ExpectQuery(tc.query(2)).WillReturnRows(rows)
+			facts, err := tc.dialect.catalogFacts(context.Background(), db.QueryContext, []typedSourceName{{Name: "Album"}, {Schema: "S", Name: "Album"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, source := range []typedSourceName{{Name: "Album"}, {Schema: "S", Name: "Album"}} {
+				if known, ok := facts.source(source); !ok || len(known.Columns) != 1 {
+					t.Fatalf("%+v = %+v", source, known)
+				}
+			}
+		})
+	}
+}
+
+// NaN and the infinities are refused by every dialect whose engine has none, and Oracle
+// refuses the empty string and empty bytes, which it reads as NULL.
+func TestMySQLOracleSQLServerRefuseConstantsTheEngineCannotHold(t *testing.T) {
+	for _, dialect := range []typedDialect{mysqlDialect{}, oracleDialect{}, sqlserverDialect{}} {
+		for _, value := range []any{math.NaN(), math.Inf(1), float32(math.Inf(-1))} {
+			if _, _, err := dialect.bind(value); !errors.Is(err, dal.ErrNotSupported) {
+				t.Fatalf("%T.bind(%v) error = %v", dialect, value, err)
+			}
+		}
+	}
+	for _, value := range []any{"", []byte{}} {
+		if _, _, err := (oracleDialect{}).bind(value); !errors.Is(err, dal.ErrNotSupported) {
+			t.Fatalf("oracle bind(%#v) error = %v", value, err)
+		}
+	}
+	if marker, arg, err := (oracleDialect{}).bind([]byte{1}); err != nil || marker != "?" || !reflect.DeepEqual(arg, []byte{1}) {
+		t.Fatalf("oracle bind(bytes) = %q, %v, %v", marker, arg, err)
+	}
+}
+
+// go-ora delivers a NUMBER as decimal text; both readers turn it into an int64 when the
+// column's scale is 0 or unconstrained and the text is whole, else a float64, or keep
+// the text with ExactNumericValues.
+func TestOracleNumbersAreReadAsNumbers(t *testing.T) {
+	ctx := context.Background()
+	columns := func() *sqlmock.Rows {
+		return sqlmock.NewRowsWithColumnDefinition(
+			sqlmock.NewColumn("id").WithPrecisionAndScale(10, 0),
+			sqlmock.NewColumn("n").WithPrecisionAndScale(38, 255),
+			sqlmock.NewColumn("price").WithPrecisionAndScale(10, 2),
+			sqlmock.NewColumn("big").WithPrecisionAndScale(38, 0),
+			sqlmock.NewColumn("odd").WithPrecisionAndScale(10, 2),
+			sqlmock.NewColumn("title"),
+			sqlmock.NewColumn("double").WithPrecisionAndScale(10, 2),
+		).AddRow("7", []byte("2"), "9.99", "99999999999999999999", "x", "Rock", 1.5)
+	}
+	query := dal.NewTextQuery("SELECT 1", nil)
+	for _, tc := range []struct {
+		exact bool
+		want  map[string]any
+	}{
+		{false, map[string]any{"id": int64(7), "n": int64(2), "price": 9.99, "big": 1e20, "odd": "x", "title": "Rock", "double": 1.5}},
+		{true, map[string]any{"id": int64(7), "n": int64(2), "price": "9.99", "big": "99999999999999999999", "odd": "x", "title": "Rock", "double": 1.5}},
+	} {
+		db, mock := newPostgresReadMock(t)
+		mock.ExpectQuery("SELECT 1").WillReturnRows(columns())
+		reader, err := getRecordsReaderWithOptions(ctx, query, db.QueryContext, DbOptions{StructuredQueryDialect: "oracle", ExactNumericValues: tc.exact})
+		if err != nil {
+			t.Fatal(err)
+		}
+		record, err := reader.Next()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := record.Data(); !reflect.DeepEqual(got, tc.want) {
+			t.Fatalf("exact %v: record = %#v, want %#v", tc.exact, got, tc.want)
+		}
+		_ = reader.Close()
+	}
+
+	db, mock := newPostgresReadMock(t)
+	mock.ExpectQuery("SELECT 1").WillReturnRows(sqlmock.NewRowsWithColumnDefinition(
+		sqlmock.NewColumn("id").OfType("NUMBER", int64(0)).WithPrecisionAndScale(10, 0),
+		sqlmock.NewColumn("price").OfType("NUMBER", float64(0)).WithPrecisionAndScale(10, 2),
+	).AddRow("7", "9.99"))
+	reader, err := getRecordsetReaderWithOptions(ctx, query, db.QueryContext, DbOptions{StructuredQueryDialect: "oracle"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, rs, err := reader.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := row.GetValueByIndex(0, rs)
+	price, _ := row.GetValueByIndex(1, rs)
+	if id != int64(7) || price != 9.99 {
+		t.Fatalf("recordset row = %#v, %#v", id, price)
+	}
+	_ = reader.Close()
+	if got := oracleNumberValue(nil, "7", false); got != "7" {
+		t.Fatalf("no column type = %#v", got)
 	}
 }

@@ -2,6 +2,7 @@ package dalgo2sql
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"reflect"
 	"strconv"
@@ -32,11 +33,14 @@ const oracleMaxIdentifierBytes = 128
 // Constants. Every constant is one ? marker, numbered :1, :2, ... and typed by the
 // driver (go-ora) from its Go type: a signed integer as int64, an unsigned one as
 // uint64, a float as float64 (a float32 as the float64 nearest its shortest decimal
-// text), which go-ora sends as a NUMBER, so NaN and the infinities are refused by the
-// driver; a bool as bool (a BOOLEAN, which Oracle has from 23ai); a time.Time,
-// []byte and string as they are. Oracle reads the empty string as NULL, so a
-// comparison with "" is never true, where DALgo's generic engine finds the empty
-// strings.
+// text), which go-ora sends as a NUMBER, so NaN and the infinities are refused
+// (dal.ErrNotSupported); a bool as bool (a BOOLEAN, which Oracle has from 23ai); a
+// time.Time, []byte and string as they are. Oracle reads the empty string (and empty
+// RAW) as NULL, so a comparison with "" is never true, nor its negation, where DALgo's
+// generic engine finds the empty strings: an empty string or byte constant is refused.
+// A NUMBER result, which go-ora delivers as text, is read back as an int64 when its
+// scale is 0 or unconstrained and the value is whole, else as a float64
+// (oracleNumberValue).
 //
 // Statements. OFFSET n ROWS and FETCH NEXT m ROWS ONLY are bound. Oracle sorts NULL
 // last ascending, so ORDER BY writes NULLS FIRST ascending and NULLS LAST descending,
@@ -89,13 +93,22 @@ func (oracleDialect) bind(value any) (string, any, error) {
 	case typedValueUnsigned:
 		return "?", v.Uint(), nil
 	case typedValueFloat:
-		return "?", typedFloat64(v), nil
+		f, err := typedFiniteFloat64(v)
+		return "?", f, err
 	case typedValueBool:
 		return "?", v.Bool(), nil
-	case typedValueBytes:
+	case typedValueBytes, typedValueText:
+		// Oracle stores an empty VARCHAR2 and an empty RAW as NULL and compares the
+		// empty string as NULL, so a comparison with "" is never true, nor is its
+		// negation: Title != "" and Title NOT IN ("") would find no row where DALgo's
+		// generic engine finds every title that is not empty. The constant is refused.
+		if v.Len() == 0 {
+			return "", nil, typedUnsupported("an empty string or byte constant, which Oracle reads as NULL")
+		}
+		if kind == typedValueText {
+			return "?", v.String(), nil
+		}
 		return "?", v.Bytes(), nil
-	case typedValueText:
-		return "?", v.String(), nil
 	}
 	// A NULL, a time.Time and a driver.Valuer go to the driver as they are.
 	return "?", value, nil
@@ -161,23 +174,25 @@ func (oracleDialect) aggregateArgument(_, argument string) string { return argum
 // oracleCurrentSchema is the schema an unqualified name is read from.
 const oracleCurrentSchema = `SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA')`
 
-// oracleCatalogQuery is the one query catalogFacts sends, for n sources. Source i is
-// bound four times, as (schema, name) in the CASE that numbers it and in the WHERE
-// that selects it; the schema is the empty string for an unqualified source, which
+// oracleCatalogQuery is the one query catalogFacts sends, for n sources. A derived
+// table of the source numbers 1 to n is joined to the catalog, source k on its own
+// (schema, name), bound once each as :2k-1 and :2k, so two spellings of one relation
+// (ALBUM and DALGO.ALBUM) each get every column. The schema is the empty string for an unqualified source, which
 // Oracle reads as NULL and COALESCE as the current schema. The columns are those
 // typedCatalogFactsByCase reads, each truth value a 0 or a 1 (no boolean expression
 // stands in the select list). Its text depends on n only.
 func oracleCatalogQuery(n int) string {
-	var which, where strings.Builder
+	var numbers, on strings.Builder
 	for i := 1; i <= n; i++ {
-		first, second, third, fourth := 2*i-1, 2*i, 2*n+2*i-1, 2*n+2*i
-		which.WriteString(" WHEN c.OWNER = COALESCE(:" + strconv.Itoa(first) + ", " + oracleCurrentSchema + ") AND c.TABLE_NAME = :" + strconv.Itoa(second) + " THEN " + strconv.Itoa(i))
+		k := strconv.Itoa(i)
 		if i > 1 {
-			where.WriteString(" OR ")
+			numbers.WriteString(" UNION ALL ")
+			on.WriteString(" OR ")
 		}
-		where.WriteString("(c.OWNER = COALESCE(:" + strconv.Itoa(third) + ", " + oracleCurrentSchema + ") AND c.TABLE_NAME = :" + strconv.Itoa(fourth) + ")")
+		numbers.WriteString("SELECT " + k + " AS k FROM DUAL")
+		on.WriteString("(q.k = " + k + " AND c.OWNER = COALESCE(:" + strconv.Itoa(2*i-1) + ", " + oracleCurrentSchema + ") AND c.TABLE_NAME = :" + strconv.Itoa(2*i) + ")")
 	}
-	return "SELECT CASE" + which.String() + " END AS k, " +
+	return "SELECT q.k, " +
 		"c.COLUMN_NAME, c.DATA_TYPE, " +
 		"CASE WHEN c.NULLABLE = 'N' AND NOT EXISTS (SELECT 1 FROM ALL_CONSTRAINTS n JOIN ALL_CONS_COLUMNS nc " +
 		"ON nc.OWNER = n.OWNER AND nc.CONSTRAINT_NAME = n.CONSTRAINT_NAME " +
@@ -189,8 +204,8 @@ func oracleCatalogQuery(n int) string {
 		"AND pc.TABLE_NAME = c.TABLE_NAME AND pc.COLUMN_NAME = c.COLUMN_NAME) THEN 1 ELSE 0 END, " +
 		"0, " +
 		"CASE WHEN c.COLLATION IS NULL OR c.COLLATION IN ('BINARY', 'USING_NLS_COMP') THEN 1 ELSE 0 END " +
-		"FROM ALL_TAB_COLUMNS c WHERE " + where.String() + " " +
-		"ORDER BY k, c.COLUMN_ID"
+		"FROM (" + numbers.String() + ") q JOIN ALL_TAB_COLUMNS c ON " + on.String() + " " +
+		"ORDER BY q.k, c.COLUMN_ID"
 }
 
 // oracleSuggestionQuery lists the names suggestSource chooses from: the tables and
@@ -206,7 +221,7 @@ const oracleSuggestionQuery = `SELECT o.OWNER, o.OBJECT_NAME FROM ALL_OBJECTS o 
 func oracleSchemaArg(schema string) any { return schema }
 
 func (d oracleDialect) catalogFacts(ctx context.Context, execute executeQueryFunc, sources []typedSourceName) (typedCatalogFacts, error) {
-	return typedCatalogFactsByCase(ctx, execute, sources, d.quoteIdent, oracleCatalogQuery, typedSchemaNameArgsTwice(oracleSchemaArg), oracleColumnFact)
+	return typedCatalogFactsByCase(ctx, execute, sources, d.quoteIdent, oracleCatalogQuery, typedSchemaNameArgs(oracleSchemaArg), oracleColumnFact)
 }
 
 // oracleColumnFact builds a column's facts from one row of oracleCatalogQuery.
@@ -248,4 +263,43 @@ func oracleTypeCategory(dataType string) (typedTypeCategory, bool) {
 
 func (d oracleDialect) suggestSource(ctx context.Context, execute executeQueryFunc, source typedSourceName) (typedSourceName, bool, error) {
 	return typedSuggestSource(ctx, execute, source, oracleSuggestionQuery, source.Schema, source.Schema)
+}
+
+// oracleNumberValue turns the decimal text go-ora delivers for a NUMBER (it reads every
+// NUMBER as text, and reports no database type name) into the Go number DALgo's generic
+// engine would hold: an int64 when the column's scale is 0 or unconstrained (COUNT,
+// an integer column, an expression over integers) and the text is a whole number that
+// fits, else a float64, as PostgreSQL's NUMERIC is read. With exact (ExactNumericValues)
+// a value that is not a whole number keeps its decimal text. A column is a NUMBER when
+// the driver reports a precision and scale for it, which go-ora does for NUMBER only;
+// every other value is returned as it is.
+func oracleNumberValue(columnType *sql.ColumnType, value any, exact bool) any {
+	if columnType == nil {
+		return value
+	}
+	_, scale, isNumber := columnType.DecimalSize()
+	if !isNumber {
+		return value
+	}
+	var text string
+	switch v := value.(type) {
+	case string:
+		text = v
+	case []byte:
+		text = string(v)
+	default:
+		return value
+	}
+	if scale == 0 || scale > 127 { // go-ora reports an unconstrained scale as 255
+		if whole, err := strconv.ParseInt(text, 10, 64); err == nil {
+			return whole
+		}
+	}
+	if exact {
+		return text
+	}
+	if number, err := strconv.ParseFloat(text, 64); err == nil {
+		return number
+	}
+	return text
 }

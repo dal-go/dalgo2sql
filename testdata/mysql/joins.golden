@@ -15,7 +15,7 @@ sql: SELECT `e`.`FirstName` AS `rep` FROM `Customer` AS `c` LEFT JOIN `Employee`
 === ORDER BY on the preserved and on the nullable side of a left join
 sql: SELECT * FROM `Album` AS `a` LEFT JOIN `Artist` AS `r` ON (`a`.`ArtistId` = `r`.`ArtistId`) ORDER BY `a`.`AlbumId` ASC, `r`.`ArtistId` ASC
 === aggregation over a join
-sql: SELECT `c`.`Country` AS `country`, (CAST(SUM(`i`.`Total`) AS DOUBLE)) AS `revenue` FROM `Invoice` AS `i` INNER JOIN `Customer` AS `c` ON (`i`.`CustomerId` = `c`.`CustomerId`) GROUP BY `c`.`Country` HAVING (CAST(SUM(`i`.`Total`) AS DOUBLE)) > ? ORDER BY (CAST(SUM(`i`.`Total`) AS DOUBLE)) DESC LIMIT ?
+sql: SELECT `c`.`Country` AS `country`, SUM(CAST((`i`.`Total`) AS DOUBLE)) AS `revenue` FROM `Invoice` AS `i` INNER JOIN `Customer` AS `c` ON (`i`.`CustomerId` = `c`.`CustomerId`) GROUP BY `c`.`Country` HAVING SUM(CAST((`i`.`Total`) AS DOUBLE)) > ? ORDER BY SUM(CAST((`i`.`Total`) AS DOUBLE)) DESC LIMIT ?
 #1 int64 1000
 #2 int64 10
 === key types that differ are refused before the server sees them

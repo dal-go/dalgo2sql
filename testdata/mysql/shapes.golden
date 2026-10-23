@@ -96,11 +96,11 @@ sql: SELECT (CAST((((CAST((`Album`.`a`) AS DOUBLE)) + (CAST((?) AS DOUBLE)))) AS
 === COUNT(*)
 sql: SELECT COUNT(*) AS `COUNT(*)` FROM `Invoice`
 === every aggregate
-sql: SELECT COUNT(`Invoice`.`InvoiceId`) AS `n`, (CAST(SUM(`Invoice`.`Total`) AS DOUBLE)) AS `sum`, (CAST(AVG(`Invoice`.`Total`) AS DOUBLE)) AS `avg`, MIN(`Invoice`.`Total`) AS `min`, MAX(`Invoice`.`Total`) AS `max` FROM `Invoice`
+sql: SELECT COUNT(`Invoice`.`InvoiceId`) AS `n`, SUM(CAST((`Invoice`.`Total`) AS DOUBLE)) AS `sum`, AVG(CAST((`Invoice`.`Total`) AS DOUBLE)) AS `avg`, MIN(`Invoice`.`Total`) AS `min`, MAX(`Invoice`.`Total`) AS `max` FROM `Invoice`
 === distinct aggregates
-sql: SELECT COUNT(DISTINCT `Invoice`.`CustomerId`) AS `customers`, (CAST(SUM(DISTINCT `Invoice`.`Total`) AS DOUBLE)) AS `sum`, (CAST(AVG(DISTINCT `Invoice`.`Total`) AS DOUBLE)) AS `avg` FROM `Invoice`
+sql: SELECT COUNT(DISTINCT `Invoice`.`CustomerId`) AS `customers`, SUM(DISTINCT CAST((`Invoice`.`Total`) AS DOUBLE)) AS `sum`, AVG(DISTINCT CAST((`Invoice`.`Total`) AS DOUBLE)) AS `avg` FROM `Invoice`
 === GROUP BY with HAVING and ORDER BY through select aliases
-sql: SELECT `Invoice`.`BillingCountry` AS `country`, (CAST(SUM(`Invoice`.`Total`) AS DOUBLE)) AS `revenue`, COUNT(`Invoice`.`InvoiceId`) AS `invoices` FROM `Invoice` GROUP BY `Invoice`.`BillingCountry` HAVING (CAST(SUM(`Invoice`.`Total`) AS DOUBLE)) > ? ORDER BY (CAST(SUM(`Invoice`.`Total`) AS DOUBLE)) DESC, `Invoice`.`BillingCountry` ASC LIMIT ?
+sql: SELECT `Invoice`.`BillingCountry` AS `country`, SUM(CAST((`Invoice`.`Total`) AS DOUBLE)) AS `revenue`, COUNT(`Invoice`.`InvoiceId`) AS `invoices` FROM `Invoice` GROUP BY `Invoice`.`BillingCountry` HAVING SUM(CAST((`Invoice`.`Total`) AS DOUBLE)) > ? ORDER BY SUM(CAST((`Invoice`.`Total`) AS DOUBLE)) DESC, `Invoice`.`BillingCountry` ASC LIMIT ?
 #1 int64 1000
 #2 int64 10
 === a grouped expression carrying a constant is referenced by position
@@ -119,7 +119,7 @@ sql: SELECT * FROM `Album` ORDER BY `Album`.`AlbumId` ASC, `Album`.`AlbumId` DES
 === ORDER BY a nullable column keeps the NULLS clause
 sql: SELECT * FROM `Artist` ORDER BY `Artist`.`Name` ASC, `Artist`.`Name` DESC
 === ORDER BY an aggregate
-sql: SELECT `Invoice`.`BillingCountry`, (CAST(SUM(`Invoice`.`Total`) AS DOUBLE)) AS `revenue` FROM `Invoice` GROUP BY `Invoice`.`BillingCountry` ORDER BY (CAST(SUM(`Invoice`.`Total`) AS DOUBLE)) DESC
+sql: SELECT `Invoice`.`BillingCountry`, SUM(CAST((`Invoice`.`Total`) AS DOUBLE)) AS `revenue` FROM `Invoice` GROUP BY `Invoice`.`BillingCountry` ORDER BY SUM(CAST((`Invoice`.`Total`) AS DOUBLE)) DESC
 === LIMIT
 sql: SELECT * FROM `Album` LIMIT ?
 #1 int64 10
@@ -131,7 +131,7 @@ sql: SELECT * FROM `Album` LIMIT ? OFFSET ?
 #1 int64 10
 #2 int64 5
 === numbering follows the text across clauses
-sql: SELECT `Invoice`.`g`, ((CAST((COUNT(*)) AS DOUBLE)) + (CAST((?) AS DOUBLE))) AS `n` FROM `Invoice` WHERE `Invoice`.`a` = ? GROUP BY `Invoice`.`g` HAVING (CAST(SUM(`Invoice`.`t`) AS DOUBLE)) > ? ORDER BY ((CAST((`Invoice`.`g`) AS DOUBLE)) + (CAST((?) AS DOUBLE))) ASC LIMIT ? OFFSET ?
+sql: SELECT `Invoice`.`g`, ((CAST((COUNT(*)) AS DOUBLE)) + (CAST((?) AS DOUBLE))) AS `n` FROM `Invoice` WHERE `Invoice`.`a` = ? GROUP BY `Invoice`.`g` HAVING SUM(CAST((`Invoice`.`t`) AS DOUBLE)) > ? ORDER BY ((CAST((`Invoice`.`g`) AS DOUBLE)) + (CAST((?) AS DOUBLE))) ASC LIMIT ? OFFSET ?
 #1 int64 6
 #2 int64 1
 #3 int64 2

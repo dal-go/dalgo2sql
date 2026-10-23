@@ -699,6 +699,8 @@ func (r recordsReader) Next() (record dalrecord.Record, err error) {
 			if err != nil {
 				return nil, fmt.Errorf("exact NUMERIC value in column %q: %w", n, err)
 			}
+		} else if r.dialect == dialectOracle {
+			normalized = oracleNumberValue(columnType, values[i], r.exactNumericValues)
 		} else {
 			normalized = normalizeValueByDatabaseType(r.colTypes[i].DatabaseTypeName(), values[i])
 		}

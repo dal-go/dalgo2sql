@@ -42,22 +42,27 @@ const mysqlNoOffsetLimit = "18446744073709551615"
 // Constants. Every constant is one ? marker, typed by the driver from its Go type:
 // a signed integer as int64, an unsigned one as uint64, a float as float64 (a
 // float32 as the float64 nearest its shortest decimal text, so float32(0.1) is
-// 0.1), a bool as bool, a time.Time, []byte and string as they are. A nil is a NULL.
+// 0.1; NaN and the infinities are refused), a bool as bool, a time.Time, []byte and string as they are. A nil is a NULL.
 //
 // Statements. LIMIT and OFFSET are bound; an OFFSET without a limit is written with
 // MySQL's largest LIMIT. MySQL sorts NULL first ascending and last descending, as
 // DALgo does, so ORDER BY writes no NULLS clause. Arithmetic is on DOUBLE: +, - and *
 // cast both operands, division casts both and reads a zero divisor as NULL (as MySQL
-// does itself), and SUM and AVG are cast to DOUBLE. Comparisons follow the column's
-// collation: with MySQL's default, utf8mb4_0900_ai_ci, 'abc' = 'ABC' is true, where
-// DALgo's generic engine compares bytes.
+// does itself), and SUM and AVG cast their argument to DOUBLE (AVG of an exact value
+// would otherwise be a DECIMAL rounded to 4 more places). Text follows the column's
+// collation: with MySQL's default, utf8mb4_0900_ai_ci, 'abc' = 'ABC' is true, and
+// ORDER BY, GROUP BY, DISTINCT, MIN and MAX treat 'a' and 'A' alike, where DALgo's
+// generic engine compares bytes.
 //
 // Catalog facts come from information_schema.COLUMNS, one query for every source,
 // for the schema the query names or, for an unqualified source, DATABASE(): the
 // schema the session reads an unqualified name from. Run it on the connection the
-// statement runs on (the database pins one: readExecutor). A TEMPORARY table, which
-// the statement would read in place of the base table of its name, is not listed by
-// information_schema and so not seen.
+// statement runs on (the database pins one: readExecutor). A TEMPORARY table is not
+// listed by information_schema. Alone, it is not found; but when a base table of the
+// same name exists, the statement reads the TEMPORARY table while the facts describe
+// the base table, so the select-all expansion, the NOT NULL facts and the key the
+// records are read by describe another relation. Do not read through a connection that
+// holds a TEMPORARY table shadowing a base table.
 type mysqlDialect struct{}
 
 var (
@@ -87,15 +92,21 @@ func (mysqlDialect) quoteIdent(name string) (string, error) {
 	return quoteTypedIdentifier(name, '`'), nil
 }
 
-// typedFloat64 is a float constant as a float64: a float32 is read from its shortest
-// decimal text, so the constant float32(0.1) is the number 0.1 and not
-// 0.100000001490116. The conversion depends on the Go type only.
-func typedFloat64(v reflect.Value) float64 {
-	if v.Type().Bits() == 32 {
-		f, _ := strconv.ParseFloat(strconv.FormatFloat(v.Float(), 'g', -1, 32), 64)
-		return f
+// typedFiniteFloat64 is a float constant as a float64: a float32 is read from its
+// shortest decimal text, so the constant float32(0.1) is the number 0.1 and not
+// 0.100000001490116. NaN and the infinities are refused (dal.ErrNotSupported): MySQL's
+// DOUBLE, Oracle's NUMBER (as go-ora sends a float) and SQL Server's FLOAT hold none of
+// them, and the driver or the server would fail the statement, or worse, read it as
+// another number. The refusal names no value.
+func typedFiniteFloat64(v reflect.Value) (float64, error) {
+	f := v.Float()
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return 0, typedUnsupported("a NaN or infinite float constant: the engine has no such number")
 	}
-	return v.Float()
+	if v.Type().Bits() == 32 {
+		f, _ = strconv.ParseFloat(strconv.FormatFloat(f, 'g', -1, 32), 64)
+	}
+	return f, nil
 }
 
 func (mysqlDialect) bind(value any) (string, any, error) {
@@ -110,7 +121,8 @@ func (mysqlDialect) bind(value any) (string, any, error) {
 	case typedValueUnsigned:
 		return "?", v.Uint(), nil
 	case typedValueFloat:
-		return "?", typedFloat64(v), nil
+		f, err := typedFiniteFloat64(v)
+		return "?", f, err
 	case typedValueBool:
 		return "?", v.Bool(), nil
 	case typedValueBytes:
@@ -150,14 +162,9 @@ func (mysqlDialect) arithmeticOperand(operand string) string {
 	return "(CAST((" + operand + ") AS DOUBLE))"
 }
 
-// aggregateResult casts SUM and AVG, which MySQL returns as DECIMAL for exact input,
-// to the float64 DALgo's generic engine returns.
-func (mysqlDialect) aggregateResult(function, aggregate string) string {
-	if function == dal.SUM || function == dal.AVERAGE {
-		return "(CAST(" + aggregate + " AS DOUBLE))"
-	}
-	return aggregate
-}
+// aggregateResult leaves the call as it is: SUM and AVG already run on DOUBLE, as
+// aggregateArgument casts their argument.
+func (mysqlDialect) aggregateResult(_, aggregate string) string { return aggregate }
 
 func (mysqlDialect) emptyIn(negated bool) string {
 	if negated {
@@ -180,12 +187,21 @@ func (mysqlDialect) groupByPosition() bool      { return true }
 func (mysqlDialect) qualifiesBareFields() bool  { return true }
 func (mysqlDialect) pagingOrderBy() string      { return "" }
 
-func (mysqlDialect) aggregateArgument(_, argument string) string { return argument }
+// aggregateArgument casts the argument of SUM and AVG to DOUBLE. MySQL computes AVG of
+// an exact argument (INT, DECIMAL) as a DECIMAL rounded to the argument's scale plus
+// div_precision_increment (4), so the average of 1, 1 and 2 is 1.3333, where DALgo's
+// generic engine computes 1.3333333333333333 in float64; a cast of the result comes
+// too late.
+func (mysqlDialect) aggregateArgument(function, argument string) string {
+	return sqlserverCastArgument(function, argument, "DOUBLE")
+}
 
-// mysqlCatalogQuery is the one query catalogFacts sends, for n sources. Source i
-// (from 1) is bound four times, as (schema, name) in the CASE that names it and in
-// the WHERE that selects it; the schema is NULL for an unqualified source, which
-// COALESCE reads as DATABASE(). The name is compared with information_schema's own
+// mysqlCatalogQuery is the one query catalogFacts sends, for n sources. A derived
+// table of the source numbers 1 to n (integer literals, so no collation meets the
+// catalog's) is joined to the catalog, source k on its own (schema, name), bound
+// once each: two spellings of one relation (Album and dalgo.Album, or Album and album
+// under lower_case_table_names=1) each get every column. The schema is NULL for an
+// unqualified source, which COALESCE reads as DATABASE(). The name is compared with information_schema's own
 // rule, which is the server's rule for table names (lower_case_table_names). The
 // columns are: the source number, the column name, its DATA_TYPE, whether it is NOT
 // NULL, whether it is a column of the PRIMARY KEY (KEY_COLUMN_USAGE of the constraint
@@ -193,23 +209,24 @@ func (mysqlDialect) aggregateArgument(_, argument string) string { return argume
 // primary key), its collation's ID (0 for none) and whether that collation compares
 // bytes (a _bin collation or none). Its text depends on n only.
 func mysqlCatalogQuery(n int) string {
-	var which, where strings.Builder
+	var numbers, on strings.Builder
 	for i := 1; i <= n; i++ {
-		match := "(c.TABLE_SCHEMA = COALESCE(?, DATABASE()) AND c.TABLE_NAME = ?)"
-		which.WriteString(" WHEN " + match + " THEN " + strconv.Itoa(i))
+		k := strconv.Itoa(i)
 		if i > 1 {
-			where.WriteString(" OR ")
+			numbers.WriteString(" UNION ALL ")
+			on.WriteString(" OR ")
 		}
-		where.WriteString(match)
+		numbers.WriteString("SELECT " + k + " AS k")
+		on.WriteString("(q.k = " + k + " AND c.TABLE_SCHEMA = COALESCE(?, DATABASE()) AND c.TABLE_NAME = ?)")
 	}
-	return "SELECT CASE" + which.String() + " END AS k, " +
+	return "SELECT q.k, " +
 		"c.COLUMN_NAME, c.DATA_TYPE, c.IS_NULLABLE = 'NO', " +
 		"EXISTS (SELECT 1 FROM information_schema.KEY_COLUMN_USAGE u WHERE u.TABLE_SCHEMA = c.TABLE_SCHEMA AND u.TABLE_NAME = c.TABLE_NAME " +
 		"AND u.COLUMN_NAME = c.COLUMN_NAME AND u.CONSTRAINT_NAME = 'PRIMARY'), " +
 		"COALESCE((SELECT co.ID FROM information_schema.COLLATIONS co WHERE co.COLLATION_NAME = c.COLLATION_NAME), 0), " +
 		"(c.COLLATION_NAME IS NULL OR RIGHT(c.COLLATION_NAME, 4) = '_bin') " +
-		"FROM information_schema.COLUMNS c WHERE " + where.String() + " " +
-		"ORDER BY k, c.ORDINAL_POSITION"
+		"FROM (" + numbers.String() + ") q JOIN information_schema.COLUMNS c ON " + on.String() + " " +
+		"ORDER BY q.k, c.ORDINAL_POSITION"
 }
 
 // mysqlSuggestionQuery lists the names suggestSource chooses from: the tables and
@@ -228,7 +245,7 @@ func mysqlSchemaArg(schema string) any {
 }
 
 func (d mysqlDialect) catalogFacts(ctx context.Context, execute executeQueryFunc, sources []typedSourceName) (typedCatalogFacts, error) {
-	return typedCatalogFactsByCase(ctx, execute, sources, d.quoteIdent, mysqlCatalogQuery, typedSchemaNameArgsTwice(mysqlSchemaArg), mysqlColumnFact)
+	return typedCatalogFactsByCase(ctx, execute, sources, d.quoteIdent, mysqlCatalogQuery, typedSchemaNameArgs(mysqlSchemaArg), mysqlColumnFact)
 }
 
 // mysqlColumnFact builds a column's facts from one row of mysqlCatalogQuery.

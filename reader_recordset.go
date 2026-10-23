@@ -27,7 +27,7 @@ func getRecordsetReaderWithDialect(ctx context.Context, query dal.Query, execute
 // (a column the recordset cannot hold) closes them here, on every path, because a caller
 // who is handed an error does not close a reader it was not given.
 func getRecordsetReaderWithOptions(ctx context.Context, query dal.Query, execute executeQueryFunc, sqlOptions DbOptions, options ...recordset.Option) (rr *recordsetReader, err error) {
-	rr = &recordsetReader{exactNumericValues: sqlOptions.ExactNumericValues}
+	rr = &recordsetReader{exactNumericValues: sqlOptions.ExactNumericValues, oracle: sqlOptions.StructuredQueryDialect == dialectOracle}
 	if q, ok := query.(dal.StructuredQuery); ok {
 		rr.validateFinite = dal.HasAggregation(q)
 	}
@@ -133,6 +133,9 @@ type recordsetReader struct {
 	rs                 recordset.Recordset
 	validateFinite     bool
 	exactNumericValues bool
+	// oracle says the read runs on Oracle, whose NUMBER go-ora delivers as text
+	// (oracleNumberValue).
+	oracle bool
 }
 
 func (r *recordsetReader) Recordset() recordset.Recordset {
@@ -176,6 +179,9 @@ func (r *recordsetReader) Next() (row recordset.Row, rs recordset.Recordset, err
 		col := r.rs.GetColumnByIndex(i)
 		vt := col.ValueType()
 		value := values[i]
+		if r.oracle {
+			value = oracleNumberValue(r.colTypes[i], value, r.exactNumericValues)
+		}
 		if r.exactNumericValues && strings.EqualFold(r.colTypes[i].DatabaseTypeName(), "NUMERIC") {
 			value, err = exactNumericValue(value)
 			if err != nil {

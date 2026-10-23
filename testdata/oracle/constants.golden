@@ -44,20 +44,16 @@ sql: SELECT * FROM "Album" WHERE "Album"."Title" = :1
 sql: SELECT * FROM "Album" WHERE "Album"."Title" = :1
 #1 float64 0.1
 === NaN
-sql: SELECT * FROM "Album" WHERE "Album"."Title" = :1
-#1 float64 NaN
+refused: where: not supported: a NaN or infinite float constant: the engine has no such number
 === positive infinity
-sql: SELECT * FROM "Album" WHERE "Album"."Title" = :1
-#1 float64 +Inf
+refused: where: not supported: a NaN or infinite float constant: the engine has no such number
 === negative infinity
-sql: SELECT * FROM "Album" WHERE "Album"."Title" = :1
-#1 float64 -Inf
+refused: where: not supported: a NaN or infinite float constant: the engine has no such number
 === string stays untyped
 sql: SELECT * FROM "Album" WHERE "Album"."Title" = :1
 #1 string "Ada Lovelace"
 === empty string
-sql: SELECT * FROM "Album" WHERE "Album"."Title" = :1
-#1 string ""
+refused: where: not supported: an empty string or byte constant, which Oracle reads as NULL
 === a string of digits is still a string
 sql: SELECT * FROM "Album" WHERE "Album"."Title" = :1
 #1 string "42"
@@ -80,8 +76,7 @@ sql: SELECT * FROM "Album" WHERE "Album"."Title" = :1
 sql: SELECT * FROM "Album" WHERE "Album"."Title" = :1
 #1 []byte 0001fe
 === empty bytes
-sql: SELECT * FROM "Album" WHERE "Album"."Title" = :1
-#1 []byte (empty)
+refused: where: not supported: an empty string or byte constant, which Oracle reads as NULL
 === nil is an untyped NULL in an ordering comparison
 sql: SELECT * FROM "Album" WHERE "Album"."AlbumId" < :1
 #1 nil

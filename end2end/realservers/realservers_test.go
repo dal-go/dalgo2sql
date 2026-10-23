@@ -226,15 +226,35 @@ func exerciseTypedDialect(t *testing.T, sqlDB *sql.DB, dialect, notFound string)
 		Where(dal.NewComparison(field("AlbumId"), dal.Equal, constant(4))).
 		SelectColumns(dal.AllColumnsExcept("Price", "ArtistId")), "AlbumId", "Title"), "4|Let There Be Rock")
 
-	// The Go types the driver hands back, for a reader of the log.
+	// The Go types a read returns, as DALgo's generic engine would hold them: an integer
+	// column and COUNT are int64 and SUM and AVG are float64 on every engine.
 	typed, err := dal.ExecuteQueryAndReadAllToRecords(context.Background(), album().GroupBy(field("ArtistId")).OrderBy(dal.Ascending(field("ArtistId"))).Limit(1).
-		SelectColumns(column(field("ArtistId"), ""), dal.CountAs(field("AlbumId"), "n"), dal.SumAs(field("Price"), "sum"), dal.MaxAs(field("Price"), "max"), dal.MaxAs(field("Title"), "title")), db)
+		SelectColumns(column(field("ArtistId"), ""), dal.CountAs(field("AlbumId"), "n"), dal.SumAs(field("Price"), "sum"), dal.AverageAs(field("AlbumId"), "avg")), db)
 	if err != nil || len(typed) != 1 {
 		t.Fatalf("typed read = %v, %v", typed, err)
 	}
-	for _, name := range []string{"ArtistId", "n", "sum", "max", "title"} {
-		value := typed[0].Data().(map[string]any)[name]
-		t.Logf("%s: %s returns %T %v", dialect, name, value, value)
+	want := map[string]any{"ArtistId": int64(1), "n": int64(2), "sum": 17.49, "avg": 2.5}
+	for name, value := range typed[0].Data().(map[string]any) {
+		got, isFloat := value.(float64)
+		wanted, wantFloat := want[name].(float64)
+		if isFloat && wantFloat && math.Abs(got-wanted) < 1e-9 {
+			continue
+		}
+		if value != want[name] {
+			t.Errorf("%s returns %T %v, want %T %v", name, value, value, want[name], want[name])
+		}
+	}
+
+	// AVG of an integer column whose mean does not terminate: 5/3 in float64, not a
+	// decimal rounded to four places.
+	mean, err := dal.ExecuteQueryAndReadAllToRecords(context.Background(), album().
+		Where(dal.NewComparison(field("AlbumId"), dal.In, dal.NewArray([]int{1, 2, 3}))).
+		SelectColumns(dal.AverageAs(field("ArtistId"), "mean"), column(dal.NewAggregate(dal.AVERAGE, true, field("AlbumId")), "distinctMean")), db)
+	if err != nil || len(mean) != 1 {
+		t.Fatalf("mean = %v, %v", mean, err)
+	}
+	if got := mean[0].Data().(map[string]any); got["mean"] != 5.0/3 || got["distinctMean"] != 2.0 {
+		t.Errorf("AVG = %#v, want mean %v (float64) and distinctMean 2", got, 5.0/3)
 	}
 
 	records, err := dal.ExecuteQueryAndReadAllToRecords(context.Background(), album().OrderBy(dal.Ascending(field("AlbumId"))).Limit(1).SelectColumns(), db)
