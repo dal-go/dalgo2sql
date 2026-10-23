@@ -231,8 +231,8 @@ func getReaderBaseFor(ctx context.Context, query dal.Query, execute executeQuery
 						return readerBase{}, fmt.Errorf("failed to inspect SQLite join source: %w", err)
 					}
 				}
-			case "postgres":
-				dialect, err := postgresDialectFor(options)
+			case dialectPostgres, dialectMySQL, dialectOracle, dialectSQLServer:
+				dialect, err := typedDialectFor(options)
 				if err != nil {
 					return readerBase{}, err
 				}

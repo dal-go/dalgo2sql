@@ -33,10 +33,10 @@ func (dtb *database) CanExecuteJoin(ctx context.Context, q dal.StructuredQuery) 
 		}
 		return dtb.options.NativeJoinEligibility(ctx, q)
 	}
-	if dtb.options.StructuredQueryDialect == "postgres" {
-		// PostgreSQL's check reads the catalog, not the data, so a pool query is as good
-		// as a transaction: see canExecutePostgresJoin.
-		return canExecutePostgresJoin(ctx, q, dtb.options, dtb.db.QueryContext)
+	if isTypedDialect(dtb.options.StructuredQueryDialect) {
+		// The typed check reads the catalog, not the data, so a pool query is as good
+		// as a transaction: see canExecuteTypedJoin.
+		return canExecuteTypedJoin(ctx, q, dtb.options, dtb.db.QueryContext)
 	}
 	// A pool query can move to a different connection after a preflight. The
 	// adapter therefore declines direct native execution rather than claiming
@@ -53,8 +53,8 @@ func (t transaction) CanExecuteJoin(ctx context.Context, q dal.StructuredQuery) 
 		}
 		return t.sqlOptions.NativeJoinEligibility(ctx, q)
 	}
-	if t.sqlOptions.StructuredQueryDialect == "postgres" {
-		return canExecutePostgresJoin(ctx, q, t.sqlOptions, t.tx.QueryContext)
+	if isTypedDialect(t.sqlOptions.StructuredQueryDialect) {
+		return canExecuteTypedJoin(ctx, q, t.sqlOptions, t.tx.QueryContext)
 	}
 	return canExecuteSQLiteJoin(ctx, q, t.sqlOptions.StructuredQueryDialect, t.tx.QueryContext)
 }
@@ -63,15 +63,15 @@ func (t transaction) CanExecuteJoin(ctx context.Context, q dal.StructuredQuery) 
 // expansion. A direct database read may inspect its pool connection; a generic
 // transaction read uses its transaction snapshot instead.
 func (dtb *database) JoinFields(ctx context.Context, source dal.RecordsetSource) ([]string, error) {
-	if dtb.options.StructuredQueryDialect == "postgres" {
-		return postgresJoinFields(ctx, source, dtb.options, dtb.db.QueryContext)
+	if isTypedDialect(dtb.options.StructuredQueryDialect) {
+		return typedJoinFields(ctx, source, dtb.options, dtb.db.QueryContext)
 	}
 	return sqliteJoinFields(ctx, source, dtb.options.StructuredQueryDialect, dtb.db.QueryContext)
 }
 
 func (t transaction) JoinFields(ctx context.Context, source dal.RecordsetSource) ([]string, error) {
-	if t.sqlOptions.StructuredQueryDialect == "postgres" {
-		return postgresJoinFields(ctx, source, t.sqlOptions, t.tx.QueryContext)
+	if isTypedDialect(t.sqlOptions.StructuredQueryDialect) {
+		return typedJoinFields(ctx, source, t.sqlOptions, t.tx.QueryContext)
 	}
 	return sqliteJoinFields(ctx, source, t.sqlOptions.StructuredQueryDialect, t.tx.QueryContext)
 }
@@ -100,7 +100,7 @@ func canExecuteSQLiteJoin(ctx context.Context, q dal.StructuredQuery, dialect st
 	return preflightSQLiteJoinKeys(ctx, q.From(), sources, execute, "from")
 }
 
-// canExecutePostgresJoin accepts a join the PostgreSQL dialect can run as one
+// canExecuteTypedJoin accepts a join the typed dialect (PostgreSQL, MySQL, Oracle, SQL Server) can run as one
 // statement, and declines every other with an error DALgo reads as "use the generic
 // engine". It is decided from the catalog alone, with one lookup of the sources'
 // columns, so it needs no read transaction and answers the same on the database handle
@@ -122,8 +122,8 @@ func canExecuteSQLiteJoin(ctx context.Context, q dal.StructuredQuery, dialect st
 // types differ or a key's type has no usable equality (json, xml, geometric types,
 // oid and the reg* types): see typedJoinKeysComparable. A table that is not there is
 // the same error the read would return, *TableNotFoundError.
-func canExecutePostgresJoin(ctx context.Context, q dal.StructuredQuery, options DbOptions, execute executeQueryFunc) error {
-	dialect, err := postgresDialectFor(options)
+func canExecuteTypedJoin(ctx context.Context, q dal.StructuredQuery, options DbOptions, execute executeQueryFunc) error {
+	dialect, err := typedDialectFor(options)
 	if err != nil {
 		return err
 	}
@@ -137,20 +137,20 @@ func canExecutePostgresJoin(ctx context.Context, q dal.StructuredQuery, options 
 		return nil
 	}
 	if _, err := compileTypedRead(ctx, q, dialect, execute); err != nil {
-		return fmt.Errorf("join_plan: PostgreSQL cannot natively compile query: %w", err)
+		return fmt.Errorf("join_plan: %s cannot natively compile query: %w", typedEngineName(options.StructuredQueryDialect), err)
 	}
 	return nil
 }
 
-// postgresJoinFields lists a source's columns in table order, from the catalog, for
+// typedJoinFields lists a source's columns in table order, from the catalog, for
 // DALgo's generic JOIN wildcard expansion. The names are the catalog's own, whatever
 // the identifier case: the generic engine reads each leaf with a select-all that names
 // no column, and it abandons the whole join when this call fails, so a column the
 // dialect could not write by name (a mixed-case column under the fold-lower mode) must
 // not decline a join that never writes it. A native read that does name such a column
 // refuses it itself, in the compiler's select-all expansion.
-func postgresJoinFields(ctx context.Context, source dal.RecordsetSource, options DbOptions, execute executeQueryFunc) ([]string, error) {
-	dialect, err := postgresDialectFor(options)
+func typedJoinFields(ctx context.Context, source dal.RecordsetSource, options DbOptions, execute executeQueryFunc) ([]string, error) {
+	dialect, err := typedDialectFor(options)
 	if err != nil {
 		return nil, err
 	}

@@ -29,7 +29,9 @@ func TestDatabaseQueryCapabilitiesByDialect(t *testing.T) {
 		{"", dal.QueryCapabilities{}},
 		{"sqlite", native},
 		{"postgres", native},
-		{"mysql", dal.QueryCapabilities{}},
+		{"mysql", native},
+		{"oracle", native},
+		{"mssql", dal.QueryCapabilities{}},
 	} {
 		t.Run("dialect "+tc.dialect, func(t *testing.T) {
 			got := (&database{options: DbOptions{StructuredQueryDialect: tc.dialect}}).QueryCapabilities()
@@ -396,7 +398,9 @@ func TestRecordIdentityFieldIsQualifiedOnlyForTheCompilersOfThisPackageInAJoin(t
 		{"the typed compiler, no join", DbOptions{StructuredQueryDialect: "postgres"}, single, ""},
 		{"a native compiler, a join", DbOptions{StructuredQueryDialect: "postgres", NativeStructuredQueryCompiler: native}, join, ""},
 		{"the SQLite compiler, a join: the base's alias", DbOptions{StructuredQueryDialect: "sqlite"}, join, "a"},
-		{"a dialect the package does not compile, a join", DbOptions{StructuredQueryDialect: "mysql"}, join, ""},
+		{"the typed MySQL compiler, a join: the base's alias", DbOptions{StructuredQueryDialect: "mysql"}, join, "a"},
+		{"the typed Oracle compiler, a join: the base's alias", DbOptions{StructuredQueryDialect: "oracle"}, join, "a"},
+		{"a dialect the package does not compile, a join", DbOptions{StructuredQueryDialect: "mssql"}, join, ""},
 		{"no dialect, a join", DbOptions{}, join, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

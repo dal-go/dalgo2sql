@@ -13,7 +13,7 @@ import (
 )
 
 // typedDialect is the spelling guide for one statically typed SQL engine
-// (PostgreSQL first; MySQL, SQL Server and Oracle later). compileTypedSQL owns
+// (PostgreSQL, MySQL, Oracle and SQL Server). compileTypedSQL owns
 // the walk over the query; the dialect owns every engine-specific word.
 //
 // The contract that keeps the compiler safe. The compiler checks every rule
@@ -93,6 +93,12 @@ import (
 //     outputs at all, so both write the input column as it is, under any case
 //     rule. A dialect for an engine that reads a select alias before an input
 //     column in GROUP BY or HAVING needs that check extended before it is added.
+//     MySQL reads an input column first in both, and Oracle has no aliases there
+//     before 23ai. Where an engine departs from PostgreSQL's reading (names
+//     compared without regard to case, aliases read inside ORDER BY expressions or
+//     in GROUP BY and HAVING, no positional GROUP BY), it says so through
+//     typedEngineRules, and the MySQL and Oracle dialects have every field written
+//     qualified, which no select alias can capture.
 //   - A name that matches no column is not an error to the server, it is read as
 //     something else: a bare name equal to a source's identity (its alias, else its
 //     table name) as the whole row, one composite value that holds every column,
@@ -190,6 +196,64 @@ type typedDialect interface {
 	// compiler never calls it; the seam exists so a dialect can add them later
 	// without changing this interface.
 	window(function string, args, partitionBy, orderBy []string) (string, error)
+}
+
+// typedEngineRules is implemented by a dialect whose engine reads a statement
+// differently from PostgreSQL in one of the ways below. A dialect that does not
+// implement it gets PostgreSQL's reading (typedPostgresRules). Every method is a
+// fixed answer about the engine; none looks at a value.
+type typedEngineRules interface {
+	// sourceAliasKeyword is the text between a FROM entry and its alias: " AS " where
+	// the engine accepts it, " " where it does not (Oracle refuses AS before a table
+	// alias). It holds no marker.
+	sourceAliasKeyword() string
+
+	// groupByPosition reports whether GROUP BY accepts a select-list position (GROUP
+	// BY 1). The compiler refers to a grouped expression that carries a constant by
+	// its position, since two bound parameters never compare equal; an engine that
+	// has no positional GROUP BY (Oracle, unless group_by_position_enabled) cannot run
+	// such a grouping, and the compiler refuses it.
+	groupByPosition() bool
+
+	// qualifiesBareFields reports whether the compiler writes a field that names no
+	// source qualified with the identity of the single FROM source ("Album"."Title"
+	// for Title). A qualified name is an input column in every clause on every engine,
+	// so the statement means the column whatever names the select list gives its
+	// outputs: MySQL compares an ORDER BY name with the outputs without regard to case
+	// or accents and reads a name inside an ORDER BY expression as an output too, and
+	// Oracle 23ai reads select aliases in GROUP BY and HAVING. PostgreSQL writes bare
+	// names and relies on typedCheckOrderByName.
+	qualifiesBareFields() bool
+
+	// pagingOrderBy is the ORDER BY a statement that limits or skips rows writes when
+	// the query orders by nothing, for an engine whose row-limiting clause needs one
+	// (SQL Server's OFFSET ... FETCH: "(SELECT NULL)"), and "" for one that does not.
+	// It holds no marker.
+	pagingOrderBy() string
+
+	// aggregateArgument wraps the rendered argument of one aggregate (function is
+	// dal.SUM, dal.COUNT, ...) before the call is written, for an engine that would
+	// otherwise compute in the argument's type (SQL Server's AVG of an int is an int).
+	// The operand rules apply: the argument verbatim, once, self-delimiting.
+	aggregateArgument(function, argument string) string
+}
+
+// typedPostgresRules is PostgreSQL's reading, the default of a dialect that does not
+// implement typedEngineRules.
+type typedPostgresRules struct{}
+
+func (typedPostgresRules) sourceAliasKeyword() string                  { return " AS " }
+func (typedPostgresRules) groupByPosition() bool                       { return true }
+func (typedPostgresRules) qualifiesBareFields() bool                   { return false }
+func (typedPostgresRules) pagingOrderBy() string                       { return "" }
+func (typedPostgresRules) aggregateArgument(_, argument string) string { return argument }
+
+// typedRulesOf returns the engine rules of dialect.
+func typedRulesOf(dialect typedDialect) typedEngineRules {
+	if rules, ok := dialect.(typedEngineRules); ok {
+		return rules
+	}
+	return typedPostgresRules{}
 }
 
 // typedColumnBinder is implemented by a dialect that binds a constant in the type of the
@@ -356,10 +420,18 @@ func typedJoinKeysComparable(a, b typedColumnFact) bool {
 // limit. The compiler tells it from the other identifier faults: a name that only
 // labels a result column is no malformed query when it is merely too long for the
 // engine (typedCompiler.quoteOutputName).
-type typedIdentifierTooLongError struct{ length, limit int }
+type typedIdentifierTooLongError struct {
+	length, limit int
+	// characters says the length and the limit count characters (MySQL), not bytes.
+	characters bool
+}
 
 func (e *typedIdentifierTooLongError) Error() string {
-	return fmt.Sprintf("identifier is %d bytes, over the engine limit of %d", e.length, e.limit)
+	unit := "bytes"
+	if e.characters {
+		unit = "characters"
+	}
+	return fmt.Sprintf("identifier is %d %s, over the engine limit of %d", e.length, unit, e.limit)
 }
 
 // checkTypedIdentifier is the validation every dialect's quoteIdent starts

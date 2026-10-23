@@ -1,0 +1,22 @@
+=== probe 1 in every position
+refused: groupBy 0: not supported: a grouped expression carrying a constant needs GROUP BY by position, which the engine does not accept
+=== probe 2 in every position
+refused: groupBy 0: not supported: a grouped expression carrying a constant needs GROUP BY by position, which the engine does not accept
+=== probe 3 in every position
+refused: groupBy 0: not supported: a grouped expression carrying a constant needs GROUP BY by position, which the engine does not accept
+=== probe 4 in every position
+refused: groupBy 0: not supported: a grouped expression carrying a constant needs GROUP BY by position, which the engine does not accept
+=== probe 5 in every position
+refused: groupBy 0: not supported: a grouped expression carrying a constant needs GROUP BY by position, which the engine does not accept
+=== probe 6 in every position
+refused: groupBy 0: not supported: a grouped expression carrying a constant needs GROUP BY by position, which the engine does not accept
+=== probe 7 in every position
+refused: groupBy 0: not supported: a grouped expression carrying a constant needs GROUP BY by position, which the engine does not accept
+=== probe 8 in every position
+refused: groupBy 0: not supported: a grouped expression carrying a constant needs GROUP BY by position, which the engine does not accept
+=== probe 9 in every position
+refused: groupBy 0: not supported: a grouped expression carrying a constant needs GROUP BY by position, which the engine does not accept
+=== probe 10 in every position
+refused: groupBy 0: not supported: a grouped expression carrying a constant needs GROUP BY by position, which the engine does not accept
+=== probe 11 in every position
+refused: groupBy 0: not supported: a grouped expression carrying a constant needs GROUP BY by position, which the engine does not accept

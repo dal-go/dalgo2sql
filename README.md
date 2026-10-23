@@ -86,10 +86,12 @@ order, and which one runs is decided by how the source was opened, not by the qu
    structured emitter, `compileStructuredSQL`, described above. It is built around
    SQLite's dynamic typing and has its own path; the typed compiler does not touch
    it.
-3. **PostgreSQL** (`DbOptions.StructuredQueryDialect: "postgres"`) uses the typed SQL
-   compiler, not the legacy emitter. It is described in the next section.
+3. **PostgreSQL, MySQL, Oracle and SQL Server** (`DbOptions.StructuredQueryDialect:
+   "postgres"`, `"mysql"`, `"oracle"` or `"sqlserver"`) use the typed SQL compiler, not the legacy emitter. They
+   are described in the next sections.
 4. **No dialect, no native compiler** uses the legacy text emitter, described after
-   that. A PostgreSQL source should not stay on it; open it with the dialect above.
+   that. A PostgreSQL, MySQL, Oracle or SQL Server source should not stay on it; open it with
+   its dialect.
 
 Any other non-empty dialect is refused with an error when a structured query is
 read.
@@ -230,14 +232,78 @@ takes one connection for the life of a structured read and gives it back when th
 reader is closed, when it is read to its end, or when the context of the read ends,
 as the pool does for a read of its own.
 
+### MySQL, Oracle and SQL Server
+
+`StructuredQueryDialect: "mysql"` (MySQL 8.0.17 and later, verified against 8.4),
+`"oracle"` (Oracle Database 23ai, verified against Oracle Database Free 23) and
+`"sqlserver"` (SQL Server 2022, through go-mssqldb) run a
+structured read the way the PostgreSQL dialect does: one catalog query on a pinned
+connection, then the statement the typed compiler writes from its answer, every value
+bound. `IdentifierCase` must be empty or `exact`. What
+differs from PostgreSQL (the exact SQL of every shape is in `testdata/mysql` and
+`testdata/oracle` and `testdata/sqlserver`, and `dialect_mysql.go`, `dialect_oracle.go`
+and `dialect_sqlserver.go` document the rest):
+
+- **Names** are written exactly as the query spells them, in backticks (MySQL) or
+  double quotes (Oracle; SQL Server, which reads them so with QUOTED_IDENTIFIER ON,
+  as go-mssqldb's login sets it). An Oracle table created without quotes is stored in upper
+  case and must be spelt so; a not-found error suggests the name that differs only in
+  case. MySQL refuses a name over 64 characters, outside the Basic Multilingual Plane
+  or ending with a space; Oracle one over 128 bytes or holding a double quote; SQL
+  Server one over 128 UTF-16 code units. Every
+  field is written qualified with its source (`` `Album`.`Title` ``), because MySQL
+  compares an ORDER BY name with the select-list outputs without regard to case and
+  Oracle 23ai reads select aliases in GROUP BY and HAVING; a qualified name is always
+  the column. Oracle writes a table alias without `AS`.
+- **Placeholders** are `?` (MySQL), `:1`, `:2`, ... (Oracle, as go-ora binds them) and
+  `@p1`, `@p2`, ... (SQL Server), whatever `DbOptions.Placeholder` says. LIMIT and
+  OFFSET are bound (`LIMIT ? OFFSET ?`; `OFFSET :1 ROWS FETCH NEXT :2 ROWS ONLY`;
+  `OFFSET @p1 ROWS FETCH NEXT @p2 ROWS ONLY`, after `ORDER BY (SELECT NULL)` when the
+  query orders by nothing, as SQL Server requires).
+- **NULL order**: MySQL and SQL Server already sort NULL first ascending and last
+  descending, as DALgo does, so no NULLS clause is written; Oracle writes `NULLS FIRST`/`NULLS LAST`
+  unless the catalog says the column is NOT NULL.
+- **Arithmetic and aggregates** are on `DOUBLE` (MySQL), `BINARY_DOUBLE` (Oracle) and
+  `FLOAT` (SQL Server), with a zero divisor read as NULL. SUM and AVG cast their
+  argument on MySQL and SQL Server (MySQL's AVG of an INT is a DECIMAL rounded to four
+  places, SQL Server's is an int) and their result on Oracle.
+- **Result values**: go-ora delivers every Oracle NUMBER as text; the readers turn it
+  into an `int64` when the column's scale is 0 or unconstrained (COUNT included) and the
+  value is whole, else into a `float64` (decimal text with `ExactNumericValues`). MySQL
+  and SQL Server deliver integers as `int64` and DECIMAL as text, as before.
+- **Refused** (`dal.ErrNotSupported`), as with PostgreSQL: FIRST and LAST, window
+  functions, subqueries, cursors, the money option, RIGHT and FULL joins; a NaN or
+  infinite float constant (none of the three engines has one); on Oracle and SQL
+  Server a GROUP BY expression that carries a constant (neither has GROUP BY by
+  position); on Oracle an empty string or byte constant, which Oracle reads as NULL,
+  so `!= ""` and `NOT IN ("")` would find no row. SQL Server refuses a statement that
+  binds over 2100 values, and its COUNT fails past 2^31 - 1 rows.
+- **Text follows the engine's collation.** MySQL (default `utf8mb4_0900_ai_ci`, which
+  ignores case and accents) and SQL Server (default `SQL_Latin1_General_CP1_CI_AS`,
+  which ignores case) compare text by the column's collation, so `=`, `IN`, ORDER BY,
+  GROUP BY, DISTINCT, MIN and MAX treat `'a'` and `'A'` alike, where DALgo's generic
+  engine compares bytes. Oracle's default is binary.
+- **Catalog**: `information_schema.COLUMNS` for the named schema or `DATABASE()`;
+  `ALL_TAB_COLUMNS` for the named schema or the session's `CURRENT_SCHEMA`;
+  `sys.columns` of the relation `OBJECT_ID` resolves from the statement's own name
+  (default schema, then dbo). A synonym (Oracle, SQL Server) and a SQL Server `#temp`
+  table are not seen, so a read of one is refused as table-not-found. A MySQL
+  TEMPORARY table is not seen either: alone it is not found, but one that shadows a
+  base table of the same name is read by the statement while the facts describe the
+  base table (its columns, NOT NULL and primary key), so do not read through a
+  connection that holds one.
+
+Key reads and writes (Get, Set, Insert, ...) do not use these dialects: their names
+must be plain identifiers, as with no dialect.
+
 ### Legacy text path
 
 A source opened with no `StructuredQueryDialect` and no
 `NativeStructuredQueryCompiler` renders structured queries through the legacy
-text emitter. A source leaves this path by setting a dialect: `sqlite` for SQLite
-and `postgres` for PostgreSQL, which is selectable. MySQL has no dialect, so a
-MySQL source stays on the legacy path, and so does a PostgreSQL or SQLite source
-opened without one, until its consumer sets it.
+text emitter. A source leaves this path by setting a dialect: `sqlite` for SQLite,
+`postgres` for PostgreSQL, `mysql` for MySQL, `oracle` for Oracle and `sqlserver` for
+SQL Server. A source
+opened without one stays on the legacy path until its consumer sets it.
 
 The emitter pastes names and values straight into the statement, so it fails
 closed. What it refuses, by where it is found (each refusal is an error wrapping

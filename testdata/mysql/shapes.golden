@@ -1,0 +1,158 @@
+=== select all
+sql: SELECT * FROM `Album`
+=== columns and aliases
+sql: SELECT `Album`.`Title`, `Album`.`AlbumId` AS `id` FROM `Album`
+=== schema-qualified source with an alias
+sql: SELECT `a`.`Title` FROM `public`.`Album` AS `a`
+=== a select-all expanded from the catalog facts, minus exclusions
+sql: SELECT `CustomerId`, `FirstName`, `LastName`, `Country` FROM `Customer`
+=== a select-all with a mask and an explicit column after it
+sql: SELECT `CustomerId`, `FirstName`, `LastName`, `Country`, `Customer`.`Email` AS `mail` FROM `Customer`
+=== a select-all whose exclusion is in the catalog's own spelling
+sql: SELECT `CustomerId`, `FirstName`, `LastName`, `Country` FROM `Customer`
+=== a select-all needs the catalog facts
+refused: column 0: not supported: a wildcard projection needs catalog facts for its source
+=== an unaliased expression is named by its text
+sql: SELECT ((CAST((`Album`.`a`) AS DOUBLE)) + (CAST((`Album`.`b`) AS DOUBLE))) AS `(a + b)` FROM `Album`
+=== a constant in the select list needs an alias
+sql: SELECT ? AS `five` FROM `Album`
+#1 int64 5
+=== an unaliased expression carrying a constant is refused
+refused: column 0: not supported: an expression carrying a constant needs an alias
+=== an alias of 63 bytes is accepted
+sql: SELECT `Album`.`Title` AS `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa` FROM `Album`
+=== an alias over 63 bytes is declined, the generic engine labels the column
+sql: SELECT `Album`.`Title` AS `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa` FROM `Album`
+=== the text of an unaliased expression over 63 bytes is declined
+refused: column 0: not supported: an output name is too long for the engine, which cannot spell it as a column label: identifier is 65 characters, over the engine limit of 64
+=== two outputs that are one name once folded
+sql: SELECT `Album`.`Title`, `Album`.`TITLE` FROM `Album`
+=== count(*) is named as DALgo names it
+sql: SELECT COUNT(*) AS `COUNT(*)` FROM `Invoice`
+=== dal.ID names a real column and is read as one
+sql: SELECT * FROM `Album` WHERE `Album`.`AlbumId` = ?
+#1 int64 7
+=== dal.ID with a string key
+sql: SELECT * FROM `Album` WHERE `Album`.`Title` = ?
+#1 string "Ada"
+=== a scan-bounded source whose scan the statement restates
+sql: SELECT `Invoice`.`InvoiceId`, `Invoice`.`Total` FROM `Invoice` ORDER BY `Invoice`.`InvoiceDate` DESC LIMIT ?
+#1 int64 10
+=== a scan-bounded source with a statement limit below the scan's
+sql: SELECT * FROM `Invoice` ORDER BY `Invoice`.`InvoiceDate` DESC LIMIT ?
+#1 int64 4
+=== a scan-bounded source with a WHERE is declined
+refused: not supported: from: a scan-bounded source compiles only when the statement restates its scan: WHERE filters after the scan, not before it
+=== equality
+sql: SELECT * FROM `Album` WHERE `Album`.`AlbumId` = ?
+#1 int64 7
+=== every comparison operator in AND and OR groups
+sql: SELECT * FROM `Album` WHERE (`Album`.`a` > ? AND `Album`.`b` >= ? AND (`Album`.`c` < ? OR `Album`.`d` <= ? OR `Album`.`e` = ?))
+#1 int64 1
+#2 int64 2
+#3 int64 3
+#4 int64 4
+#5 string "five"
+=== equal to null is IS NULL and binds nothing
+sql: SELECT * FROM `Album` WHERE `Album`.`Title` IS NULL
+=== is null
+sql: SELECT * FROM `Album` WHERE `Album`.`Title` IS NULL
+=== is not null
+sql: SELECT * FROM `Album` WHERE `Album`.`Title` IS NOT NULL
+=== ordering against null stays a bound NULL
+sql: SELECT * FROM `Album` WHERE `Album`.`AlbumId` > ?
+#1 nil
+=== IN list
+sql: SELECT * FROM `Album` WHERE `Album`.`AlbumId` IN (?, ?, ?)
+#1 int64 1
+#2 float64 2.5
+#3 string "three"
+=== NOT IN list
+sql: SELECT * FROM `Album` WHERE `Album`.`Title` NOT IN (?, ?)
+#1 string "a"
+#2 string "b"
+=== IN list with a NULL keeps three-valued logic
+sql: SELECT * FROM `Album` WHERE `Album`.`AlbumId` NOT IN (?, ?)
+#1 int64 1
+#2 nil
+=== empty IN is FALSE
+sql: SELECT * FROM `Album` WHERE FALSE
+=== empty NOT IN is TRUE
+sql: SELECT * FROM `Album` WHERE TRUE
+=== add subtract multiply
+sql: SELECT ((CAST((`Album`.`a`) AS DOUBLE)) + (CAST((`Album`.`b`) AS DOUBLE))) AS `s`, ((CAST((`Album`.`a`) AS DOUBLE)) - (CAST((?) AS DOUBLE))) AS `d`, ((CAST((?) AS DOUBLE)) * (CAST((`Album`.`b`) AS DOUBLE))) AS `m` FROM `Album`
+#1 int64 2
+#2 float64 2.5
+=== divide is on double precision with a zero divisor read as NULL
+sql: SELECT (CAST((`Album`.`a`) AS DOUBLE) / NULLIF(CAST((`Album`.`b`) AS DOUBLE), 0)) AS `q` FROM `Album`
+=== nested division keeps argument order
+sql: SELECT (CAST((((CAST((`Album`.`a`) AS DOUBLE)) + (CAST((?) AS DOUBLE)))) AS DOUBLE) / NULLIF(CAST((((CAST((`Album`.`b`) AS DOUBLE)) - (CAST((?) AS DOUBLE)))) AS DOUBLE), 0)) AS `q` FROM `Album`
+#1 int64 1
+#2 int64 2
+=== division where both operands render the same text
+sql: SELECT (CAST((((CAST((`Album`.`a`) AS DOUBLE)) + (CAST((?) AS DOUBLE)))) AS DOUBLE) / NULLIF(CAST((((CAST((`Album`.`a`) AS DOUBLE)) + (CAST((?) AS DOUBLE)))) AS DOUBLE), 0)) AS `q` FROM `Album`
+#1 int64 1
+#2 int64 2
+=== COUNT(*)
+sql: SELECT COUNT(*) AS `COUNT(*)` FROM `Invoice`
+=== every aggregate
+sql: SELECT COUNT(`Invoice`.`InvoiceId`) AS `n`, SUM(CAST((`Invoice`.`Total`) AS DOUBLE)) AS `sum`, AVG(CAST((`Invoice`.`Total`) AS DOUBLE)) AS `avg`, MIN(`Invoice`.`Total`) AS `min`, MAX(`Invoice`.`Total`) AS `max` FROM `Invoice`
+=== distinct aggregates
+sql: SELECT COUNT(DISTINCT `Invoice`.`CustomerId`) AS `customers`, SUM(DISTINCT CAST((`Invoice`.`Total`) AS DOUBLE)) AS `sum`, AVG(DISTINCT CAST((`Invoice`.`Total`) AS DOUBLE)) AS `avg` FROM `Invoice`
+=== GROUP BY with HAVING and ORDER BY through select aliases
+sql: SELECT `Invoice`.`BillingCountry` AS `country`, SUM(CAST((`Invoice`.`Total`) AS DOUBLE)) AS `revenue`, COUNT(`Invoice`.`InvoiceId`) AS `invoices` FROM `Invoice` GROUP BY `Invoice`.`BillingCountry` HAVING SUM(CAST((`Invoice`.`Total`) AS DOUBLE)) > ? ORDER BY SUM(CAST((`Invoice`.`Total`) AS DOUBLE)) DESC, `Invoice`.`BillingCountry` ASC LIMIT ?
+#1 int64 1000
+#2 int64 10
+=== a grouped expression carrying a constant is referenced by position
+sql: SELECT ((CAST((`Invoice`.`Total`) AS DOUBLE)) + (CAST((?) AS DOUBLE))) AS `bucket`, COUNT(`Invoice`.`InvoiceId`) AS `n` FROM `Invoice` GROUP BY 1 ORDER BY 1 ASC
+#1 int64 100
+=== GROUP BY without selected columns groups by its keys
+sql: SELECT `Invoice`.`BillingCountry` FROM `Invoice` GROUP BY `Invoice`.`BillingCountry`
+=== FIRST needs an input order SQL does not give
+refused: not supported: FIRST/LAST require a provider-declared stable input order, or an order of their own (aggregate orderBy)
+=== an aggregate in WHERE is refused
+error: where: aggregate functions are not allowed in WHERE
+=== ORDER BY without facts keeps the NULLS clause
+sql: SELECT * FROM `Album` ORDER BY `Album`.`AlbumId` ASC, `Album`.`Title` DESC
+=== ORDER BY a NOT NULL column drops the NULLS clause
+sql: SELECT * FROM `Album` ORDER BY `Album`.`AlbumId` ASC, `Album`.`AlbumId` DESC, `Album`.`Title` DESC
+=== ORDER BY a nullable column keeps the NULLS clause
+sql: SELECT * FROM `Artist` ORDER BY `Artist`.`Name` ASC, `Artist`.`Name` DESC
+=== ORDER BY an aggregate
+sql: SELECT `Invoice`.`BillingCountry`, SUM(CAST((`Invoice`.`Total`) AS DOUBLE)) AS `revenue` FROM `Invoice` GROUP BY `Invoice`.`BillingCountry` ORDER BY SUM(CAST((`Invoice`.`Total`) AS DOUBLE)) DESC
+=== LIMIT
+sql: SELECT * FROM `Album` LIMIT ?
+#1 int64 10
+=== OFFSET
+sql: SELECT * FROM `Album` LIMIT 18446744073709551615 OFFSET ?
+#1 int64 5
+=== LIMIT and OFFSET
+sql: SELECT * FROM `Album` LIMIT ? OFFSET ?
+#1 int64 10
+#2 int64 5
+=== numbering follows the text across clauses
+sql: SELECT `Invoice`.`g`, ((CAST((COUNT(*)) AS DOUBLE)) + (CAST((?) AS DOUBLE))) AS `n` FROM `Invoice` WHERE `Invoice`.`a` = ? GROUP BY `Invoice`.`g` HAVING SUM(CAST((`Invoice`.`t`) AS DOUBLE)) > ? ORDER BY ((CAST((`Invoice`.`g`) AS DOUBLE)) + (CAST((?) AS DOUBLE))) ASC LIMIT ? OFFSET ?
+#1 int64 6
+#2 int64 1
+#3 int64 2
+#4 int64 3
+#5 int64 4
+#6 int64 5
+=== identifiers that hold quotes, question marks and spaces are quoted
+sql: SELECT `tab?le"x`.`we?ird"col` AS `a?"b` FROM `tab?le"x` WHERE `tab?le"x`.`we?ird"col` = ? ORDER BY `tab?le"x`.`we?ird"col` ASC
+#1 int64 1
+=== names with non-ASCII capitals
+sql: SELECT `Écoles`.`Élève` AS `Prénom` FROM `Écoles` WHERE `Écoles`.`Élève` = ?
+#1 int64 1
+=== a name over 63 bytes is refused, never truncated
+sql: SELECT * FROM `NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN`
+=== a name of 44 bytes that folds to 66 is refused in FoldLower only
+sql: SELECT * FROM `ȺȺȺȺȺȺȺȺȺȺȺȺȺȺȺȺȺȺȺȺȺȺ`
+=== a name that is a bare source identity without facts is refused
+refused: column 0: not supported: field "x" is written as the identity of its source `x`, which the server reads as the whole row unless a column has that name, and no catalog facts say whether one does
+=== a name that is not a column of a known source is an error
+error: column 0: field "to_json" is not a column of source `x`
+=== subqueries run in the generic engine
+refused: not supported: subqueries run in the generic engine, not in one statement
+=== cursors are refused
+refused: not supported: cursors (startFrom, startAfter)

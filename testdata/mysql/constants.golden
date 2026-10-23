@@ -1,0 +1,96 @@
+=== int
+sql: SELECT * FROM `Album` WHERE `Album`.`Title` = ?
+#1 int64 7
+=== negative int
+sql: SELECT * FROM `Album` WHERE `Album`.`Title` = ?
+#1 int64 -7
+=== zero
+sql: SELECT * FROM `Album` WHERE `Album`.`Title` = ?
+#1 int64 0
+=== int8
+sql: SELECT * FROM `Album` WHERE `Album`.`Title` = ?
+#1 int64 -8
+=== int64 maximum
+sql: SELECT * FROM `Album` WHERE `Album`.`Title` = ?
+#1 int64 9223372036854775807
+=== int64 minimum
+sql: SELECT * FROM `Album` WHERE `Album`.`Title` = ?
+#1 int64 -9223372036854775808
+=== uint8
+sql: SELECT * FROM `Album` WHERE `Album`.`Title` = ?
+#1 uint64 0x8
+=== uint64 above bigint
+sql: SELECT * FROM `Album` WHERE `Album`.`Title` = ?
+#1 uint64 0xffffffffffffffff
+=== float64 fraction
+sql: SELECT * FROM `Album` WHERE `Album`.`Title` = ?
+#1 float64 0.5
+=== float64 whole
+sql: SELECT * FROM `Album` WHERE `Album`.`Title` = ?
+#1 float64 5
+=== float64 shortest text
+sql: SELECT * FROM `Album` WHERE `Album`.`Title` = ?
+#1 float64 0.1
+=== float64 negative zero
+sql: SELECT * FROM `Album` WHERE `Album`.`Title` = ?
+#1 float64 -0
+=== float64 large
+sql: SELECT * FROM `Album` WHERE `Album`.`Title` = ?
+#1 float64 1e+21
+=== float64 tiny
+sql: SELECT * FROM `Album` WHERE `Album`.`Title` = ?
+#1 float64 1e-07
+=== float32 keeps its own shortest text
+sql: SELECT * FROM `Album` WHERE `Album`.`Title` = ?
+#1 float64 0.1
+=== NaN
+refused: where: not supported: a NaN or infinite float constant: the engine has no such number
+=== positive infinity
+refused: where: not supported: a NaN or infinite float constant: the engine has no such number
+=== negative infinity
+refused: where: not supported: a NaN or infinite float constant: the engine has no such number
+=== string stays untyped
+sql: SELECT * FROM `Album` WHERE `Album`.`Title` = ?
+#1 string "Ada Lovelace"
+=== empty string
+sql: SELECT * FROM `Album` WHERE `Album`.`Title` = ?
+#1 string ""
+=== a string of digits is still a string
+sql: SELECT * FROM `Album` WHERE `Album`.`Title` = ?
+#1 string "42"
+=== a string that looks like a date is read by the server
+sql: SELECT * FROM `Album` WHERE `Album`.`Title` = ?
+#1 string "2026-10-04"
+=== bool true
+sql: SELECT * FROM `Album` WHERE `Album`.`Title` = ?
+#1 bool true
+=== bool false
+sql: SELECT * FROM `Album` WHERE `Album`.`Title` = ?
+#1 bool false
+=== time in UTC
+sql: SELECT * FROM `Album` WHERE `Album`.`Title` = ?
+#1 time.Time 2026-10-04T12:30:15Z
+=== time keeps its instant under another zone
+sql: SELECT * FROM `Album` WHERE `Album`.`Title` = ?
+#1 time.Time 2026-10-04T12:30:15.123456789+02:00
+=== bytes
+sql: SELECT * FROM `Album` WHERE `Album`.`Title` = ?
+#1 []byte 0001fe
+=== empty bytes
+sql: SELECT * FROM `Album` WHERE `Album`.`Title` = ?
+#1 []byte (empty)
+=== nil is an untyped NULL in an ordering comparison
+sql: SELECT * FROM `Album` WHERE `Album`.`AlbumId` < ?
+#1 nil
+=== a type DALgo cannot hold is refused
+refused: where: not supported: SQL value type struct {}
+=== mixed constants in an IN list
+sql: SELECT * FROM `Album` WHERE `Album`.`AlbumId` IN (?, ?, ?, ?, ?, ?, ?, ?)
+#1 int64 1
+#2 float64 2.5
+#3 uint64 0x3
+#4 string "four"
+#5 bool true
+#6 time.Time 2026-10-04T12:30:15Z
+#7 []byte 78
+#8 nil

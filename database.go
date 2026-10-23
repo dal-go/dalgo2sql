@@ -24,7 +24,7 @@ type database struct {
 }
 
 // QueryCapabilities advertises what the structured-query dialect runs on the server.
-// With the PostgreSQL dialect that is GROUP BY, HAVING, ORDER BY, COUNT, SUM and AVG
+// With the PostgreSQL, MySQL, Oracle and SQL Server dialects that is GROUP BY, HAVING, ORDER BY, COUNT, SUM and AVG
 // with their DISTINCT forms, MIN and MAX; with SQLite, the same subset. Any other
 // dialect declares nothing, and DALgo aggregates in its own engine. FIRST and LAST
 // are not advertised until aggregate-local ORDER BY can be rendered without relying on
@@ -33,8 +33,14 @@ type database struct {
 // needs a provider-declared stable input order, and nothing runs it.
 func (dtb *database) QueryCapabilities() dal.QueryCapabilities {
 	switch dtb.options.StructuredQueryDialect {
-	case "postgres":
+	case dialectPostgres:
 		return postgresDialect{}.capabilities()
+	case dialectMySQL:
+		return mysqlDialect{}.capabilities()
+	case dialectOracle:
+		return oracleDialect{}.capabilities()
+	case dialectSQLServer:
+		return sqlserverDialect{}.capabilities()
 	case "sqlite":
 		return dal.QueryCapabilities{
 			GroupBy: true,
@@ -67,16 +73,17 @@ func (dtb *database) ExecuteQueryToRecordsetReader(ctx context.Context, query da
 	return reader, nil
 }
 
-// readExecutor says where a read runs its statements. With the PostgreSQL dialect a
-// structured read runs two: the catalog lookup that tells the compiler what the
+// readExecutor says where a read runs its statements. With a typed dialect (PostgreSQL,
+// MySQL, Oracle, SQL Server) a structured read runs two: the catalog lookup that tells the compiler what the
 // sources are, and the statement it compiles from the answer. Each PostgreSQL
-// connection has its own search_path, and database/sql hands each call of a pool to
+// connection has its own search_path (a MySQL one its DATABASE(), an Oracle one its
+// CURRENT_SCHEMA, a SQL Server one its database and default schema), and database/sql hands each call of a pool to
 // any connection, so the two could describe different relations. The read therefore
 // takes one connection for both, and the lease the reader releases when it is done
 // with the rows: closed, read to its end, or, as on the pool, when ctx ends. Any other
 // read runs on pool, as before, and holds no lease.
 func (dtb *database) readExecutor(ctx context.Context, query dal.Query, pool executeQueryFunc) (executeQueryFunc, *connLease, error) {
-	if _, structured := query.(dal.StructuredQuery); !structured || dtb.options.StructuredQueryDialect != "postgres" {
+	if _, structured := query.(dal.StructuredQuery); !structured || !isTypedDialect(dtb.options.StructuredQueryDialect) {
 		return pool, nil, nil
 	}
 	conn, err := dtb.db.Conn(ctx)

@@ -1,0 +1,30 @@
+=== a backtick in a name
+sql: SELECT `Album`.`a``b` FROM `Album`
+=== a double quote in a name
+sql: SELECT `Album`.`a"b` FROM `Album`
+=== a name of 64 characters
+sql: SELECT * FROM `éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé`
+=== a name of 65 characters
+error: from: table name: identifier is 65 characters, over the engine limit of 64
+=== a name of 128 bytes
+error: from: table name: identifier is 128 characters, over the engine limit of 64
+=== a name of 129 bytes
+error: from: table name: identifier is 129 characters, over the engine limit of 64
+=== a name of 64 characters outside the Basic Multilingual Plane
+error: from: table name: identifier holds a character outside the Basic Multilingual Plane, which MySQL does not accept in a name
+=== a name of 65 characters outside the Basic Multilingual Plane
+error: from: table name: identifier is 65 characters, over the engine limit of 64
+=== a character outside the Basic Multilingual Plane
+error: column 0: identifier holds a character outside the Basic Multilingual Plane, which MySQL does not accept in a name
+=== a name ending with a space
+error: column 0: identifier ends with a space, which MySQL does not accept in a name
+=== an alias of 65 characters is declined
+refused: column 0: not supported: an output name is too long for the engine, which cannot spell it as a column label: identifier is 65 characters, over the engine limit of 64
+=== a table alias
+sql: SELECT `a`.`Title` FROM `Album` AS `a` WHERE `a`.`AlbumId` = ?
+#1 int64 1
+=== an output named as another column is no capture: every field is qualified
+sql: SELECT `Album`.`AlbumId` AS `Title`, `Album`.`Title` AS `AlbumId` FROM `Album` ORDER BY `Album`.`AlbumId` ASC, ((CAST((`Album`.`Title`) AS DOUBLE)) + (CAST((`Album`.`ArtistId`) AS DOUBLE))) DESC
+=== GROUP BY a column, HAVING an aggregate of a column an output is named after
+sql: SELECT `Invoice`.`BillingCountry` AS `Total`, SUM(CAST((`Invoice`.`Total`) AS DOUBLE)) AS `BillingCountry` FROM `Invoice` GROUP BY `Invoice`.`BillingCountry` HAVING SUM(CAST((`Invoice`.`Total`) AS DOUBLE)) > ?
+#1 int64 1

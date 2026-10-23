@@ -1,0 +1,88 @@
+=== probe 1 in every position
+sql: SELECT "Invoice"."BillingCountry" AS "country", (CAST(SUM("Invoice"."Total") AS BINARY_DOUBLE)) AS "revenue" FROM "Invoice" WHERE ("Invoice"."BillingCity" = :1 AND "Invoice"."BillingCountry" IN (:2, :3) AND ((CAST(("Invoice"."Total") AS BINARY_DOUBLE)) + (CAST((:4) AS BINARY_DOUBLE))) > :5) GROUP BY "Invoice"."BillingCountry" HAVING (CAST(SUM("Invoice"."Total") AS BINARY_DOUBLE)) > :6 ORDER BY "Invoice"."BillingCountry" ASC NULLS FIRST
+#1 string "O'Brien'; DROP TABLE \"Album\"; --"
+#2 string "FR"
+#3 string "O'Brien'; DROP TABLE \"Album\"; --"
+#4 string "O'Brien'; DROP TABLE \"Album\"; --"
+#5 int64 0
+#6 string "O'Brien'; DROP TABLE \"Album\"; --"
+=== probe 2 in every position
+sql: SELECT "Invoice"."BillingCountry" AS "country", (CAST(SUM("Invoice"."Total") AS BINARY_DOUBLE)) AS "revenue" FROM "Invoice" WHERE ("Invoice"."BillingCity" = :1 AND "Invoice"."BillingCountry" IN (:2, :3) AND ((CAST(("Invoice"."Total") AS BINARY_DOUBLE)) + (CAST((:4) AS BINARY_DOUBLE))) > :5) GROUP BY "Invoice"."BillingCountry" HAVING (CAST(SUM("Invoice"."Total") AS BINARY_DOUBLE)) > :6 ORDER BY "Invoice"."BillingCountry" ASC NULLS FIRST
+#1 string "x') OR 1=1 --"
+#2 string "FR"
+#3 string "x') OR 1=1 --"
+#4 string "x') OR 1=1 --"
+#5 int64 0
+#6 string "x') OR 1=1 --"
+=== probe 3 in every position
+sql: SELECT "Invoice"."BillingCountry" AS "country", (CAST(SUM("Invoice"."Total") AS BINARY_DOUBLE)) AS "revenue" FROM "Invoice" WHERE ("Invoice"."BillingCity" = :1 AND "Invoice"."BillingCountry" IN (:2, :3) AND ((CAST(("Invoice"."Total") AS BINARY_DOUBLE)) + (CAST((:4) AS BINARY_DOUBLE))) > :5) GROUP BY "Invoice"."BillingCountry" HAVING (CAST(SUM("Invoice"."Total") AS BINARY_DOUBLE)) > :6 ORDER BY "Invoice"."BillingCountry" ASC NULLS FIRST
+#1 string "'; SELECT pg_sleep(10); --"
+#2 string "FR"
+#3 string "'; SELECT pg_sleep(10); --"
+#4 string "'; SELECT pg_sleep(10); --"
+#5 int64 0
+#6 string "'; SELECT pg_sleep(10); --"
+=== probe 4 in every position
+sql: SELECT "Invoice"."BillingCountry" AS "country", (CAST(SUM("Invoice"."Total") AS BINARY_DOUBLE)) AS "revenue" FROM "Invoice" WHERE ("Invoice"."BillingCity" = :1 AND "Invoice"."BillingCountry" IN (:2, :3) AND ((CAST(("Invoice"."Total") AS BINARY_DOUBLE)) + (CAST((:4) AS BINARY_DOUBLE))) > :5) GROUP BY "Invoice"."BillingCountry" HAVING (CAST(SUM("Invoice"."Total") AS BINARY_DOUBLE)) > :6 ORDER BY "Invoice"."BillingCountry" ASC NULLS FIRST
+#1 string "$1"
+#2 string "FR"
+#3 string "$1"
+#4 string "$1"
+#5 int64 0
+#6 string "$1"
+=== probe 5 in every position
+sql: SELECT "Invoice"."BillingCountry" AS "country", (CAST(SUM("Invoice"."Total") AS BINARY_DOUBLE)) AS "revenue" FROM "Invoice" WHERE ("Invoice"."BillingCity" = :1 AND "Invoice"."BillingCountry" IN (:2, :3) AND ((CAST(("Invoice"."Total") AS BINARY_DOUBLE)) + (CAST((:4) AS BINARY_DOUBLE))) > :5) GROUP BY "Invoice"."BillingCountry" HAVING (CAST(SUM("Invoice"."Total") AS BINARY_DOUBLE)) > :6 ORDER BY "Invoice"."BillingCountry" ASC NULLS FIRST
+#1 string "?"
+#2 string "FR"
+#3 string "?"
+#4 string "?"
+#5 int64 0
+#6 string "?"
+=== probe 6 in every position
+sql: SELECT "Invoice"."BillingCountry" AS "country", (CAST(SUM("Invoice"."Total") AS BINARY_DOUBLE)) AS "revenue" FROM "Invoice" WHERE ("Invoice"."BillingCity" = :1 AND "Invoice"."BillingCountry" IN (:2, :3) AND ((CAST(("Invoice"."Total") AS BINARY_DOUBLE)) + (CAST((:4) AS BINARY_DOUBLE))) > :5) GROUP BY "Invoice"."BillingCountry" HAVING (CAST(SUM("Invoice"."Total") AS BINARY_DOUBLE)) > :6 ORDER BY "Invoice"."BillingCountry" ASC NULLS FIRST
+#1 string "\\"
+#2 string "FR"
+#3 string "\\"
+#4 string "\\"
+#5 int64 0
+#6 string "\\"
+=== probe 7 in every position
+sql: SELECT "Invoice"."BillingCountry" AS "country", (CAST(SUM("Invoice"."Total") AS BINARY_DOUBLE)) AS "revenue" FROM "Invoice" WHERE ("Invoice"."BillingCity" = :1 AND "Invoice"."BillingCountry" IN (:2, :3) AND ((CAST(("Invoice"."Total") AS BINARY_DOUBLE)) + (CAST((:4) AS BINARY_DOUBLE))) > :5) GROUP BY "Invoice"."BillingCountry" HAVING (CAST(SUM("Invoice"."Total") AS BINARY_DOUBLE)) > :6 ORDER BY "Invoice"."BillingCountry" ASC NULLS FIRST
+#1 string "%"
+#2 string "FR"
+#3 string "%"
+#4 string "%"
+#5 int64 0
+#6 string "%"
+=== probe 8 in every position
+sql: SELECT "Invoice"."BillingCountry" AS "country", (CAST(SUM("Invoice"."Total") AS BINARY_DOUBLE)) AS "revenue" FROM "Invoice" WHERE ("Invoice"."BillingCity" = :1 AND "Invoice"."BillingCountry" IN (:2, :3) AND ((CAST(("Invoice"."Total") AS BINARY_DOUBLE)) + (CAST((:4) AS BINARY_DOUBLE))) > :5) GROUP BY "Invoice"."BillingCountry" HAVING (CAST(SUM("Invoice"."Total") AS BINARY_DOUBLE)) > :6 ORDER BY "Invoice"."BillingCountry" ASC NULLS FIRST
+#1 string "\"; DROP TABLE x; --"
+#2 string "FR"
+#3 string "\"; DROP TABLE x; --"
+#4 string "\"; DROP TABLE x; --"
+#5 int64 0
+#6 string "\"; DROP TABLE x; --"
+=== probe 9 in every position
+sql: SELECT "Invoice"."BillingCountry" AS "country", (CAST(SUM("Invoice"."Total") AS BINARY_DOUBLE)) AS "revenue" FROM "Invoice" WHERE ("Invoice"."BillingCity" = :1 AND "Invoice"."BillingCountry" IN (:2, :3) AND ((CAST(("Invoice"."Total") AS BINARY_DOUBLE)) + (CAST((:4) AS BINARY_DOUBLE))) > :5) GROUP BY "Invoice"."BillingCountry" HAVING (CAST(SUM("Invoice"."Total") AS BINARY_DOUBLE)) > :6 ORDER BY "Invoice"."BillingCountry" ASC NULLS FIRST
+#1 string "line\nbreak\u2028"
+#2 string "FR"
+#3 string "line\nbreak\u2028"
+#4 string "line\nbreak\u2028"
+#5 int64 0
+#6 string "line\nbreak\u2028"
+=== probe 10 in every position
+sql: SELECT "Invoice"."BillingCountry" AS "country", (CAST(SUM("Invoice"."Total") AS BINARY_DOUBLE)) AS "revenue" FROM "Invoice" WHERE ("Invoice"."BillingCity" = :1 AND "Invoice"."BillingCountry" IN (:2, :3) AND ((CAST(("Invoice"."Total") AS BINARY_DOUBLE)) + (CAST((:4) AS BINARY_DOUBLE))) > :5) GROUP BY "Invoice"."BillingCountry" HAVING (CAST(SUM("Invoice"."Total") AS BINARY_DOUBLE)) > :6 ORDER BY "Invoice"."BillingCountry" ASC NULLS FIRST
+#1 string "nul\x00byte"
+#2 string "FR"
+#3 string "nul\x00byte"
+#4 string "nul\x00byte"
+#5 int64 0
+#6 string "nul\x00byte"
+=== probe 11 in every position
+sql: SELECT "Invoice"."BillingCountry" AS "country", (CAST(SUM("Invoice"."Total") AS BINARY_DOUBLE)) AS "revenue" FROM "Invoice" WHERE ("Invoice"."BillingCity" = :1 AND "Invoice"."BillingCountry" IN (:2, :3) AND ((CAST(("Invoice"."Total") AS BINARY_DOUBLE)) + (CAST((:4) AS BINARY_DOUBLE))) > :5) GROUP BY "Invoice"."BillingCountry" HAVING (CAST(SUM("Invoice"."Total") AS BINARY_DOUBLE)) > :6 ORDER BY "Invoice"."BillingCountry" ASC NULLS FIRST
+#1 string "/* c */"
+#2 string "FR"
+#3 string "/* c */"
+#4 string "/* c */"
+#5 int64 0
+#6 string "/* c */"

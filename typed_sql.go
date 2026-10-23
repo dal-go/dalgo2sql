@@ -419,6 +419,9 @@ func (c *typedCompiler) query(q dal.StructuredQuery) (typedStatement, error) {
 			if clause == "" {
 				return "", nil, nil
 			}
+			if order := typedRulesOf(c.dialect).pagingOrderBy(); order != "" && len(q.OrderBy()) == 0 {
+				clause = "ORDER BY " + order + " " + clause
+			}
 			return " " + clause, limitArgs, nil
 		},
 	} {
@@ -657,10 +660,18 @@ func (c *typedCompiler) groupBy(groups []dal.Expression, items []typedSelectItem
 	}
 	parts := make([]string, len(groups))
 	var args []any
+	byPosition := typedRulesOf(c.dialect).groupByPosition()
 	for i, group := range groups {
 		sql, values, err := c.byExpression(group, items)
 		if err != nil {
 			return "", nil, fmt.Errorf("groupBy %d: %w", i, err)
+		}
+		// A grouped expression that carries a constant is written by its position, or
+		// inline where nothing selects it; neither form runs on an engine without a
+		// positional GROUP BY, which reads the inline one's fresh parameter as another
+		// expression than the select list's (ORA-00979), so it is refused there.
+		if !byPosition && typedContainsConstant(group) {
+			return "", nil, fmt.Errorf("groupBy %d: %w", i, typedUnsupported("a grouped expression carrying a constant needs GROUP BY by position, which the engine does not accept"))
 		}
 		parts[i] = sql
 		args = append(args, values...)
@@ -761,6 +772,9 @@ func (c *typedCompiler) orderBy(orders []dal.OrderExpression, items []typedSelec
 // The refusal is an error the caller of a one-source read sees: DALgo has no generic
 // engine to send such a query to. Writing the column qualified by the base source would
 // keep it native; refusing is the narrower change, and the shape is rare.
+//
+// A dialect whose rules qualify every field (typedEngineRules.qualifiesBareFields)
+// writes no bare name, so written is never an output's name there.
 func typedCheckOrderByName(expression dal.Expression, written string, items []typedSelectItem) error {
 	field, ok := expression.(dal.FieldRef)
 	if !ok || field.Source() != "" {
@@ -1054,7 +1068,7 @@ func (c *typedCompiler) table(source dal.RecordsetSource) (string, typedSource, 
 		if err != nil {
 			return "", typedSource{}, fmt.Errorf("source alias: %w", err)
 		}
-		text += " AS " + identity
+		text += typedRulesOf(c.dialect).sourceAliasKeyword() + identity
 	}
 	return text, typedSource{quoted: identity, table: typedSourceName{Schema: collection.Schema(), Name: collection.Name()}}, nil
 }
@@ -1139,6 +1153,9 @@ func (c *typedCompiler) field(field dal.FieldRef, sources map[string]typedSource
 		// Without a qualifier the field belongs to the single FROM source.
 		if err := c.checkNamesAColumn(field, name, sources[c.base]); err != nil {
 			return "", err
+		}
+		if typedRulesOf(c.dialect).qualifiesBareFields() {
+			return sources[c.base].quoted + "." + name, nil
 		}
 		return name, nil
 	}
@@ -1270,6 +1287,11 @@ func (c *typedCompiler) aggregate(function dal.AggregateFunc) (string, []any, er
 		if argument, args, err = c.expr(arguments[0]); err != nil {
 			return "", nil, err
 		}
+		wrapped := typedRulesOf(c.dialect).aggregateArgument(name, argument)
+		if err := c.checkFragment(wrapped, 0, argument); err != nil {
+			return "", nil, err
+		}
+		argument = wrapped
 	}
 	distinct := ""
 	if d, ok := function.(dal.DistinctAggregateFunc); ok && d.IsDistinct() {

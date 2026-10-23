@@ -27,7 +27,7 @@ func getRecordsetReaderWithDialect(ctx context.Context, query dal.Query, execute
 // (a column the recordset cannot hold) closes them here, on every path, because a caller
 // who is handed an error does not close a reader it was not given.
 func getRecordsetReaderWithOptions(ctx context.Context, query dal.Query, execute executeQueryFunc, sqlOptions DbOptions, options ...recordset.Option) (rr *recordsetReader, err error) {
-	rr = &recordsetReader{exactNumericValues: sqlOptions.ExactNumericValues}
+	rr = &recordsetReader{exactNumericValues: sqlOptions.ExactNumericValues, oracle: sqlOptions.StructuredQueryDialect == dialectOracle}
 	if q, ok := query.(dal.StructuredQuery); ok {
 		rr.validateFinite = dal.HasAggregation(q)
 	}
@@ -54,7 +54,9 @@ func getRecordsetReaderWithOptions(ctx context.Context, query dal.Query, execute
 		scanType := col.ScanType()
 		dbTypeName := col.DatabaseTypeName()
 
-		if sqlOptions.ExactNumericValues && strings.EqualFold(dbTypeName, "NUMERIC") {
+		if numberColumn, isNumber := oracleNumberColumn(name, col, sqlOptions.ExactNumericValues); rr.oracle && isNumber {
+			c = numberColumn
+		} else if sqlOptions.ExactNumericValues && strings.EqualFold(dbTypeName, "NUMERIC") {
 			c = newNullableColumn(name, "", dbTypeName)
 		} else if scanType == nil {
 			// This happens for some views in SQLite
@@ -133,6 +135,9 @@ type recordsetReader struct {
 	rs                 recordset.Recordset
 	validateFinite     bool
 	exactNumericValues bool
+	// oracle says the read runs on Oracle, whose NUMBER go-ora delivers as text
+	// (oracleNumberValue).
+	oracle bool
 }
 
 func (r *recordsetReader) Recordset() recordset.Recordset {
@@ -176,6 +181,9 @@ func (r *recordsetReader) Next() (row recordset.Row, rs recordset.Recordset, err
 		col := r.rs.GetColumnByIndex(i)
 		vt := col.ValueType()
 		value := values[i]
+		if r.oracle {
+			value = oracleNumberValue(r.colTypes[i], value, r.exactNumericValues)
+		}
 		if r.exactNumericValues && strings.EqualFold(r.colTypes[i].DatabaseTypeName(), "NUMERIC") {
 			value, err = exactNumericValue(value)
 			if err != nil {
@@ -213,6 +221,14 @@ func (r *recordsetReader) Next() (row recordset.Row, rs recordset.Recordset, err
 				}
 			case reflect.Int64:
 				if v, ok := value.(float64); ok {
+					// On Oracle, never truncate: a fraction, or a number past int64, in an
+					// int64 column is refused with the column's name, never the value. Every
+					// other dialect keeps the conversion it always had (SQLite stores 2.5 in
+					// an INTEGER column, and its readers have always read it as 2).
+					if r.oracle && (v != math.Trunc(v) || v < math.MinInt64 || v >= math.MaxInt64) {
+						err = fmt.Errorf("failed to set value for column %s: a float64 that is not a whole int64 in an int64 column", r.colNames[i])
+						return
+					}
 					value = int64(v)
 				}
 			case reflect.Int16, reflect.Int32:

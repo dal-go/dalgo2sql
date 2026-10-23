@@ -115,8 +115,7 @@ func TestReadmeStatesTheLegacyPathAndTheNumericRules(t *testing.T) {
 		"A string inside a slice passed as one constant",
 		"A plain value and an `IN` list may hold these characters",
 		"A source leaves this path by setting a dialect",
-		"`postgres` for PostgreSQL, which is selectable",
-		"MySQL has no dialect")
+		"`postgres` for PostgreSQL, `mysql` for MySQL, `oracle` for Oracle and `sqlserver` for\nSQL Server")
 	requireAbsent(t, "the README's legacy text path", legacy, "mounts today")
 	numeric := readme[strings.Index(readme, "## NUMERIC result values"):strings.Index(readme, "## End2end")]
 	if !strings.HasPrefix(numeric, "## NUMERIC result values\n\nSince dalgo2sql v0.21.0 the readers turn the text") {
