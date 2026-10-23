@@ -129,6 +129,25 @@ func rows(t *testing.T, db dal.DB, q dal.StructuredQuery, columns ...string) []s
 	return out
 }
 
+// recordsetRow reads the one row of q through the recordset reader, by column name.
+func recordsetRow(t *testing.T, db dal.DB, q dal.StructuredQuery) map[string]any {
+	t.Helper()
+	reader, err := db.ExecuteQueryToRecordsetReader(context.Background(), q)
+	if err != nil {
+		t.Fatalf("%s: %v", q.String(), err)
+	}
+	defer func() { _ = reader.Close() }()
+	row, rs, err := reader.Next()
+	if err != nil {
+		t.Fatalf("%s: %v", q.String(), err)
+	}
+	values := map[string]any{}
+	for i := 0; i < rs.ColumnsCount(); i++ {
+		values[rs.GetColumnByIndex(i).Name()], _ = row.GetValueByIndex(i, rs)
+	}
+	return values
+}
+
 func expectRows(t *testing.T, name string, got []string, want ...string) {
 	t.Helper()
 	if want == nil {
@@ -234,7 +253,13 @@ func exerciseTypedDialect(t *testing.T, sqlDB *sql.DB, dialect, notFound string)
 		t.Fatalf("typed read = %v, %v", typed, err)
 	}
 	want := map[string]any{"ArtistId": int64(1), "n": int64(2), "sum": 17.49, "avg": 2.5}
-	for name, value := range typed[0].Data().(map[string]any) {
+	data := typed[0].Data().(map[string]any)
+	for name := range want {
+		value, present := data[name]
+		if !present {
+			t.Errorf("the typed read has no %s: %v", name, data)
+			continue
+		}
 		got, isFloat := value.(float64)
 		wanted, wantFloat := want[name].(float64)
 		if isFloat && wantFloat && math.Abs(got-wanted) < 1e-9 {

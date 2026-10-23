@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/dal-go/dalgo/dal"
+	"github.com/dal-go/dalgo/recordset"
 )
 
 // oracleMaxIdentifierBytes is the length limit of an Oracle name from 12.2 on, in
@@ -175,22 +176,19 @@ func (oracleDialect) aggregateArgument(_, argument string) string { return argum
 const oracleCurrentSchema = `SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA')`
 
 // oracleCatalogQuery is the one query catalogFacts sends, for n sources. A derived
-// table of the source numbers 1 to n is joined to the catalog, source k on its own
-// (schema, name), bound once each as :2k-1 and :2k, so two spellings of one relation
-// (ALBUM and DALGO.ALBUM) each get every column. The schema is the empty string for an unqualified source, which
+// table of (k, schema, name), source k bound as :2k-1 and :2k, is joined to the
+// catalog on OWNER and TABLE_NAME equality, which the dictionary's indexes serve, so two
+// spellings of one relation (ALBUM and DALGO.ALBUM) each get every column. The schema is the empty string for an unqualified source, which
 // Oracle reads as NULL and COALESCE as the current schema. The columns are those
 // typedCatalogFactsByCase reads, each truth value a 0 or a 1 (no boolean expression
 // stands in the select list). Its text depends on n only.
 func oracleCatalogQuery(n int) string {
-	var numbers, on strings.Builder
+	var sources strings.Builder
 	for i := 1; i <= n; i++ {
-		k := strconv.Itoa(i)
 		if i > 1 {
-			numbers.WriteString(" UNION ALL ")
-			on.WriteString(" OR ")
+			sources.WriteString(" UNION ALL ")
 		}
-		numbers.WriteString("SELECT " + k + " AS k FROM DUAL")
-		on.WriteString("(q.k = " + k + " AND c.OWNER = COALESCE(:" + strconv.Itoa(2*i-1) + ", " + oracleCurrentSchema + ") AND c.TABLE_NAME = :" + strconv.Itoa(2*i) + ")")
+		sources.WriteString("SELECT " + strconv.Itoa(i) + " AS k, :" + strconv.Itoa(2*i-1) + " AS s, :" + strconv.Itoa(2*i) + " AS n FROM DUAL")
 	}
 	return "SELECT q.k, " +
 		"c.COLUMN_NAME, c.DATA_TYPE, " +
@@ -204,7 +202,7 @@ func oracleCatalogQuery(n int) string {
 		"AND pc.TABLE_NAME = c.TABLE_NAME AND pc.COLUMN_NAME = c.COLUMN_NAME) THEN 1 ELSE 0 END, " +
 		"0, " +
 		"CASE WHEN c.COLLATION IS NULL OR c.COLLATION IN ('BINARY', 'USING_NLS_COMP') THEN 1 ELSE 0 END " +
-		"FROM (" + numbers.String() + ") q JOIN ALL_TAB_COLUMNS c ON " + on.String() + " " +
+		"FROM (" + sources.String() + ") q JOIN ALL_TAB_COLUMNS c ON c.OWNER = COALESCE(q.s, " + oracleCurrentSchema + ") AND c.TABLE_NAME = q.n " +
 		"ORDER BY q.k, c.COLUMN_ID"
 }
 
@@ -302,4 +300,31 @@ func oracleNumberValue(columnType *sql.ColumnType, value any, exact bool) any {
 		return number
 	}
 	return text
+}
+
+// oracleMaxInt64Digits is the largest NUMBER precision whose whole values all fit an
+// int64 (18 digits; 19 do not all fit).
+const oracleMaxInt64Digits = 18
+
+// oracleNumberColumn is the recordset column of an Oracle NUMBER, which go-ora reports
+// with a precision and scale (and a float64 scan type when the precision is set, no
+// database type name), and reports false for any other column. The column type follows
+// what every value of the NUMBER can be, never one row's value:
+//
+//   - scale 0 and a precision of 1 to 18 digits: an int64 column, every value whole and
+//     in range;
+//   - anything else (a scale, NUMBER(*,s) with precision 0, an unconstrained NUMBER
+//     reported as (38, 255), NUMBER(38)): a float64 column, or with exact
+//     (ExactNumericValues) a text column that keeps the decimal text.
+func oracleNumberColumn(name string, column *sql.ColumnType, exact bool) (recordset.Column[any], bool) {
+	precision, scale, isNumber := column.DecimalSize()
+	switch {
+	case !isNumber:
+		return nil, false
+	case scale == 0 && precision > 0 && precision <= oracleMaxInt64Digits:
+		return newNullableColumn(name, int64(0), "NUMBER"), true
+	case exact:
+		return newNullableColumn(name, "", "NUMBER"), true
+	}
+	return newNullableColumn(name, float64(0), "NUMBER"), true
 }

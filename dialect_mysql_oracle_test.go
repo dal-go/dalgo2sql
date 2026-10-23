@@ -523,26 +523,71 @@ func TestOracleNumbersAreReadAsNumbers(t *testing.T) {
 		_ = reader.Close()
 	}
 
-	db, mock := newPostgresReadMock(t)
-	mock.ExpectQuery("SELECT 1").WillReturnRows(sqlmock.NewRowsWithColumnDefinition(
-		sqlmock.NewColumn("id").OfType("NUMBER", int64(0)).WithPrecisionAndScale(10, 0),
-		sqlmock.NewColumn("price").OfType("NUMBER", float64(0)).WithPrecisionAndScale(10, 2),
-	).AddRow("7", "9.99"))
-	reader, err := getRecordsetReaderWithOptions(ctx, query, db.QueryContext, DbOptions{StructuredQueryDialect: "oracle"})
-	if err != nil {
-		t.Fatal(err)
+	// The recordset reader, with the column metadata go-ora v3 reports: no type name, a
+	// float64 scan type when the precision is set (int64 when it is 0), an unconstrained
+	// NUMBER as (38, 255).
+	goOraColumns := func() *sqlmock.Rows {
+		return sqlmock.NewRowsWithColumnDefinition(
+			sqlmock.NewColumn("id").OfType("", float64(0)).WithPrecisionAndScale(10, 0),
+			sqlmock.NewColumn("price").OfType("", float64(0)).WithPrecisionAndScale(10, 2),
+			sqlmock.NewColumn("star").OfType("", int64(0)).WithPrecisionAndScale(0, 2),
+			sqlmock.NewColumn("free").OfType("", float64(0)).WithPrecisionAndScale(38, 255),
+			sqlmock.NewColumn("whole").OfType("", float64(0)).WithPrecisionAndScale(38, 255),
+			sqlmock.NewColumn("huge").OfType("", float64(0)).WithPrecisionAndScale(38, 0),
+			sqlmock.NewColumn("title").OfType("", ""),
+		).AddRow("7", "9.99", "2.5", "2.5", "2", "12345678901234567890123", "Rock")
 	}
-	row, rs, err := reader.Next()
-	if err != nil {
-		t.Fatal(err)
+	for _, tc := range []struct {
+		exact bool
+		want  []any
+	}{
+		{false, []any{int64(7), 9.99, 2.5, 2.5, 2.0, 1.2345678901234568e22, "Rock"}},
+		{true, []any{int64(7), "9.99", "2.5", "2.5", "2", "12345678901234567890123", "Rock"}},
+	} {
+		db, mock := newPostgresReadMock(t)
+		mock.ExpectQuery("SELECT 1").WillReturnRows(goOraColumns())
+		reader, err := getRecordsetReaderWithOptions(ctx, query, db.QueryContext, DbOptions{StructuredQueryDialect: "oracle", ExactNumericValues: tc.exact})
+		if err != nil {
+			t.Fatal(err)
+		}
+		row, rs, err := reader.Next()
+		if err != nil {
+			t.Fatalf("exact %v: %v", tc.exact, err)
+		}
+		for i, want := range tc.want {
+			if got, _ := row.GetValueByIndex(i, rs); got != want {
+				t.Fatalf("exact %v: column %d = %#v, want %#v", tc.exact, i, got, want)
+			}
+		}
+		_ = reader.Close()
 	}
-	id, _ := row.GetValueByIndex(0, rs)
-	price, _ := row.GetValueByIndex(1, rs)
-	if id != int64(7) || price != 9.99 {
-		t.Fatalf("recordset row = %#v, %#v", id, price)
-	}
-	_ = reader.Close()
 	if got := oracleNumberValue(nil, "7", false); got != "7" {
 		t.Fatalf("no column type = %#v", got)
+	}
+}
+
+// An int64 column refuses a float64 that is not a whole int64 instead of truncating it,
+// and takes a whole one.
+func TestRecordsetInt64ColumnNeverTruncates(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		value any
+		want  any
+	}{{3.0, int64(3)}, {2.5, nil}, {1e19, nil}, {-1e19, nil}} {
+		db, mock := newPostgresReadMock(t)
+		mock.ExpectQuery("SELECT 1").WillReturnRows(sqlmock.NewRowsWithColumnDefinition(sqlmock.NewColumn("n").OfType("INTEGER", int64(0))).AddRow(tc.value))
+		reader, err := getRecordsetReaderWithOptions(ctx, dal.NewTextQuery("SELECT 1", nil), db.QueryContext, DbOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		row, rs, err := reader.Next()
+		if tc.want == nil {
+			if err == nil || !strings.Contains(err.Error(), "not a whole int64") {
+				t.Fatalf("%v: error = %v, want a refusal", tc.value, err)
+			}
+		} else if got, _ := row.GetValueByIndex(0, rs); err != nil || got != tc.want {
+			t.Fatalf("%v = %#v, %v", tc.value, got, err)
+		}
+		_ = reader.Close()
 	}
 }

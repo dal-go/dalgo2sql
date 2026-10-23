@@ -54,7 +54,9 @@ func getRecordsetReaderWithOptions(ctx context.Context, query dal.Query, execute
 		scanType := col.ScanType()
 		dbTypeName := col.DatabaseTypeName()
 
-		if sqlOptions.ExactNumericValues && strings.EqualFold(dbTypeName, "NUMERIC") {
+		if numberColumn, isNumber := oracleNumberColumn(name, col, sqlOptions.ExactNumericValues); rr.oracle && isNumber {
+			c = numberColumn
+		} else if sqlOptions.ExactNumericValues && strings.EqualFold(dbTypeName, "NUMERIC") {
 			c = newNullableColumn(name, "", dbTypeName)
 		} else if scanType == nil {
 			// This happens for some views in SQLite
@@ -219,6 +221,12 @@ func (r *recordsetReader) Next() (row recordset.Row, rs recordset.Recordset, err
 				}
 			case reflect.Int64:
 				if v, ok := value.(float64); ok {
+					// Never truncate: a fraction, or a number past int64, in an int64
+					// column is refused with the column's name, never the value.
+					if v != math.Trunc(v) || v < math.MinInt64 || v >= math.MaxInt64 {
+						err = fmt.Errorf("failed to set value for column %s: a float64 that is not a whole int64 in an int64 column", r.colNames[i])
+						return
+					}
 					value = int64(v)
 				}
 			case reflect.Int16, reflect.Int32:

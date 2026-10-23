@@ -3,6 +3,9 @@ package realservers
 import (
 	"testing"
 
+	"github.com/dal-go/dalgo/dal"
+	"github.com/dal-go/dalgo2sql"
+
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/microsoft/go-mssqldb"
 	_ "github.com/sijms/go-ora/v3"
@@ -59,6 +62,29 @@ func TestRealOracle(t *testing.T) {
 	execAll(t, db, fixture(quote)...)
 	t.Cleanup(func() { execAll(t, db, `DROP TABLE IF EXISTS "Album"`, `DROP TABLE IF EXISTS "Artist"`) })
 	exerciseTypedDialect(t, db, "oracle", "ALBUM")
+
+	// Every shape of NUMBER, read through the recordset reader (DataTug's grid) in both
+	// numeric modes: values exact, never truncated, of one Go type per column.
+	execAll(t, db, `DROP TABLE IF EXISTS "Numbers"`,
+		`CREATE TABLE "Numbers" ("Id" NUMBER(10, 0) NOT NULL PRIMARY KEY, "Price" NUMBER(10, 2), "Star" NUMBER(*, 2), "Free" NUMBER, "Huge" NUMBER(38))`,
+		`INSERT INTO "Numbers" VALUES (1, 9.99, 2.5, 2.5, 12345678901234567890123)`)
+	t.Cleanup(func() { execAll(t, db, `DROP TABLE IF EXISTS "Numbers"`) })
+	q := from("Numbers", "").NewQuery().GroupBy(field("Id"), field("Price"), field("Star"), field("Free"), field("Huge")).
+		SelectColumns(column(field("Id"), ""), column(field("Price"), ""), column(field("Star"), ""), column(field("Free"), ""), column(field("Huge"), ""), dal.CountAs(dal.Star(), "n"))
+	for _, tc := range []struct {
+		exact bool
+		want  map[string]any
+	}{
+		{false, map[string]any{"Id": int64(1), "Price": 9.99, "Star": 2.5, "Free": 2.5, "Huge": 1.2345678901234568e22, "n": 1.0}},
+		{true, map[string]any{"Id": int64(1), "Price": "9.99", "Star": "2.5", "Free": "2.5", "Huge": "12345678901234567890123", "n": "1"}},
+	} {
+		got := recordsetRow(t, dalgo2sql.NewDatabase(db, dalgo2sql.NewSimpleSchema("ID"), dalgo2sql.DbOptions{StructuredQueryDialect: "oracle", ExactNumericValues: tc.exact}), q)
+		for name, want := range tc.want {
+			if value, present := got[name]; !present || value != want {
+				t.Errorf("recordset, exact %v: %s = %T %#v, want %T %#v", tc.exact, name, value, value, want, want)
+			}
+		}
+	}
 }
 
 // TestRealSQLServer runs against SQL Server 2022: DALGO2SQL_SQLSERVER_URL, a go-mssqldb
