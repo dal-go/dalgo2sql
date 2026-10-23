@@ -1,0 +1,18 @@
+=== demo-project-1 customer-invoices (the query this stream exists for)
+sql: SELECT "i"."InvoiceId", "i"."InvoiceDate", "i"."BillingCity", "i"."BillingCountry", "i"."Total" FROM "Invoice" "i" WHERE "i"."CustomerId" = :1 ORDER BY "i"."InvoiceDate" DESC
+#1 int64 3
+=== datatug-cli runQueryTestCustomerByIDTugQL (wildcard select, no alias)
+sql: SELECT * FROM "Customer" WHERE "Customer"."CustomerId" = :1
+#1 int64 3
+=== datatug-cli customerByIDTugQL (wildcard select, no alias)
+sql: SELECT * FROM "Customer" WHERE "Customer"."CustomerId" = :1
+#1 int64 3
+=== datatug-cli customerEmailExplicitTugQL (explicit hidden-column probe, no alias)
+sql: SELECT "Customer"."CustomerId", "Customer"."Email" FROM "Customer" WHERE "Customer"."CustomerId" = :1
+#1 int64 3
+=== datatug-cli customerAliasedColumnTugQL (COLUMN alias, not source alias; refused upstream by accesspolicies, not by this dialect)
+sql: SELECT "Customer"."CustomerId", "Customer"."FirstName" AS "display_name" FROM "Customer" WHERE "Customer"."CustomerId" = :1
+#1 int64 3
+=== datatug-cli customerInvoiceTugQL (wildcard select, no alias)
+sql: SELECT * FROM "Invoice" WHERE "Invoice"."CustomerId" = :1
+#1 int64 3

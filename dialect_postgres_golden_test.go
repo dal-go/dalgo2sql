@@ -173,6 +173,12 @@ func postgresGoldenField(name string) dal.FieldRef { return typedTestField(name)
 // TestPostgresGoldenShapes pins the statement and arguments of every supported
 // query shape.
 func TestPostgresGoldenShapes(t *testing.T) {
+	assertPostgresGoldenGroup(t, "shapes", postgresGoldenShapeCases())
+}
+
+// postgresGoldenShapeCases is every supported query shape, which the MySQL and Oracle
+// goldens compile too.
+func postgresGoldenShapeCases() []postgresGoldenCase {
 	album := func() dal.IQueryBuilder { return typedTestFrom("Album", "").NewQuery() }
 	invoice := func() dal.IQueryBuilder { return typedTestFrom("Invoice", "").NewQuery() }
 	field := postgresGoldenField
@@ -318,11 +324,17 @@ func TestPostgresGoldenShapes(t *testing.T) {
 		{name: "subqueries run in the generic engine", query: dal.From(dal.NewQuerySource(album().SelectColumns(), "s")).NewQuery().SelectColumns()},
 		{name: "cursors are refused", query: album().StartFrom("c").SelectColumns()},
 	}
-	assertPostgresGoldenGroup(t, "shapes", cases)
+	return cases
 }
 
 // TestPostgresGoldenConstants pins the cast and the argument of each constant type.
 func TestPostgresGoldenConstants(t *testing.T) {
+	assertPostgresGoldenGroup(t, "constants", postgresGoldenConstantCases())
+}
+
+// postgresGoldenConstantCases is one comparison per constant type, which the MySQL
+// and Oracle goldens compile too.
+func postgresGoldenConstantCases() []postgresGoldenCase {
 	stampUTC := time.Date(2026, time.October, 4, 12, 30, 15, 0, time.UTC)
 	stampZoned := time.Date(2026, time.October, 4, 12, 30, 15, 123456789, time.FixedZone("CEST", 2*3600))
 	of := func(value any) dal.StructuredQuery {
@@ -363,7 +375,7 @@ func TestPostgresGoldenConstants(t *testing.T) {
 		{name: "mixed constants in an IN list", query: typedTestFrom("Album", "").NewQuery().
 			Where(dal.NewComparison(typedTestField("AlbumId"), dal.In, dal.NewArray([]any{1, 2.5, uint(3), "four", true, stampUTC, []byte("x"), nil}))).SelectColumns()},
 	}
-	assertPostgresGoldenGroup(t, "constants", cases)
+	return cases
 }
 
 // postgresInjectionProbes are values that would matter if one ever reached the
@@ -553,6 +565,13 @@ func postgresJoinFixture(t *testing.T, name string) (dal.StructuredQuery, error)
 // join shapes the fixtures do not cover, with the catalog facts of the sample
 // database.
 func TestPostgresGoldenJoins(t *testing.T) {
+	assertPostgresGoldenGroup(t, "joins", postgresGoldenJoinCases(t))
+}
+
+// postgresGoldenJoinCases is every join golden, which the MySQL and Oracle goldens
+// compile too.
+func postgresGoldenJoinCases(t *testing.T) []postgresGoldenCase {
+	t.Helper()
 	var cases []postgresGoldenCase
 	for _, name := range []string{"chinook-nested.tugql.yaml", "chinook-hinted.tugql.yaml", "chinook-wildcard.tugql.yaml"} {
 		query, err := postgresJoinFixture(t, name)
@@ -597,7 +616,7 @@ func TestPostgresGoldenJoins(t *testing.T) {
 			dal.NewJoinedSource(artist, dal.JoinInner, on("a", "ArtistId", "r", "ArtistId")),
 		).NewQuery().SelectColumns()},
 	)
-	assertPostgresGoldenGroup(t, "joins", cases)
+	return cases
 }
 
 // TestPostgresJoinErrorFixtures: the two vendored error fixtures are refused with

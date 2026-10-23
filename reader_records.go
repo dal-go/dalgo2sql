@@ -102,7 +102,7 @@ func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute e
 				return nil, errors.New("PreserveBinaryValues requires map record data so PostgreSQL BYTEA values can remain byte slices")
 			}
 		}
-		if readsWithTypedPostgres(options) {
+		if readsWithTypedCompiler(options) {
 			// The typed compiler refuses what it cannot compute as asked, and reads that
 			// from the query it is handed, which below can be a wrapper of this reader's
 			// own that does not carry it. So the caller's query is asked first.
@@ -288,7 +288,7 @@ func ordinalRecords(collection string) func() dalrecord.Record {
 // A grouped or aggregated query has no source row to key, a read into a record keeps that
 // record's own key, and a query with no base source has no source to ask about.
 func keyedByCatalog(options DbOptions, q dal.StructuredQuery) bool {
-	return readsWithTypedPostgres(options) &&
+	return readsWithTypedCompiler(options) &&
 		!dal.HasAggregation(q) && q.IntoRecord() == nil &&
 		q.From() != nil && q.From().Base() != nil &&
 		len(options.PrimaryKey) == 0 && recordsetForQuery(options, q) == nil
@@ -301,7 +301,7 @@ func keyedByCatalog(options DbOptions, q dal.StructuredQuery) bool {
 // or several, and when the mount cannot write its name (a column stored as Id where the
 // fold-lower mount writes id: the statement could not select it).
 func catalogPrimaryKey(ctx context.Context, options DbOptions, q dal.StructuredQuery, execute executeQueryFunc) (*typedCatalogFacts, string, int, error) {
-	dialect, err := postgresDialectFor(options)
+	dialect, err := typedDialectFor(options)
 	if err != nil {
 		return nil, "", -1, err
 	}
@@ -385,14 +385,14 @@ func keyItemIsField(column dal.Column, name, base string, fold nameFold) bool {
 // package's compilers, the typed PostgreSQL one or the SQLite one, rather than by a native
 // compiler of the caller's or the legacy emitter: those take the query as it always did.
 func readsWithOwnCompiler(options DbOptions) bool {
-	return options.NativeStructuredQueryCompiler == nil && (options.StructuredQueryDialect == "postgres" || options.StructuredQueryDialect == "sqlite")
+	return options.NativeStructuredQueryCompiler == nil && (isTypedDialect(options.StructuredQueryDialect) || options.StructuredQueryDialect == dialectSQLite)
 }
 
-// readsWithTypedPostgres reports whether a structured read is compiled by the typed
-// PostgreSQL compiler: a native compiler of the caller's takes precedence over the
-// dialect (see getReaderBaseWithOptions).
-func readsWithTypedPostgres(options DbOptions) bool {
-	return options.NativeStructuredQueryCompiler == nil && options.StructuredQueryDialect == "postgres"
+// readsWithTypedCompiler reports whether a structured read is compiled by the typed
+// compiler (PostgreSQL, MySQL, Oracle, SQL Server): a native compiler of the caller's takes
+// precedence over the dialect (see getReaderBaseWithOptions).
+func readsWithTypedCompiler(options DbOptions) bool {
+	return options.NativeStructuredQueryCompiler == nil && isTypedDialect(options.StructuredQueryDialect)
 }
 
 // recordIdentityField is the field the reader adds to the select list to key each
@@ -427,8 +427,8 @@ func (f nameFold) of(name string) string {
 // chose, and the statement returns the column under the name it wrote, so the two are
 // compared folded or the key is never found.
 func recordNameFold(options DbOptions) nameFold {
-	if !readsWithTypedPostgres(options) {
-		return nil
+	if !readsWithTypedCompiler(options) || options.StructuredQueryDialect != dialectPostgres {
+		return nil // MySQL, Oracle and SQL Server write every name as spelt
 	}
 	// An IdentifierCase the package does not define fails the read itself, before any
 	// name is compared.

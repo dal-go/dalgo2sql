@@ -1,0 +1,118 @@
+name: Real servers
+
+# Runs the typed MySQL, Oracle and SQL Server dialects against real servers
+# (end2end/realservers). Each job sets DALGO2SQL_REQUIRE_REAL_SERVERS, so a test
+# that cannot reach its server fails instead of skipping.
+#
+# The Oracle Database Free and SQL Server Developer images are used for automated
+# testing only, under their vendors' terms (Oracle Free Use Terms; SQL Server
+# Developer edition EULA, ACCEPT_EULA=Y), which the project owner accepted for CI
+# testing on 2026-10-16.
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - '**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || format('{0}-{1}', github.ref, github.sha) }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  mysql:
+    name: MySQL 8.4
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: dalgo-test
+          MYSQL_DATABASE: dalgo
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -pdalgo-test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 40
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: end2end/go.mod
+          cache-dependency-path: end2end/go.sum
+      - name: Test against MySQL
+        working-directory: end2end
+        env:
+          DALGO2SQL_REQUIRE_REAL_SERVERS: "1"
+          DALGO2SQL_MYSQL_DSN: root:dalgo-test@tcp(127.0.0.1:3306)/dalgo
+        run: go test -count=1 -v -run '^TestRealMySQL$' ./realservers/
+
+  oracle:
+    name: Oracle Database Free 23
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      oracle:
+        image: gvenzl/oracle-free:23-slim
+        env:
+          ORACLE_PASSWORD: dalgo-test
+          APP_USER: dalgo
+          APP_USER_PASSWORD: dalgo-test
+        ports:
+          - 1521:1521
+        options: >-
+          --health-cmd healthcheck.sh
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: end2end/go.mod
+          cache-dependency-path: end2end/go.sum
+      - name: Test against Oracle
+        working-directory: end2end
+        env:
+          DALGO2SQL_REQUIRE_REAL_SERVERS: "1"
+          DALGO2SQL_ORACLE_URL: oracle://dalgo:dalgo-test@127.0.0.1:1521/FREEPDB1
+        run: go test -count=1 -v -run '^TestRealOracle$' ./realservers/
+
+  sqlserver:
+    name: SQL Server 2022
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_PID: Developer
+          MSSQL_SA_PASSWORD: Dalgo-Test-2026x
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P Dalgo-Test-2026x -Q 'SELECT 1' -b -o /dev/null"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: end2end/go.mod
+          cache-dependency-path: end2end/go.sum
+      - name: Test against SQL Server
+        working-directory: end2end
+        env:
+          DALGO2SQL_REQUIRE_REAL_SERVERS: "1"
+          DALGO2SQL_SQLSERVER_URL: sqlserver://sa:Dalgo-Test-2026x@127.0.0.1:1433?database=master
+        run: go test -count=1 -v -run '^TestRealSQLServer$' ./realservers/

@@ -66,20 +66,25 @@ type DbOptions struct {
 	// for PostgreSQL, which requires "$1", "$2", … positional markers.
 	Placeholder PlaceholderDialect
 	// StructuredQueryDialect names the SQL dialect whose identifier quoting has
-	// been reviewed. Empty preserves legacy emission; "sqlite" and "postgres" are
-	// supported; any other value makes a structured read fail. It decides two
-	// things:
+	// been reviewed. Empty preserves legacy emission; "sqlite", "postgres", "mysql",
+	// "oracle" and "sqlserver" are supported; any other value makes a structured read
+	// fail. It decides two things:
 	//
 	//   - Structured reads: "sqlite" opts them into safe dialect-specific
-	//     compilation, and so does "postgres", which reads the catalog facts of every
-	//     source first, on the connection the statement runs on, and compiles with
-	//     bound values only (see IdentifierCase and the README).
+	//     compilation, and so do "postgres", "mysql" (MySQL 8.0.17 and later),
+	//     "oracle" (Oracle Database 23ai) and "sqlserver" (SQL Server 2022), the typed
+	//     compiler's dialects, which read
+	//     the catalog facts of every source first, on the connection the statement
+	//     runs on, and compile with bound values only (see IdentifierCase and the
+	//     README). The typed MySQL dialect writes "?" placeholders, the Oracle one
+	//     ":1", ":2", ... and the SQL Server one "@p1", "@p2", ..., whatever
+	//     Placeholder says.
 	//   - The collection, field and primary-key names of every key read and write
 	//     (Exists, Get, GetMulti, Insert, Set, SetMulti, Update, UpdateMulti,
 	//     Delete, DeleteMulti): with "sqlite" a name is written quoted, and only an
 	//     empty name, a control character, invalid UTF-8 or more than 255 bytes is
-	//     refused; with an empty or any other value, "postgres" included (its
-	//     reviewed quoting covers structured reads, not these), a name must be a plain
+	//     refused; with an empty or any other value, "postgres", "mysql", "oracle" and
+	//     "sqlserver" included (their reviewed quoting covers structured reads, not these), a name must be a plain
 	//     identifier (letters, digits and underscores, not starting with a digit,
 	//     at most 255 bytes), or the call fails with ErrUnsafeName and sends no
 	//     statement.
@@ -103,12 +108,13 @@ type DbOptions struct {
 	NativeJoinEligibility NativeJoinEligibility
 	// NativeStructuredQueryCompiler emits a complete structured SQL query for a
 	// trusted adapter dialect. It receives translated JOIN hint fragments on the
-	// actual read path. dalgo2sql provides no SQL Server or Oracle compiler.
+	// actual read path. Oracle and SQL Server have the typed "oracle" and "sqlserver" dialects.
 	NativeStructuredQueryCompiler NativeStructuredQueryCompiler
 	// IdentifierCase is read with StructuredQueryDialect "postgres" and picks how
 	// names are written: as the query spells them (the default), or folded to lower
 	// case. Any other value makes every structured read, join check and JoinFields
-	// call fail with an error that names it. See IdentifierCase.
+	// call fail with an error that names it. With "mysql", "oracle" and "sqlserver"
+	// only the default (empty or IdentifierCaseExact) is accepted. See IdentifierCase.
 	IdentifierCase IdentifierCase
 
 	// IsAlreadyExists reports whether err — the raw error returned by the
@@ -131,8 +137,9 @@ type DbOptions struct {
 }
 
 // IdentifierCase says how a SQL dialect that quotes every name writes the names a
-// query spells. It is read with StructuredQueryDialect "postgres"; the other dialects
-// ignore it. The zero value is IdentifierCaseExact.
+// query spells. It is read with StructuredQueryDialect "postgres"; "mysql",
+// "oracle" and "sqlserver" accept only IdentifierCaseExact, and the other dialects ignore it. The zero
+// value is IdentifierCaseExact.
 //
 // A mount that folds case matches names by their lower-case form on both sides of
 // every check, and the result of a query keeps the names the query asked for: a
