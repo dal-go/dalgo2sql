@@ -125,6 +125,17 @@ func getSingle(ctx context.Context, options DbOptions, record dalrecord.Record, 
 		record.SetError(err)
 		return err
 	}
+	if options.PreserveNativeValues {
+		if err := options.validatePreserveNativeValues(); err != nil {
+			record.SetError(err)
+			return err
+		}
+		if !isMapData(record.Data()) {
+			err := errors.New("PreserveNativeValues requires map record data so SQLite values can remain native")
+			record.SetError(err)
+			return err
+		}
+	}
 	if options.ExactNumericValues && !isMapData(record.Data()) {
 		err := errors.New("ExactNumericValues requires map record data so NUMERIC values can remain decimal text")
 		record.SetError(err)
@@ -191,6 +202,11 @@ func getMulti(ctx context.Context, options DbOptions, records []dalrecord.Record
 	if err := ctx.Err(); err != nil {
 		return refuseRecords(records, err)
 	}
+	if options.PreserveNativeValues {
+		if err := options.validatePreserveNativeValues(); err != nil {
+			return refuseRecords(records, err)
+		}
+	}
 	// The whole batch is checked before its first read: the recordsets below are
 	// read one after the other in map order, so a refusal found half way would
 	// leave it to chance which of the valid ones had been sent. Every name a read
@@ -211,6 +227,9 @@ func getMulti(ctx context.Context, options DbOptions, records []dalrecord.Record
 		}
 		if options.PreserveBinaryValues && !isMapData(r.Data()) {
 			return refuseRecords(records, errors.New("PreserveBinaryValues requires map record data so PostgreSQL BYTEA values can remain byte slices"))
+		}
+		if options.PreserveNativeValues && !isMapData(r.Data()) {
+			return refuseRecords(records, errors.New("PreserveNativeValues requires map record data so SQLite values can remain native"))
 		}
 	}
 	// Records are read together when their keys address the same recordset.
@@ -697,6 +716,9 @@ func fillMapRecords(rows mapRowsScanner, columns []string, columnTypes []*sql.Co
 }
 
 func normalizeReadMapValueWithOptions(value any, columnType *sql.ColumnType, options DbOptions) (any, error) {
+	if options.PreserveNativeValues {
+		return copyNativeValue(value), nil
+	}
 	if options.ExactNumericValues && columnType != nil && strings.EqualFold(columnType.DatabaseTypeName(), "NUMERIC") {
 		return exactNumericValue(value)
 	}
@@ -704,6 +726,15 @@ func normalizeReadMapValueWithOptions(value any, columnType *sql.ColumnType, opt
 		return preservePostgresBytea(value)
 	}
 	return normalizeReadMapValue(value, columnType, options.StructuredQueryDialect), nil
+}
+
+// copyNativeValue returns the driver value a PreserveNativeValues read keeps. A
+// []byte is copied because the driver may reuse its buffer for the next row.
+func copyNativeValue(value any) any {
+	if bytes, ok := value.([]byte); ok {
+		return append([]byte{}, bytes...)
+	}
+	return value
 }
 
 func preservesPostgresBytea(options DbOptions, columnType *sql.ColumnType) bool {

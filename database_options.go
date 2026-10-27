@@ -2,6 +2,8 @@ package dalgo2sql
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	"github.com/dal-go/dalgo/dal"
 	"github.com/dal-go/record"
@@ -23,6 +25,32 @@ type DbOptions struct {
 	// map-backed reads instead of applying the legacy []byte-to-string
 	// conversion. Other database types and the default behavior are unchanged.
 	PreserveBinaryValues bool
+	// PreserveNativeValues keeps the value the driver delivers for a SQLite
+	// result column as it is: an int64, float64, string, []byte or nil (NULL),
+	// without the affinity and text normalization the readers otherwise apply.
+	// It is opt-in; the zero value keeps the legacy behavior exactly.
+	//
+	// The option is supported only with StructuredQueryDialect "sqlite". Any
+	// other dialect, an empty one included, is refused before any statement,
+	// because this package does not claim the native value classes of another
+	// engine. It cannot be combined with ExactNumericValues, whose decimal text
+	// is not a native value; that pair is refused before any statement too.
+	// PreserveBinaryValues is a PostgreSQL option and is inert on SQLite, whose
+	// BLOB values are already native []byte.
+	//
+	// Record reads (Get, GetMulti and the records reader) into map data keep the
+	// driver's values, with a []byte copied before the driver can reuse its
+	// buffer. A read into struct data is refused before any statement, because a
+	// field type could force the very conversion the option exists to avoid.
+	// Recordset reads build every result column as recordset.Column[any] whose
+	// ValueType is interface{}, keeping the result's Name and DbType; one column
+	// may then hold any of the five SQLite storage classes, NULL included, in
+	// different rows of the same result.
+	//
+	// The compiled SQL, the declared column metadata and the keys of read
+	// records do not change: a key is still derived from the same value as
+	// before.
+	PreserveNativeValues bool
 	// Recordsets declares the recordsets (tables) of key reads and writes, by name,
 	// with the primary key each is looked up by.
 	//
@@ -134,6 +162,22 @@ type DbOptions struct {
 	// preserved in the chain, never replaced, so existing callers matching
 	// on error text or type keep working.
 	IsAlreadyExists func(err error) bool
+}
+
+// validatePreserveNativeValues refuses PreserveNativeValues on a dialect it does
+// not support, and in a combination that cannot keep both promises. It is called
+// before a read sends any statement, so an unsupported option never reaches I/O.
+func (o DbOptions) validatePreserveNativeValues() error {
+	if !o.PreserveNativeValues {
+		return nil
+	}
+	if o.StructuredQueryDialect != dialectSQLite {
+		return fmt.Errorf("PreserveNativeValues requires StructuredQueryDialect %q, got %q", dialectSQLite, o.StructuredQueryDialect)
+	}
+	if o.ExactNumericValues {
+		return errors.New("PreserveNativeValues cannot be combined with ExactNumericValues")
+	}
+	return nil
 }
 
 // IdentifierCase says how a SQL dialect that quotes every name writes the names a

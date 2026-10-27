@@ -103,3 +103,25 @@ func (c *nullableColumn[T]) Values() []any {
 	}
 	return values
 }
+
+// anyValueType is the type of any, which a native-value column answers.
+var anyValueType = reflect.TypeOf((*any)(nil)).Elem()
+
+// nativeValueColumn is the recordset column a PreserveNativeValues read builds. It
+// holds the driver's own value in each cell — any of SQLite's five storage classes:
+// int64, float64, string, []byte and nil. It reuses DALgo's typed column with T = any,
+// which already stores arbitrary values and a NULL as a nil cell; only ValueType
+// differs, because the zero value of any is nil and a column must answer a type.
+type nativeValueColumn struct {
+	recordset.Column[any]
+}
+
+var _ recordset.Column[any] = (*nativeValueColumn)(nil)
+
+func newNativeValueColumn(name, dbType string) *nativeValueColumn {
+	return &nativeValueColumn{Column: recordset.NewTypedColumn[any](name, nil, recordset.ColDbType(dbType))}
+}
+
+// ValueType is any: one column holds values of every storage class in different
+// rows, so no single concrete Go type describes it.
+func (c *nativeValueColumn) ValueType() reflect.Type { return anyValueType }

@@ -27,7 +27,14 @@ func getRecordsetReaderWithDialect(ctx context.Context, query dal.Query, execute
 // (a column the recordset cannot hold) closes them here, on every path, because a caller
 // who is handed an error does not close a reader it was not given.
 func getRecordsetReaderWithOptions(ctx context.Context, query dal.Query, execute executeQueryFunc, sqlOptions DbOptions, options ...recordset.Option) (rr *recordsetReader, err error) {
-	rr = &recordsetReader{exactNumericValues: sqlOptions.ExactNumericValues, oracle: sqlOptions.StructuredQueryDialect == dialectOracle}
+	if err = sqlOptions.validatePreserveNativeValues(); err != nil {
+		return nil, err
+	}
+	rr = &recordsetReader{
+		exactNumericValues:   sqlOptions.ExactNumericValues,
+		preserveNativeValues: sqlOptions.PreserveNativeValues,
+		oracle:               sqlOptions.StructuredQueryDialect == dialectOracle,
+	}
 	if q, ok := query.(dal.StructuredQuery); ok {
 		rr.validateFinite = dal.HasAggregation(q)
 	}
@@ -54,7 +61,12 @@ func getRecordsetReaderWithOptions(ctx context.Context, query dal.Query, execute
 		scanType := col.ScanType()
 		dbTypeName := col.DatabaseTypeName()
 
-		if numberColumn, isNumber := oracleNumberColumn(name, col, sqlOptions.ExactNumericValues); rr.oracle && isNumber {
+		if sqlOptions.PreserveNativeValues {
+			// One column holds every storage class the database may return for
+			// it, in different rows, so its values are held as any; Name and
+			// DbType stay the result's own.
+			c = newNativeValueColumn(name, dbTypeName)
+		} else if numberColumn, isNumber := oracleNumberColumn(name, col, sqlOptions.ExactNumericValues); rr.oracle && isNumber {
 			c = numberColumn
 		} else if sqlOptions.ExactNumericValues && strings.EqualFold(dbTypeName, "NUMERIC") {
 			c = newNullableColumn(name, "", dbTypeName)
@@ -132,9 +144,10 @@ func getRecordsetReaderWithOptions(ctx context.Context, query dal.Query, execute
 
 type recordsetReader struct {
 	readerBase
-	rs                 recordset.Recordset
-	validateFinite     bool
-	exactNumericValues bool
+	rs                   recordset.Recordset
+	validateFinite       bool
+	exactNumericValues   bool
+	preserveNativeValues bool
 	// oracle says the read runs on Oracle, whose NUMBER go-ora delivers as text
 	// (oracleNumberValue).
 	oracle bool
@@ -181,19 +194,25 @@ func (r *recordsetReader) Next() (row recordset.Row, rs recordset.Recordset, err
 		col := r.rs.GetColumnByIndex(i)
 		vt := col.ValueType()
 		value := values[i]
-		if r.oracle {
-			value = oracleNumberValue(r.colTypes[i], value, r.exactNumericValues)
-		}
-		if r.exactNumericValues && strings.EqualFold(r.colTypes[i].DatabaseTypeName(), "NUMERIC") {
-			value, err = exactNumericValue(value)
-			if err != nil {
-				err = fmt.Errorf("exact NUMERIC value in column %q: %w", r.colNames[i], err)
-				return
+		if r.preserveNativeValues {
+			// The driver's storage class is the cell's value: no NUMERIC or
+			// affinity conversion, and no coercion to the column's Go type.
+			value = copyNativeValue(value)
+		} else {
+			if r.oracle {
+				value = oracleNumberValue(r.colTypes[i], value, r.exactNumericValues)
 			}
-		} else if vt.Kind() == reflect.Float64 {
-			// Only a float64 column can hold the converted value; any other column
-			// keeps what the driver delivered.
-			value = normalizeValueByDatabaseType(r.colTypes[i].DatabaseTypeName(), value)
+			if r.exactNumericValues && strings.EqualFold(r.colTypes[i].DatabaseTypeName(), "NUMERIC") {
+				value, err = exactNumericValue(value)
+				if err != nil {
+					err = fmt.Errorf("exact NUMERIC value in column %q: %w", r.colNames[i], err)
+					return
+				}
+			} else if vt.Kind() == reflect.Float64 {
+				// Only a float64 column can hold the converted value; any other column
+				// keeps what the driver delivered.
+				value = normalizeValueByDatabaseType(r.colTypes[i].DatabaseTypeName(), value)
+			}
 		}
 		if r.validateFinite {
 			if number, ok := value.(float64); ok && (math.IsNaN(number) || math.IsInf(number, 0)) {
@@ -201,10 +220,10 @@ func (r *recordsetReader) Next() (row recordset.Row, rs recordset.Recordset, err
 				return
 			}
 		}
-		// A NULL stays nil: the column holds it as a NULL (nullableColumn), so no value
-		// stands in for it. Any other value is made the Go type of its column, which holds
-		// that type only.
-		if value != nil {
+		// A NULL stays nil: the column holds it as a NULL, so no value stands in for it.
+		// Any other value is made the Go type of its column, which holds that type only.
+		// A native-value column holds every class, so it needs no coercion.
+		if !r.preserveNativeValues && value != nil {
 			switch vt.Kind() {
 			case reflect.Float64:
 				// SQLite might return int64 for a column mapped to float64 if the value is

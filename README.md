@@ -363,6 +363,42 @@ other database types, and the zero-value behavior are unchanged. Map-backed
 `Get` and `GetMulti` reads honor the same option. Recordset reads already keep
 byte-slice columns as bytes.
 
+## SQLite native result values
+
+SQLite's affinity is not its storage class: an `INTEGER` column can hold a text
+or a BLOB cell, a `TEXT` column can hold a BLOB, and a `NUMERIC` column can hold
+an integer, a real, text, a BLOB or NULL. The readers normally apply the affinity
+and text normalization described above, so a value can come back as another
+class (or, in a recordset, be truncated to the type inferred from the first row).
+
+Callers that need the stored value itself can set
+`DbOptions.PreserveNativeValues`. It is supported only with
+`StructuredQueryDialect: "sqlite"`; another dialect, an empty one included, is
+refused before any statement, so the option never claims native semantics of an
+engine this package has not reviewed. It cannot be combined with
+`ExactNumericValues`, whose decimal text is not a native value; that pair is
+refused before any statement too. `PreserveBinaryValues` is a PostgreSQL option
+and has no effect on SQLite, whose BLOBs are already native `[]byte`.
+
+With the option on:
+
+- Map-backed records reads (`Get`, `GetMulti`, and the records reader) store the
+  driver's own `int64`, `float64`, `string`, `[]byte` or `nil` (NULL). A `[]byte`
+  is copied before the driver can reuse its buffer. A read into struct data is
+  refused before any statement, as `ExactNumericValues` refuses it, because a
+  field type could force the conversion the option exists to avoid.
+- Recordset reads build every column as `recordset.Column[any]`: `ValueType()` is
+  `interface{}` (never nil), `Name()` and `DbType()` are the result's own, and a
+  NULL cell is `nil`. One column can hold any of the five storage classes in
+  different rows of the same result; the reader does not infer the column type
+  from the first row.
+- The compiled SQL, the declared column metadata, and the keys and `IDKind` of
+  read records are unchanged: a key is still derived from the same value as
+  before. The zero value of the option keeps the legacy behavior exactly.
+
+The option is a read option. It does not change writes, `Exists`, or the
+statements of a structured query.
+
 ## NULL in a recordset
 
 The recordset readers hold each result column in a column that marks its NULL cells. A NULL
