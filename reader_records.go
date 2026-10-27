@@ -67,11 +67,15 @@ var errColumnsChanged = errors.New("the columns of the source changed during the
 // own key, except that a key configured by the first rule is written into it; the catalog is
 // not asked for such a read's key.
 func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute executeQueryFunc, options DbOptions) (rr *recordsReader, err error) {
+	if err = options.validatePreserveNativeValues(); err != nil {
+		return nil, fmt.Errorf("failed to get SQL reader: %w", err)
+	}
 	rr = &recordsReader{
 		identityColumnIndex:  -1,
 		dialect:              options.StructuredQueryDialect,
 		exactNumericValues:   options.ExactNumericValues,
 		preserveBinaryValues: options.PreserveBinaryValues,
+		preserveNativeValues: options.PreserveNativeValues,
 		newRecord: func() dalrecord.Record {
 			return dalrecord.NewRecordWithData(dalrecord.NewKeyWithID("Unknown", ""), make(map[string]any))
 		},
@@ -100,6 +104,11 @@ func getRecordsReaderWithOptions(ctx context.Context, query dal.Query, execute e
 		if options.PreserveBinaryValues {
 			if rec := q.IntoRecord(); rec != nil && !isMapData(rec.Data()) {
 				return nil, errors.New("PreserveBinaryValues requires map record data so PostgreSQL BYTEA values can remain byte slices")
+			}
+		}
+		if options.PreserveNativeValues {
+			if rec := q.IntoRecord(); rec != nil && !isMapData(rec.Data()) {
+				return nil, errors.New("PreserveNativeValues requires map record data so SQLite values can remain native")
 			}
 		}
 		if readsWithTypedCompiler(options) {
@@ -484,6 +493,7 @@ type recordsReader struct {
 	dialect              string
 	exactNumericValues   bool
 	preserveBinaryValues bool
+	preserveNativeValues bool
 }
 
 // decimalText matches the text PostgreSQL prints for a finite NUMERIC: an
@@ -652,23 +662,33 @@ func (r recordsReader) Next() (record dalrecord.Record, err error) {
 	var set func(column string, raw, normalized any) error
 	mapColumnIndex := 0
 	if d, isMap := data.(map[string]any); isMap {
-		set = func(column string, raw, normalized any) error {
-			// database/sql returns []byte for TEXT/VARCHAR columns with some
-			// drivers (notably go-sql-driver/mysql); store as string so the
-			// map is usable and JSON-serializes as text, not base64. Matches
-			// scanRowIntoMapWithOptions on the Get path.
-			value := textValue(normalized)
-			columnType := columnTypeAt(r.colTypes, mapColumnIndex)
-			if preservesPostgresBytea(DbOptions{StructuredQueryDialect: r.dialect, PreserveBinaryValues: r.preserveBinaryValues}, columnType) {
-				if bytes, ok := normalized.([]byte); ok {
-					value = bytes
+		if r.preserveNativeValues {
+			// The driver's own value, of its own storage class, is what the read
+			// keeps: no textValue and no affinity normalization. copyNativeValue
+			// takes the copy before the driver can reuse its buffer.
+			set = func(column string, raw, _ any) error {
+				d[column] = copyNativeValue(raw)
+				return nil
+			}
+		} else {
+			set = func(column string, raw, normalized any) error {
+				// database/sql returns []byte for TEXT/VARCHAR columns with some
+				// drivers (notably go-sql-driver/mysql); store as string so the
+				// map is usable and JSON-serializes as text, not base64. Matches
+				// scanRowIntoMapWithOptions on the Get path.
+				value := textValue(normalized)
+				columnType := columnTypeAt(r.colTypes, mapColumnIndex)
+				if preservesPostgresBytea(DbOptions{StructuredQueryDialect: r.dialect, PreserveBinaryValues: r.preserveBinaryValues}, columnType) {
+					if bytes, ok := normalized.([]byte); ok {
+						value = bytes
+					}
 				}
+				if r.dialect == "sqlite" && columnType != nil && strings.Contains(strings.ToUpper(columnType.DatabaseTypeName()), "BLOB") {
+					value = normalizeReadMapValue(raw, columnType, r.dialect)
+				}
+				d[column] = value
+				return nil
 			}
-			if r.dialect == "sqlite" && columnType != nil && strings.Contains(strings.ToUpper(columnType.DatabaseTypeName()), "BLOB") {
-				value = normalizeReadMapValue(raw, columnType, r.dialect)
-			}
-			d[column] = value
-			return nil
 		}
 	} else if structSet, isStruct := structSetter(data); isStruct {
 		// A struct target takes the same normalised values as a map, and the
@@ -704,8 +724,14 @@ func (r recordsReader) Next() (record dalrecord.Record, err error) {
 		} else {
 			normalized = normalizeValueByDatabaseType(r.colTypes[i].DatabaseTypeName(), values[i])
 		}
+		finiteValue := normalized
+		if r.preserveNativeValues {
+			// A native read validates the value it keeps; text such as SQLite's
+			// storage of a NUMERIC cell is not silently turned into a float here.
+			finiteValue = values[i]
+		}
 		if r.validateFinite {
-			if number, ok := normalized.(float64); ok && (math.IsNaN(number) || math.IsInf(number, 0)) {
+			if number, ok := finiteValue.(float64); ok && (math.IsNaN(number) || math.IsInf(number, 0)) {
 				return nil, fmt.Errorf("non-finite aggregate result in column %q", n)
 			}
 		}

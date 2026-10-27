@@ -83,6 +83,9 @@ func (dtb *database) ExecuteQueryToRecordsetReader(ctx context.Context, query da
 // with the rows: closed, read to its end, or, as on the pool, when ctx ends. Any other
 // read runs on pool, as before, and holds no lease.
 func (dtb *database) readExecutor(ctx context.Context, query dal.Query, pool executeQueryFunc) (executeQueryFunc, *connLease, error) {
+	if err := dtb.options.validatePreserveNativeValues(); err != nil {
+		return nil, nil, err
+	}
 	if _, structured := query.(dal.StructuredQuery); !structured || !isTypedDialect(dtb.options.StructuredQueryDialect) {
 		return pool, nil, nil
 	}
