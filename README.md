@@ -389,7 +389,10 @@ generated SQL/intermediate string bytes, 32,766 staging/argument slots, 1 MiB of
 known argument-value bytes, and 4,096 structural work units, with structural
 depth at most 64. Checks precede string expansion and argument copying, so a
 small input that expands excessively also refuses the whole query before
-native dispatch. Input names and known argument values share a separate 1 MiB
+native data dispatch. Native wildcard catalog reads, name/column staging and
+rewritten compilation use that same budget; a rewrite failure propagates before
+the data statement. Driver allocation while scanning catalog metadata is outside
+these construction counters. Input names and known argument values share a separate 1 MiB
 preflight byte budget. These counters are conservative cumulative work bounds;
 they do not describe an exact maximum supported query size. Unknown or custom
 argument values, including custom `driver.Valuer` implementations, are refused

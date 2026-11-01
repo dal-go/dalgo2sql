@@ -201,6 +201,30 @@ func (emitter sqliteEmitter) copySources(sources map[string]struct{}) (map[strin
 	return copySQLSourceSet(sources), nil
 }
 
+func (emitter sqliteEmitter) expandWildcard(plan wildcardProjectionPlan, query dal.StructuredQuery, names []string) (dal.StructuredQuery, bool, error) {
+	if b := emitter.budget; b != nil {
+		// Check metadata-derived map/column staging and case-folding work before
+		// the ordinary expansion allocates. Two ToLower calls can each expand an
+		// invalid UTF-8 byte to a three-byte replacement rune; six times the input
+		// bytes is therefore a conservative bound, including malformed names.
+		if plan.explicitCount < 0 || len(names) > sqliteCompileSlots || plan.explicitCount > sqliteCompileSlots-len(names) ||
+			!b.take(&b.nodes, len(names), sqliteCompileNodes) ||
+			!b.take(&b.slots, len(names), sqliteCompileSlots) ||
+			!b.take(&b.slots, len(names)+plan.explicitCount, sqliteCompileSlots) {
+			b.err = errSQLiteCompileBudget
+			return nil, false, b.err
+		}
+		for _, name := range names {
+			if len(name) > sqliteCompileBytes/6 || !b.take(&b.bytes, len(name)*6, sqliteCompileBytes) {
+				b.err = errSQLiteCompileBudget
+				return nil, false, b.err
+			}
+		}
+	}
+	expanded, ok := plan.expandSQLiteWildcard(query, names)
+	return expanded, ok, nil
+}
+
 type sqliteSQLBuilder struct {
 	strings.Builder
 	emitter sqliteEmitter
