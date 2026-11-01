@@ -51,6 +51,17 @@ type DbOptions struct {
 	// records do not change: a key is still derived from the same value as
 	// before.
 	PreserveNativeValues bool
+	// SQLiteStrictNumbers opts structured SQLite reads into whole-query native
+	// refusal before numeric coercion outside the exact binary64 integer range.
+	// Plain INTEGER projections remain native and exact. Numeric predicates,
+	// JOINs, grouping, ordering, arithmetic and aggregates refuse numeric values
+	// with magnitude >= 2^53; integer SUM accumulates before conversion and
+	// refuses native overflow. REAL arithmetic retains SQLite IEEE semantics;
+	// exact decimal or total-memory bounds are not implied. Numeric TEXT is not
+	// coerced into a number. The zero value preserves existing compilation.
+	// Only StructuredQueryDialect "sqlite" without a custom native compiler is
+	// supported; other combinations fail before statements are sent.
+	SQLiteStrictNumbers bool
 	// Recordsets declares the recordsets (tables) of key reads and writes, by name,
 	// with the primary key each is looked up by.
 	//
@@ -168,6 +179,9 @@ type DbOptions struct {
 // not support, and in a combination that cannot keep both promises. It is called
 // before a read sends any statement, so an unsupported option never reaches I/O.
 func (o DbOptions) validatePreserveNativeValues() error {
+	if o.SQLiteStrictNumbers && (o.StructuredQueryDialect != dialectSQLite || o.NativeStructuredQueryCompiler != nil) {
+		return errors.New("SQLiteStrictNumbers requires the built-in sqlite structured compiler")
+	}
 	if !o.PreserveNativeValues {
 		return nil
 	}

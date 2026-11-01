@@ -19,6 +19,10 @@ import (
 // supported by SQL readers. Identifiers are quoted and values are parameters;
 // unsupported nodes fail instead of falling back to Query.String().
 func compileStructuredSQL(q dal.StructuredQuery) (string, []any, error) {
+	return sqliteEmitter{}.compileStructuredSQL(q)
+}
+
+func (emitter sqliteEmitter) compileStructuredSQL(q dal.StructuredQuery) (string, []any, error) {
 	if q == nil || q.From() == nil || q.From().Base() == nil {
 		return "", nil, fmt.Errorf("structured SQL query requires a source")
 	}
@@ -33,7 +37,7 @@ func compileStructuredSQL(q dal.StructuredQuery) (string, []any, error) {
 			return "", nil, err
 		}
 	}
-	fromSQL, sourceAliases, hasJoins, err := compileSQLRelation(q.From(), "from")
+	fromSQL, sourceAliases, hasJoins, err := emitter.compileSQLRelation(q.From(), "from")
 	if err != nil {
 		return "", nil, err
 	}
@@ -77,14 +81,14 @@ func compileStructuredSQL(q dal.StructuredQuery) (string, []any, error) {
 					return "", nil, err
 				}
 			}
-			expr, values, err := compileSQLExpressionWithSources(column.Expression, sourceAliases, hasJoins)
+			expr, values, err := emitter.compileSQLExpressionWithSources(column.Expression, sourceAliases, hasJoins)
 			if err != nil {
 				return "", nil, fmt.Errorf("column %d: %w", i, err)
 			}
 			normalizedGroupOutput := dal.HasAggregation(q) && groupExpressions[column.Expression.String()]
 			if normalizedGroupOutput {
-				expr = normalizeSQLNumber(expr)
-				values = repeatSQLArgs(values, 3)
+				expr = emitter.normalizeSQLNumber(expr)
+				values = repeatSQLArgs(values, emitter.numberCopies())
 			}
 			b.WriteString(expr)
 			args = append(args, values...)
@@ -115,7 +119,7 @@ func compileStructuredSQL(q dal.StructuredQuery) (string, []any, error) {
 		if sqlConditionTestsAggregateForNull(q.Where()) {
 			return "", nil, fmt.Errorf("where: unsupported null test over an aggregate")
 		}
-		condition, values, err := compileSQLConditionWithSources(q.Where(), sourceAliases, hasJoins)
+		condition, values, err := emitter.compileSQLConditionWithSources(q.Where(), sourceAliases, hasJoins)
 		if err != nil {
 			return "", nil, fmt.Errorf("where: %w", err)
 		}
@@ -129,20 +133,20 @@ func compileStructuredSQL(q dal.StructuredQuery) (string, []any, error) {
 			if i > 0 {
 				b.WriteString(", ")
 			}
-			expr, values, err := compileSQLExpressionWithSources(group, sourceAliases, hasJoins)
+			expr, values, err := emitter.compileSQLExpressionWithSources(group, sourceAliases, hasJoins)
 			if err != nil {
 				return "", nil, fmt.Errorf("groupBy %d: %w", i, err)
 			}
 			if dal.HasAggregation(q) {
-				expr = normalizeSQLNumber(expr)
-				values = repeatSQLArgs(values, 3)
+				expr = emitter.normalizeSQLNumber(expr)
+				values = repeatSQLArgs(values, emitter.numberCopies())
 			}
 			b.WriteString("(" + expr + " COLLATE BINARY)")
 			args = append(args, values...)
 		}
 	}
 	if q.Having() != nil {
-		condition, values, err := compileSQLConditionWithSources(rewriteSQLConditionAliases(q.Having(), aliases), sourceAliases, hasJoins)
+		condition, values, err := emitter.compileSQLConditionWithSources(rewriteSQLConditionAliases(q.Having(), aliases), sourceAliases, hasJoins)
 		if err != nil {
 			return "", nil, fmt.Errorf("having: %w", err)
 		}
@@ -156,7 +160,7 @@ func compileStructuredSQL(q dal.StructuredQuery) (string, []any, error) {
 			if i > 0 {
 				b.WriteString(", ")
 			}
-			expr, values, err := compileSQLExpressionWithSources(rewriteSQLExpressionAlias(order.Expression(), aliases), sourceAliases, hasJoins)
+			expr, values, err := emitter.compileSQLExpressionWithSources(rewriteSQLExpressionAlias(order.Expression(), aliases), sourceAliases, hasJoins)
 			if err != nil {
 				return "", nil, fmt.Errorf("orderBy %d: %w", i, err)
 			}
@@ -164,8 +168,8 @@ func compileStructuredSQL(q dal.StructuredQuery) (string, []any, error) {
 				return "", nil, fmt.Errorf("orderBy %d: values are not supported", i)
 			}
 			if dal.HasAggregation(q) {
-				expr = normalizeSQLNumber(expr)
-				values = repeatSQLArgs(values, 3)
+				expr = emitter.normalizeSQLNumber(expr)
+				values = repeatSQLArgs(values, emitter.numberCopies())
 			}
 			b.WriteString("(" + expr + " COLLATE BINARY)")
 			args = append(args, values...)
@@ -242,10 +246,14 @@ func quoteCheckedSQLIdentifier(position, name string) (string, error) {
 // parenthesized JOIN grammar cannot safely represent a nested ON correlated to
 // an alias outside that subtree.
 func compileSQLRelation(from dal.FromSource, path string) (string, map[string]struct{}, bool, error) {
-	return compileSQLRelationWithin(from, path, nil)
+	return sqliteEmitter{}.compileSQLRelation(from, path)
 }
 
-func compileSQLRelationWithin(from dal.FromSource, path string, outerSources map[string]struct{}) (string, map[string]struct{}, bool, error) {
+func (emitter sqliteEmitter) compileSQLRelation(from dal.FromSource, path string) (string, map[string]struct{}, bool, error) {
+	return emitter.compileSQLRelationWithin(from, path, nil)
+}
+
+func (emitter sqliteEmitter) compileSQLRelationWithin(from dal.FromSource, path string, outerSources map[string]struct{}) (string, map[string]struct{}, bool, error) {
 	if from == nil || from.Base() == nil {
 		return "", nil, false, fmt.Errorf("%s: join_shape: relation requires a source", path)
 	}
@@ -272,7 +280,7 @@ func compileSQLRelationWithin(from dal.FromSource, path string, outerSources map
 		for alias := range aliases {
 			correlationScope[alias] = struct{}{}
 		}
-		rightSQL, rightAliases, rightHasJoins, err := compileSQLRelationWithin(right, joinPath+".from", correlationScope)
+		rightSQL, rightAliases, rightHasJoins, err := emitter.compileSQLRelationWithin(right, joinPath+".from", correlationScope)
 		if err != nil {
 			return "", nil, false, err
 		}
@@ -286,7 +294,7 @@ func compileSQLRelationWithin(from dal.FromSource, path string, outerSources map
 		if err := rejectSQLCorrelatedJoinOn(join.On(), outerSources, joinPath+".on"); err != nil {
 			return "", nil, false, err
 		}
-		on, err := compileSQLJoinOn(join.On(), visible, joinPath+".on")
+		on, err := emitter.compileSQLJoinOn(join.On(), visible, joinPath+".on")
 		if err != nil {
 			return "", nil, false, err
 		}
@@ -375,6 +383,10 @@ func hasSQLSource(sources map[string]struct{}, source string) bool {
 }
 
 func compileSQLJoinOn(conditions []dal.Condition, sources map[string]struct{}, path string) (string, error) {
+	return sqliteEmitter{}.compileSQLJoinOn(conditions, sources, path)
+}
+
+func (emitter sqliteEmitter) compileSQLJoinOn(conditions []dal.Condition, sources map[string]struct{}, path string) (string, error) {
 	if len(conditions) == 0 {
 		return "", fmt.Errorf("%s: join_shape: ON must not be empty", path)
 	}
@@ -384,18 +396,18 @@ func compileSQLJoinOn(conditions []dal.Condition, sources map[string]struct{}, p
 		if !ok || comparison.Operator != dal.Equal {
 			return "", fmt.Errorf("%s[%d]: join_operator: SQLite JOIN requires equality comparisons", path, i)
 		}
-		left, leftArgs, err := compileSQLExpressionWithSources(comparison.Left, sources, true)
+		left, leftArgs, err := emitter.compileSQLExpressionWithSources(comparison.Left, sources, true)
 		if err != nil {
 			return "", fmt.Errorf("%s[%d].left: %w", path, i, err)
 		}
-		right, rightArgs, err := compileSQLExpressionWithSources(comparison.Right, sources, true)
+		right, rightArgs, err := emitter.compileSQLExpressionWithSources(comparison.Right, sources, true)
 		if err != nil {
 			return "", fmt.Errorf("%s[%d].right: %w", path, i, err)
 		}
 		if len(leftArgs) != 0 || len(rightArgs) != 0 {
 			return "", fmt.Errorf("%s[%d]: join_shape: ON operands must be qualified fields", path, i)
 		}
-		parts[i] = compileSQLTypedJoinEquality(left, right)
+		parts[i] = emitter.compileSQLTypedJoinEquality(left, right)
 	}
 	return "(" + strings.Join(parts, " AND ") + ")", nil
 }
@@ -405,12 +417,12 @@ func compileSQLJoinOn(conditions []dal.Condition, sources map[string]struct{}, p
 // types so numeric values compare across integer/real representations while
 // text and booleans cannot accidentally match numeric keys. NULL never matches
 // because the equality expression evaluates to NULL.
-func compileSQLTypedJoinEquality(left, right string) string {
+func (emitter sqliteEmitter) compileSQLTypedJoinEquality(left, right string) string {
 	left = "(+" + left + " COLLATE BINARY)"
 	right = "(+" + right + " COLLATE BINARY)"
 	numeric := "(typeof(%s) IN ('integer','real') AND typeof(%s) IN ('integer','real'))"
 	types := "(typeof(" + left + ") = typeof(" + right + ") OR " + fmt.Sprintf(numeric, left, right) + ")"
-	return "(" + types + " AND " + normalizeSQLNumber(left) + " = " + normalizeSQLNumber(right) + ")"
+	return "(" + types + " AND " + emitter.normalizeSQLNumber(left) + " = " + emitter.normalizeSQLNumber(right) + ")"
 }
 
 // rePlainSQLIdentifier matches a bare identifier: a letter or underscore
@@ -431,9 +443,13 @@ func compileSQLCondition(condition dal.Condition, alias string) (string, []any, 
 }
 
 func compileSQLConditionWithSources(condition dal.Condition, sources map[string]struct{}, requireQualified bool) (string, []any, error) {
+	return sqliteEmitter{}.compileSQLConditionWithSources(condition, sources, requireQualified)
+}
+
+func (emitter sqliteEmitter) compileSQLConditionWithSources(condition dal.Condition, sources map[string]struct{}, requireQualified bool) (string, []any, error) {
 	switch c := condition.(type) {
 	case dal.Comparison:
-		left, leftArgs, err := compileSQLExpressionWithSources(c.Left, sources, requireQualified)
+		left, leftArgs, err := emitter.compileSQLExpressionWithSources(c.Left, sources, requireQualified)
 		if err != nil {
 			return "", nil, err
 		}
@@ -473,11 +489,11 @@ func compileSQLConditionWithSources(condition dal.Condition, sources map[string]
 				operand := left
 				right := "?"
 				if isSQLNumber(value) {
-					values[i], err = normalizedNumber(value)
+					values[i], err = emitter.normalizedNumber(value)
 					if err != nil {
 						return "", nil, err
 					}
-					operand = normalizeSQLNumber(left)
+					operand = emitter.normalizeSQLNumber(left)
 					right = "(+CAST(? AS REAL))"
 				}
 				// Equality against NULL must remain UNKNOWN. IS NULL would
@@ -499,16 +515,16 @@ func compileSQLConditionWithSources(condition dal.Condition, sources map[string]
 		default:
 			return "", nil, fmt.Errorf("unsupported comparison operator %q", c.Operator)
 		}
-		right, rightArgs, err := compileSQLExpressionWithSources(c.Right, sources, requireQualified)
+		right, rightArgs, err := emitter.compileSQLExpressionWithSources(c.Right, sources, requireQualified)
 		if err != nil {
 			return "", nil, err
 		}
 		_, rightIsConstant := c.Right.(dal.Constant)
 		if !rightIsConstant {
 			right = "(+" + right + " COLLATE BINARY)"
-			left, right = normalizeSQLNumber(left), normalizeSQLNumber(right)
-			leftArgs = repeatSQLArgs(leftArgs, 3)
-			rightArgs = repeatSQLArgs(rightArgs, 3)
+			left, right = emitter.normalizeSQLNumber(left), emitter.normalizeSQLNumber(right)
+			leftArgs = repeatSQLArgs(leftArgs, emitter.numberCopies())
+			rightArgs = repeatSQLArgs(rightArgs, emitter.numberCopies())
 		}
 		if rightIsConstant && len(rightArgs) == 1 {
 			if _, ok := rightArgs[0].(bool); ok {
@@ -521,12 +537,12 @@ func compileSQLConditionWithSources(condition dal.Condition, sources map[string]
 				return "0 = 1", nil, nil
 			}
 			if isSQLNumber(rightArgs[0]) {
-				rightArgs[0], err = normalizedNumber(rightArgs[0])
+				rightArgs[0], err = emitter.normalizedNumber(rightArgs[0])
 				if err != nil {
 					return "", nil, err
 				}
-				left = normalizeSQLNumber(left)
-				leftArgs = repeatSQLArgs(leftArgs, 3)
+				left = emitter.normalizeSQLNumber(left)
+				leftArgs = repeatSQLArgs(leftArgs, emitter.numberCopies())
 				right = "(+CAST(? AS REAL))"
 			}
 		}
@@ -574,7 +590,7 @@ func compileSQLConditionWithSources(condition dal.Condition, sources map[string]
 		parts := make([]string, len(children))
 		var args []any
 		for i, child := range children {
-			part, values, err := compileSQLConditionWithSources(child, sources, requireQualified)
+			part, values, err := emitter.compileSQLConditionWithSources(child, sources, requireQualified)
 			if err != nil {
 				return "", nil, err
 			}
@@ -586,7 +602,7 @@ func compileSQLConditionWithSources(condition dal.Condition, sources map[string]
 		if sqlExpressionContainsStar(c.Operand()) {
 			return "", nil, fmt.Errorf("unsupported null test over *")
 		}
-		operand, args, err := compileSQLExpressionWithSources(c.Operand(), sources, requireQualified)
+		operand, args, err := emitter.compileSQLExpressionWithSources(c.Operand(), sources, requireQualified)
 		if err != nil {
 			return "", nil, err
 		}
@@ -650,7 +666,10 @@ func sqlExpressionContainsAggregate(expression dal.Expression) bool {
 // parameters before filtering; casting only the parameter still permits SQLite
 // to compare its original integer exactly. Preserve text/null types so numeric
 // normalization cannot turn a text value into an authorized number.
-func normalizeSQLNumber(expression string) string {
+func (emitter sqliteEmitter) normalizeSQLNumber(expression string) string {
+	if emitter.strictNumbers {
+		return strictSQLiteNumber(expression, true)
+	}
 	return "(CASE WHEN typeof(" + expression + ") IN ('integer','real') THEN CAST(" + expression + " AS REAL) ELSE " + expression + " END)"
 }
 
@@ -705,6 +724,10 @@ func compileSQLExpression(expression dal.Expression, alias string) (string, []an
 }
 
 func compileSQLExpressionWithSources(expression dal.Expression, sources map[string]struct{}, requireQualified bool) (string, []any, error) {
+	return sqliteEmitter{}.compileSQLExpressionWithSources(expression, sources, requireQualified)
+}
+
+func (emitter sqliteEmitter) compileSQLExpressionWithSources(expression dal.Expression, sources map[string]struct{}, requireQualified bool) (string, []any, error) {
 	switch e := expression.(type) {
 	case dal.FieldRef:
 		switch {
@@ -741,7 +764,7 @@ func compileSQLExpressionWithSources(expression dal.Expression, sources map[stri
 		if len(args) != 1 {
 			return "", nil, fmt.Errorf("%s requires exactly one argument", name)
 		}
-		arg, values, err := compileSQLExpressionWithSources(args[0], sources, requireQualified)
+		arg, values, err := emitter.compileSQLExpressionWithSources(args[0], sources, requireQualified)
 		if err != nil {
 			return "", nil, err
 		}
@@ -761,16 +784,19 @@ func compileSQLExpressionWithSources(expression dal.Expression, sources map[stri
 		portableArg := arg
 		if name == dal.COUNT && distinctAggregate {
 			if _, star := args[0].(dal.StarExpression); !star {
-				portableArg = "(" + normalizeSQLNumber(arg) + " COLLATE BINARY)"
-				values = repeatSQLArgs(values, 3)
+				portableArg = "(" + emitter.normalizeSQLNumber(arg) + " COLLATE BINARY)"
+				values = repeatSQLArgs(values, emitter.numberCopies())
 			}
 		}
 		if name == dal.MIN || name == dal.MAX {
-			portableArg = "(" + normalizeSQLNumber(arg) + " COLLATE BINARY)"
-			values = repeatSQLArgs(values, 3)
+			portableArg = "(" + emitter.normalizeSQLNumber(arg) + " COLLATE BINARY)"
+			values = repeatSQLArgs(values, emitter.numberCopies())
 		}
 		expression := name + "(" + distinct + portableArg + ")"
 		if name == dal.SUM || name == dal.AVERAGE {
+			if emitter.strictNumbers {
+				return emitter.strictAggregate(name, arg, values, distinct)
+			}
 			numericArg := "CASE WHEN typeof(" + arg + ") IN ('integer','real') THEN CAST(" + arg + " AS REAL) ELSE NULL END"
 			expression = name + "(" + distinct + numericArg + ")"
 			values = repeatSQLArgs(values, 2)
@@ -780,11 +806,11 @@ func compileSQLExpressionWithSources(expression dal.Expression, sources map[stri
 		}
 		return expression, values, nil
 	case dal.BinaryExpression:
-		left, leftArgs, err := compileSQLExpressionWithSources(e.Left, sources, requireQualified)
+		left, leftArgs, err := emitter.compileSQLExpressionWithSources(e.Left, sources, requireQualified)
 		if err != nil {
 			return "", nil, err
 		}
-		right, rightArgs, err := compileSQLExpressionWithSources(e.Right, sources, requireQualified)
+		right, rightArgs, err := emitter.compileSQLExpressionWithSources(e.Right, sources, requireQualified)
 		if err != nil {
 			return "", nil, err
 		}
@@ -793,10 +819,10 @@ func compileSQLExpressionWithSources(expression dal.Expression, sources map[stri
 		default:
 			return "", nil, fmt.Errorf("unsupported arithmetic operator %q", e.Operator)
 		}
-		left = normalizeSQLNumber(left)
-		right = normalizeSQLNumber(right)
-		leftArgs = repeatSQLArgs(leftArgs, 3)
-		rightArgs = repeatSQLArgs(rightArgs, 3)
+		left = emitter.normalizeSQLNumber(left)
+		right = emitter.normalizeSQLNumber(right)
+		leftArgs = repeatSQLArgs(leftArgs, emitter.numberCopies())
+		rightArgs = repeatSQLArgs(rightArgs, emitter.numberCopies())
 		guard := "typeof(" + left + ") IN ('integer','real') AND typeof(" + right + ") IN ('integer','real')"
 		values := append(append([]any(nil), leftArgs...), rightArgs...)
 		if e.Operator == dal.Divide {
@@ -806,6 +832,9 @@ func compileSQLExpressionWithSources(expression dal.Expression, sources map[stri
 		expression := "(CASE WHEN " + guard + " THEN " + left + " " + string(e.Operator) + " " + right + " ELSE NULL END)"
 		values = append(values, leftArgs...)
 		values = append(values, rightArgs...)
+		if emitter.strictNumbers {
+			return emitter.normalizeSQLNumber(expression), repeatSQLArgs(values, emitter.numberCopies()), nil
+		}
 		return expression, values, nil
 	default:
 		return "", nil, fmt.Errorf("unsupported expression %T", expression)

@@ -212,7 +212,8 @@ func getReaderBaseFor(ctx context.Context, query dal.Query, execute executeQuery
 				}
 			case "sqlite":
 				var err error
-				text, a, err = compileStructuredSQL(q)
+				emitter := sqliteEmitter{strictNumbers: options.SQLiteStrictNumbers}
+				text, a, err = emitter.compileStructuredSQL(q)
 				if err != nil {
 					return readerBase{}, &access.DeniedError{Decision: access.Decision{Operation: access.Query, Code: access.CodeEnforcementUnsupported, Scope: access.DecisionScopeOperation, Explanation: "structured SQLite query is unsupported"}}
 				}
@@ -222,7 +223,7 @@ func getReaderBaseFor(ctx context.Context, query dal.Query, execute executeQuery
 						return readerBase{}, fmt.Errorf("failed to inspect SQLite wildcard source: %w", err)
 					}
 					if expanded, ok := projection.expandSQLiteWildcard(q, names); ok {
-						text, a, _ = compileStructuredSQL(expanded)
+						text, a, _ = emitter.compileStructuredSQL(expanded)
 						projection = nil
 					}
 				}
