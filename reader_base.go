@@ -192,6 +192,10 @@ func getReaderBaseFor(ctx context.Context, query dal.Query, execute executeQuery
 		}
 	case dal.StructuredQuery:
 		var err error
+		emitter := newSQLiteEmitter(options.SQLiteStrictNumbers)
+		if !emitter.inspect(q, 0) {
+			return readerBase{}, emitter.budget.err
+		}
 		if projection, err = planWildcardProjection(q); err != nil {
 			return readerBase{}, err
 		}
@@ -212,22 +216,29 @@ func getReaderBaseFor(ctx context.Context, query dal.Query, execute executeQuery
 				}
 			case "sqlite":
 				var err error
-				text, a, err = compileStructuredSQL(q)
+				text, a, err = emitter.compileStructuredSQL(q)
 				if err != nil {
 					return readerBase{}, &access.DeniedError{Decision: access.Decision{Operation: access.Query, Code: access.CodeEnforcementUnsupported, Scope: access.DecisionScopeOperation, Explanation: "structured SQLite query is unsupported"}}
 				}
 				if projection != nil {
 					var names []string
-					if names, err = sqliteSourceColumns(ctx, q, execute); err != nil {
+					if names, err = emitter.sourceColumns(ctx, q, execute); err != nil {
 						return readerBase{}, fmt.Errorf("failed to inspect SQLite wildcard source: %w", err)
 					}
-					if expanded, ok := projection.expandSQLiteWildcard(q, names); ok {
-						text, a, _ = compileStructuredSQL(expanded)
+					expanded, ok, err := emitter.expandWildcard(*projection, q, names)
+					if err != nil {
+						return readerBase{}, err
+					}
+					if ok {
+						text, a, err = emitter.compileStructuredSQL(expanded)
+						if err != nil {
+							return readerBase{}, fmt.Errorf("unsupported expanded SQLite wildcard: %w", err)
+						}
 						projection = nil
 					}
 				}
 				if wantBaseColumns {
-					if baseColumns, err = sqliteSourceColumns(ctx, q, execute); err != nil {
+					if baseColumns, err = emitter.sourceColumns(ctx, q, execute); err != nil {
 						return readerBase{}, fmt.Errorf("failed to inspect SQLite join source: %w", err)
 					}
 				}
@@ -322,6 +333,10 @@ func rejectRawRecursiveStructuredQuery(query dal.Query) error {
 }
 
 func sqliteSourceColumns(ctx context.Context, q dal.StructuredQuery, execute executeQueryFunc) ([]string, error) {
+	return sqliteEmitter{}.sourceColumns(ctx, q, execute)
+}
+
+func (emitter sqliteEmitter) sourceColumns(ctx context.Context, q dal.StructuredQuery, execute executeQueryFunc) ([]string, error) {
 	source, err := sqliteCollectionSource(q.From().Base())
 	if err != nil {
 		return nil, err
@@ -336,6 +351,9 @@ func sqliteSourceColumns(ctx context.Context, q dal.StructuredQuery, execute exe
 	if schema := source.Schema(); schema != "" {
 		statement, args = "SELECT name, hidden FROM pragma_table_xinfo(?, ?) ORDER BY cid", []any{source.Name(), schema}
 	}
+	if emitter.budget != nil && (!emitter.budget.take(&emitter.budget.bytes, len(statement), sqliteCompileBytes) || !emitter.claimArguments(args, 1)) {
+		return nil, emitter.failure()
+	}
 	rows, err := execute(ctx, statement, args...)
 	if err != nil {
 		return nil, err
@@ -343,12 +361,18 @@ func sqliteSourceColumns(ctx context.Context, q dal.StructuredQuery, execute exe
 	defer func() { _ = rows.Close() }()
 	var names []string
 	for rows.Next() {
+		if err := emitter.step(); err != nil {
+			return nil, err
+		}
 		var name string
 		var hidden int
 		if err := rows.Scan(&name, &hidden); err != nil {
 			return nil, err
 		}
 		if hidden == 0 || hidden == 2 || hidden == 3 { // virtual-table hidden columns (1) are absent from SELECT *
+			if emitter.budget != nil && (!emitter.budget.take(&emitter.budget.inputs, len(name), sqliteCompileBytes) || !emitter.budget.take(&emitter.budget.slots, 1, sqliteCompileSlots)) {
+				return nil, emitter.failure()
+			}
 			names = append(names, name)
 		}
 	}

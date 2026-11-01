@@ -51,6 +51,23 @@ type DbOptions struct {
 	// records do not change: a key is still derived from the same value as
 	// before.
 	PreserveNativeValues bool
+	// SQLiteStrictNumbers opts structured SQLite reads into whole-query native
+	// refusal before numeric coercion outside the exact binary64 integer range.
+	// Plain INTEGER projections and native ordering remain exact. Numeric
+	// coercions in predicates, JOINs, grouping, arithmetic and aggregates refuse
+	// operands with magnitude >= 2^53; integer SUM accumulates before conversion and
+	// refuses native overflow. REAL arithmetic retains SQLite IEEE semantics;
+	// exact decimal or total-memory bounds are not implied. Numeric TEXT is not
+	// coerced into a number. The zero value preserves existing compilation.
+	// Only StructuredQueryDialect "sqlite" without a custom native compiler is
+	// supported; other combinations fail before statements are sent.
+	// One compilation shares checked construction budgets of 1MiB generated
+	// SQL/intermediate string bytes, 32766 staging/argument slots, 1MiB argument
+	// value bytes and 4096 structural work units. Checks precede expansion and
+	// copying. Only known builtin argument values can establish those bounds;
+	// custom Valuers and opaque values are refused without invoking them. These
+	// budgets do not cap total Go, driver or SQLite pager/sorter memory.
+	SQLiteStrictNumbers bool
 	// Recordsets declares the recordsets (tables) of key reads and writes, by name,
 	// with the primary key each is looked up by.
 	//
@@ -168,6 +185,9 @@ type DbOptions struct {
 // not support, and in a combination that cannot keep both promises. It is called
 // before a read sends any statement, so an unsupported option never reaches I/O.
 func (o DbOptions) validatePreserveNativeValues() error {
+	if o.SQLiteStrictNumbers && (o.StructuredQueryDialect != dialectSQLite || o.NativeStructuredQueryCompiler != nil) {
+		return errors.New("SQLiteStrictNumbers requires the built-in sqlite structured compiler")
+	}
 	if !o.PreserveNativeValues {
 		return nil
 	}

@@ -56,7 +56,7 @@ func (t transaction) CanExecuteJoin(ctx context.Context, q dal.StructuredQuery) 
 	if isTypedDialect(t.sqlOptions.StructuredQueryDialect) {
 		return canExecuteTypedJoin(ctx, q, t.sqlOptions, t.tx.QueryContext)
 	}
-	return canExecuteSQLiteJoin(ctx, q, t.sqlOptions.StructuredQueryDialect, t.tx.QueryContext)
+	return canExecuteSQLiteJoinProfile(ctx, q, t.sqlOptions.StructuredQueryDialect, t.tx.QueryContext, t.sqlOptions.SQLiteStrictNumbers)
 }
 
 // JoinFields supplies the schema order needed by DALgo's generic JOIN wildcard
@@ -77,11 +77,22 @@ func (t transaction) JoinFields(ctx context.Context, source dal.RecordsetSource)
 }
 
 func canExecuteSQLiteJoin(ctx context.Context, q dal.StructuredQuery, dialect string, execute executeQueryFunc) error {
+	return canExecuteSQLiteJoinProfile(ctx, q, dialect, execute, false)
+}
+
+func canExecuteSQLiteJoinProfile(ctx context.Context, q dal.StructuredQuery, dialect string, execute executeQueryFunc, strict bool) error {
 	if dialect != "sqlite" {
 		return fmt.Errorf("join_plan: native JOIN is available only for the SQLite structured-query dialect")
 	}
 	if q == nil || q.From() == nil {
 		return fmt.Errorf("join_shape: from is required")
+	}
+	if strict {
+		// Planning must not run an unbounded legacy compilation before the
+		// strict read's checked compiler gets a chance to refuse it.
+		if _, _, err := newSQLiteEmitter(true).compileStructuredSQL(q); err != nil {
+			return fmt.Errorf("join_plan: SQLite cannot natively compile query: %w", err)
+		}
 	}
 	if err := dal.ValidateJoinTree(q.From()); err != nil {
 		return err
@@ -93,8 +104,10 @@ func canExecuteSQLiteJoin(ctx context.Context, q dal.StructuredQuery, dialect st
 	// the relation tree. Check every clause before doing the key preflight so an
 	// unsupported wildcard, FIRST/LAST aggregate, or expression takes DALgo's
 	// generic path instead of failing after native planning was selected.
-	if _, _, err := compileStructuredSQL(q); err != nil {
-		return fmt.Errorf("join_plan: SQLite cannot natively compile query: %w", err)
+	if !strict {
+		if _, _, err := compileStructuredSQL(q); err != nil {
+			return fmt.Errorf("join_plan: SQLite cannot natively compile query: %w", err)
+		}
 	}
 	sources, _ := sqliteJoinSources(q.From())
 	return preflightSQLiteJoinKeys(ctx, q.From(), sources, execute, "from")
