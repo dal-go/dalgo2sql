@@ -53,14 +53,20 @@ type DbOptions struct {
 	PreserveNativeValues bool
 	// SQLiteStrictNumbers opts structured SQLite reads into whole-query native
 	// refusal before numeric coercion outside the exact binary64 integer range.
-	// Plain INTEGER projections remain native and exact. Numeric predicates,
-	// JOINs, grouping, ordering, arithmetic and aggregates refuse numeric values
-	// with magnitude >= 2^53; integer SUM accumulates before conversion and
+	// Plain INTEGER projections and native ordering remain exact. Numeric
+	// coercions in predicates, JOINs, grouping, arithmetic and aggregates refuse
+	// operands with magnitude >= 2^53; integer SUM accumulates before conversion and
 	// refuses native overflow. REAL arithmetic retains SQLite IEEE semantics;
 	// exact decimal or total-memory bounds are not implied. Numeric TEXT is not
 	// coerced into a number. The zero value preserves existing compilation.
 	// Only StructuredQueryDialect "sqlite" without a custom native compiler is
 	// supported; other combinations fail before statements are sent.
+	// One compilation shares checked construction budgets of 1MiB generated
+	// SQL/intermediate string bytes, 32766 staging/argument slots, 1MiB argument
+	// value bytes and 4096 structural work units. Checks precede expansion and
+	// copying. Only known builtin argument values can establish those bounds;
+	// custom Valuers and opaque values are refused without invoking them. These
+	// budgets do not cap total Go, driver or SQLite pager/sorter memory.
 	SQLiteStrictNumbers bool
 	// Recordsets declares the recordsets (tables) of key reads and writes, by name,
 	// with the primary key each is looked up by.

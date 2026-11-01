@@ -383,8 +383,21 @@ all real-number mathematics. A value or intermediate result with magnitude at
 least 2^53 may be refused even if that particular value is representable.
 
 The option defaults to false. Other dialects and custom native compilers cannot
-opt in; they are refused before statements are sent. It adds no permissions,
-source authentication or allocation budget. It is independent of
+opt in; they are refused before statements are sent. One strict compilation
+shares construction budgets across every clause and intermediate: 1 MiB of
+generated SQL/intermediate string bytes, 32,766 staging/argument slots, 1 MiB of
+known argument-value bytes, and 4,096 structural work units, with structural
+depth at most 64. Checks precede string expansion and argument copying, so a
+small input that expands excessively also refuses the whole query before
+native dispatch. Input names and known argument values share a separate 1 MiB
+preflight byte budget. These counters are conservative cumulative work bounds;
+they do not describe an exact maximum supported query size. Unknown or custom
+argument values, including custom `driver.Valuer` implementations, are refused
+without invoking them because their future payload size is unknown.
+
+These bounds do not cap total Go heap, driver allocation, native SQLite heap,
+pager, sorter or aggregate memory. The option adds no permissions or source
+authentication. It is independent of
 `PreserveNativeValues`, which controls how the driver result is represented.
 
 SQLite's affinity is not its storage class: an `INTEGER` column can hold a text

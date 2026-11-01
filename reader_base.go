@@ -192,6 +192,10 @@ func getReaderBaseFor(ctx context.Context, query dal.Query, execute executeQuery
 		}
 	case dal.StructuredQuery:
 		var err error
+		emitter := newSQLiteEmitter(options.SQLiteStrictNumbers)
+		if !emitter.inspect(q, 0) {
+			return readerBase{}, emitter.budget.err
+		}
 		if projection, err = planWildcardProjection(q); err != nil {
 			return readerBase{}, err
 		}
@@ -212,7 +216,6 @@ func getReaderBaseFor(ctx context.Context, query dal.Query, execute executeQuery
 				}
 			case "sqlite":
 				var err error
-				emitter := sqliteEmitter{strictNumbers: options.SQLiteStrictNumbers}
 				text, a, err = emitter.compileStructuredSQL(q)
 				if err != nil {
 					return readerBase{}, &access.DeniedError{Decision: access.Decision{Operation: access.Query, Code: access.CodeEnforcementUnsupported, Scope: access.DecisionScopeOperation, Explanation: "structured SQLite query is unsupported"}}

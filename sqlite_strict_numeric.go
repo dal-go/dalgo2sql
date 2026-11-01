@@ -4,7 +4,10 @@ import "fmt"
 
 // sqliteEmitter carries immutable per-read compiler choices. There is no
 // process-global switch or registered function, and legacy wrappers use false.
-type sqliteEmitter struct{ strictNumbers bool }
+type sqliteEmitter struct {
+	strictNumbers bool
+	budget        *sqliteCompileBudget
+}
 
 func (emitter sqliteEmitter) numberCopies() int {
 	if emitter.strictNumbers {
@@ -17,28 +20,28 @@ func (emitter sqliteEmitter) numberCopies() int {
 // before a lossy REAL cast. Each expression appears four times; parameter copies
 // must follow that same order. abs(int64min) is a fixed error expression, never
 // abs of the input (which would itself overflow for a legitimate int64min).
-func strictSQLiteNumber(expression string, cast bool) string {
-	numeric := "(CASE WHEN " + expression + " BETWEEN -9007199254740991 AND 9007199254740991 THEN " + expression + " ELSE abs(-9223372036854775808) END)"
+func (emitter sqliteEmitter) strictSQLiteNumber(expression string, cast bool) string {
+	numeric := emitter.concat("(CASE WHEN ", expression, " BETWEEN -9007199254740991 AND 9007199254740991 THEN ", expression, " ELSE abs(-9223372036854775808) END)")
 	if cast {
-		numeric = "CAST(" + numeric + " AS REAL)"
+		numeric = emitter.concat("CAST(", numeric, " AS REAL)")
 	}
-	return "(CASE WHEN typeof(" + expression + ") IN ('integer','real') THEN " + numeric + " ELSE " + expression + " END)"
+	return emitter.concat("(CASE WHEN typeof(", expression, ") IN ('integer','real') THEN ", numeric, " ELSE ", expression, " END)")
 }
 
 func (emitter sqliteEmitter) strictAggregate(name, arg string, values []any, distinct string) (string, []any, error) {
 	// Preserve the integer class through SUM. SQLite either accumulates exact
 	// int64 or reports overflow; it cannot silently switch integer SUM to REAL.
-	input := "CASE WHEN typeof(" + arg + ") IN ('integer','real') THEN " + strictSQLiteNumber(arg, false) + " ELSE NULL END"
-	inputValues := repeatSQLArgs(values, 5)
-	total := emitter.normalizeSQLNumber("SUM(" + distinct + input + ")")
-	totalValues := repeatSQLArgs(inputValues, emitter.numberCopies())
+	input := emitter.concat("CASE WHEN typeof(", arg, ") IN ('integer','real') THEN ", emitter.strictSQLiteNumber(arg, false), " ELSE NULL END")
+	inputValues := emitter.repeatArgs(values, 5)
+	total := emitter.normalizeSQLNumber(emitter.concat("SUM(", distinct, input, ")"))
+	totalValues := emitter.repeatArgs(inputValues, emitter.numberCopies())
 	if name == "SUM" {
 		return total, totalValues, nil
 	}
-	count := emitter.normalizeSQLNumber("COUNT(" + distinct + input + ")")
-	result := "(" + total + " / " + count + ")"
-	resultValues := append(totalValues, repeatSQLArgs(inputValues, emitter.numberCopies())...)
-	return emitter.normalizeSQLNumber(result), repeatSQLArgs(resultValues, emitter.numberCopies()), nil
+	count := emitter.normalizeSQLNumber(emitter.concat("COUNT(", distinct, input, ")"))
+	result := emitter.concat("(", total, " / ", count, ")")
+	resultValues := emitter.appendArgs(totalValues, emitter.repeatArgs(inputValues, emitter.numberCopies())...)
+	return emitter.normalizeSQLNumber(result), emitter.repeatArgs(resultValues, emitter.numberCopies()), nil
 }
 
 func (emitter sqliteEmitter) normalizedNumber(value any) (float64, error) {
