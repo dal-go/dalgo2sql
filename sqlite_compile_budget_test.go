@@ -208,6 +208,11 @@ func TestSQLiteCompileBudgetKnownValuesAndSharedStringBoundaries(t *testing.T) {
 }
 
 func TestSQLiteCompileBudgetPreflightBoundsEveryClause(t *testing.T) {
+	for _, strict := range []bool{false, true} {
+		if text, args, err := newSQLiteEmitter(strict).compileStructuredSQL(noSourceQuery{budgetQuery(dal.Field("value"))}); err == nil || text != "" || args != nil {
+			t.Fatal("missing FROM reached compilation", strict)
+		}
+	}
 	root := dal.NewRootCollectionRef("Numbers", "n")
 	other := dal.NewRootCollectionRef("Other", "x")
 	query := func() dal.IQueryBuilder { return dal.From(root).NewQuery() }
@@ -222,6 +227,8 @@ func TestSQLiteCompileBudgetPreflightBoundsEveryClause(t *testing.T) {
 	bad := dal.Constant{Value: struct{}{}}
 	for _, node := range []any{
 		wild(make([]string, sqliteCompileNodes+1)), wild([]string{large}),
+		query().Where(dal.NewComparison(dal.Field("value"), dal.Equal, bad)).SelectIntoRecordset(),
+		query().Having(dal.NewComparison(dal.Field("value"), dal.Equal, bad)).SelectIntoRecordset(),
 		query().GroupBy(dal.Field(large)).SelectIntoRecordset(), query().OrderBy(nil).SelectIntoRecordset(),
 		join(dal.NewRootCollectionRef(large, "x"), equal), join(other, dal.NewComparison(dal.Field(large), dal.Equal, dal.Constant{Value: 1})),
 		dal.From(root).Join(dal.NewJoinedSource(other, dal.JoinType(large), equal)), dal.NewAggregate(large, false, dal.Field("value")),
