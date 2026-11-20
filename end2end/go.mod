@@ -5,7 +5,7 @@ go 1.26.0
 toolchain go1.27.4
 
 require (
-	github.com/dal-go/dalgo v0.102.4
+	github.com/dal-go/dalgo v0.102.6
 	github.com/dal-go/dalgo2sql v0.9.6 // No version as we alway replace it with local version
 	github.com/mattn/go-sqlite3 v1.14.53
 )
@@ -13,8 +13,8 @@ require (
 replace github.com/dal-go/dalgo2sql => ./../
 
 require (
-	github.com/go-sql-driver/mysql v1.10.1
-	github.com/microsoft/go-mssqldb v1.11.2
+	github.com/go-sql-driver/mysql v1.10.2
+	github.com/microsoft/go-mssqldb v1.12.0
 	github.com/sijms/go-ora/v3 v3.0.1
 )
 
@@ -37,7 +37,7 @@ require (
 	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/stretchr/testify v1.12.1 // indirect
 	github.com/strongo/random v0.0.3 // indirect
-	github.com/strongo/validation v0.0.17 // indirect
+	github.com/strongo/validation v0.0.18 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/crypto v0.55.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
