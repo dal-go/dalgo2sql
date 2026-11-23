@@ -11,7 +11,7 @@ require (
 	github.com/dal-go/dalgo v0.102.6
 	github.com/dal-go/record v0.1.5
 	github.com/georgysavva/scany/v2 v2.1.4
-	modernc.org/sqlite v1.62.0
+	modernc.org/sqlite v1.63.0
 )
 
 require (
