@@ -33,3 +33,7 @@ jobs:
       require_conventional_pr_title: true
       code_coverage: true
       min_test_coverage_percent: 100
+      allowed_imports: |
+        # Existing direct imports of the in-memory DALgo adapter, allowed per package
+        # so a new one still fails (strongo/cicd forbidden_imports).
+        github.com/dal-go/dalgo2sql github.com/dal-go/dalgo/adapters/dalgo2memory
