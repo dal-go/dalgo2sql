@@ -33,3 +33,8 @@ jobs:
       require_conventional_pr_title: true
       code_coverage: true
       min_test_coverage_percent: 100
+      allowed_imports: |
+        # aggregation_parity_test.go compares results with the in-memory DALgo
+        # adapter. This module is one package, and the check cannot tell a
+        # package's tests from its code, so this allows the whole module.
+        github.com/dal-go/dalgo2sql github.com/dal-go/dalgo/adapters/dalgo2memory
